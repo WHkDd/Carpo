@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { NonSecretSettings, SecretKey } from "./ipc-types";
+import type {
+  NonSecretSettings,
+  RenderedPagePayload,
+  SecretKey,
+} from "./ipc-types";
 
 /**
  * Typed wrappers around invoke<>(). One thin function per command keeps the
@@ -9,6 +13,16 @@ import type { NonSecretSettings, SecretKey } from "./ipc-types";
 
 export async function ping(): Promise<string> {
   return invoke<string>("ping");
+}
+
+export async function loadRasterImage(
+  path: string
+): Promise<RenderedPagePayload> {
+  return invoke<RenderedPagePayload>("load_raster_image", { path });
+}
+
+export async function listSupportedExtensions(): Promise<string[]> {
+  return invoke<string[]>("list_supported_extensions");
 }
 
 export async function getSettings(): Promise<NonSecretSettings> {

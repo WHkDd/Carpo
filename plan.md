@@ -1,6 +1,6 @@
 # xcvt-tauri Implementation Plan
 
-> **Status (M0 complete · 2026-05-08)**: project bootstrapped with Tauri 2 + React 18 + Vite + TypeScript + Tailwind + shadcn/ui scaffolding; design tokens + 3 mockups committed; `pnpm tauri dev` opens empty window; `pnpm typecheck` & `pnpm build` clean; `cargo check` clean. Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
+> **Status (M0 complete · M1 backend subset in progress · 2026-05-08)**: project bootstrapped with Tauri 2 + React 18 + Vite + TypeScript + Tailwind + shadcn/ui scaffolding; design tokens + 3 mockups committed; `pnpm tauri dev` opens empty window; `pnpm typecheck` & `pnpm build` clean; `cargo check` clean. M1 non-UI foundation now includes raster image loading commands, typed IPC wrappers, and queue/ui store slices. Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
 >
 > **Reference implementation**: `/Users/kai/superconductor/projects/xcvt/newspaper_ocr.py` (2,859 lines) — every feature, parameter, and prompt format must match unless this plan explicitly says otherwise.
 >
@@ -31,7 +31,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Dependencies added**: Rust `image = "0.25"` (features `png, jpeg, tiff, bmp`); no new JS deps (konva, react-konva, use-image already installed).
 
-### T1.1 [BE] · Rust `image` crate + `load_raster_image` command
+### ~~T1.1~~ [BE] · Rust `image` crate + `load_raster_image` command
 - Uncomment the `image = "0.25"` line in `src-tauri/Cargo.toml`.
 - Create `src-tauri/src/image.rs` with `load_from_disk(path: &Path) -> AppResult<DynamicImage>` that handles PNG/JPEG/JPG/TIFF/TIF/BMP via `image::open`. Map errors to `AppError::Image(format!(...))`. Reject unsupported extensions with `AppError::FileNotFound` if file missing or `AppError::Image("unsupported format")` otherwise.
 - Add `to_png_base64(img: &DynamicImage) -> AppResult<String>` using `image::ImageOutputFormat::Png` + `base64::engine::general_purpose::STANDARD`.
@@ -40,16 +40,17 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - Wire both commands into `src-tauri/src/lib.rs` `invoke_handler!`. Declare the `commands` module + `image` module.
 - **Acceptance**: `cargo test` includes a unit test that loads a 64×64 fixture PNG (commit one to `src-tauri/tests/fixtures/sample.png`) and asserts `width == 64 && png_base64.starts_with("iVBORw0KGgo")`. `cargo clippy` clean.
 
-### T1.2 [BE] · Frontend tauri.ts wrappers
+### ~~T1.2~~ [BE] · Frontend tauri.ts wrappers
 - Add `loadRasterImage(path)` and `listSupportedExtensions()` to `src/lib/tauri.ts`. Types from `ipc-types.ts`.
 - **Acceptance**: `pnpm typecheck` passes. The signature should match `src-tauri/src/commands/files.rs` exactly.
 
-### T1.3 [UI] · AppShell layout (Toolbar + canvas region + StatusBar)
-- Implement `src/components/layout/AppShell.tsx`: full-height flex column with `<Toolbar/>` (h-10), `<main class="flex-1 flex">` (canvas region), `<StatusBar/>` (h-7). Background `bg-background`, default `dark` class on `<html>` (already in `index.html`).
-- `src/components/layout/Toolbar.tsx`: stub buttons matching mockup `docs/mockups/main.html` lines 95-160. M1 only needs: `Xcvt` brand chip, `添加文件` button (T1.6 wires it), zoom segmented control (renders only — T1.5 wires it), `⚙️` settings stub. Rest can be visible-but-disabled.
-- `src/components/layout/StatusBar.tsx`: `就绪` indicator on left, `缩放 NN%` on right (T1.5 wires the value). Use `font-mono tabular-nums` for numbers.
+### T1.3 [UI] · AppShell layout (queue + canvas + text structure + StatusBar)
+- Implement `src/components/layout/AppShell.tsx`: full-height grid with left queue, top document status, center canvas, right scanned-text structure rail, and bottom status bar. Background is near-white; only the canvas backing uses `bg-canvas`.
+- `src/components/layout/Toolbar.tsx`: stub document title + page navigation matching `docs/mockups/xcvt-scan-structure-preview.html`. Do not add an app-name chip in the top-left area.
+- `src/components/layout/StatusBar.tsx`: OCR profile, zoom control, batch progress text, and the single primary OCR action. Use `font-mono tabular-nums` for numbers.
 - Replace the placeholder `src/App.tsx` with `<AppShell/>` rendering an empty `<ImageCanvas/>` (T1.4) in the canvas region.
-- **Acceptance**: visual diff against `docs/mockups/main.html` toolbar+statusbar regions in dark mode. Heights, paddings, font sizes match mockup. **Must be reviewed by human/Claude before merging.**
+- **Acceptance**: visual diff against `docs/mockups/xcvt-scan-structure-preview.html` top and bottom regions. Heights, paddings, font sizes match mockup. **Must be reviewed by human/Claude before merging.**
+- **Deviation (2026-05-08)**: layout shipped with the canvas as a full-bleed rounded card and Toolbar/StatusBar as floating chips (`bg-background/75`) over the canvas, instead of fixed top/bottom bands matching the mockup. The "添加文件" entry point lives in the queue rail header. The toolbar's prev/next page nav + `N / M` indicator were dropped (not stubbed) — re-add them in **T2.4** when real `pdfTotal`/`currentPage` exist; until then a stub is just visual noise. Batch progress + "识别选中报道" primary action moved into the **right rail footer**.
 
 ### T1.4 [UI+BE] · `<ImageCanvas/>` Konva stage + image rendering
 - `src/components/canvas/ImageCanvas.tsx`: `react-konva` `<Stage/>` filling parent (use `useResizeObserver` or sized via `ref` measurement). Single `<Layer listening={false}><KonvaImage/></Layer>` for the image. The image source is a `RenderedPagePayload` from store (T1.6 populates it).
@@ -71,14 +72,14 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - When a file is added and `currentFileId` is null, set it to the new file. `<ImageCanvas/>` reads the current file's `payload` and renders.
 - **Acceptance**: drag a PNG onto the running window → image appears, status bar updates to filename + size. Click "添加文件" → dialog opens, multi-select works, each chosen file appears in store and the *first* selected becomes current. Dropping unsupported types (e.g. `.txt`) is silently ignored, no error.
 
-### T1.7 [BE] · Store slices (queue + ui)
+### ~~T1.7~~ [BE] · Store slices (queue + ui)
 - `src/store/queueSlice.ts` (described above).
 - `src/store/uiSlice.ts`: `zoomPercent: number (1..800)`, `setZoomPercent(p: number)`, `statusText: string`, `setStatusText(s: string)`. zoom updates from canvas wheel land here.
 - `src/store/index.ts`: `useStore` combines both via zustand `create()`. **Avoid** a single mega-store — each slice file exports a typed creator; the combined store imports them.
 - **Acceptance**: typecheck clean. No store mutations outside slice action functions.
 
 ### T1.8 [UI] · M1 visual polish pass
-- Compare running app to `docs/mockups/main.html`. Adjust spacing, text sizes, hover states until parity. Pay attention to: toolbar h-10, statusbar h-7, font weights (500 on labels, 400 elsewhere), `tabular-nums` everywhere a number lives.
+- Compare running app to `docs/mockups/xcvt-scan-structure-preview.html`. Adjust spacing, text sizes, hover states until parity. Pay attention to the near-white chrome, gray canvas only, sparse dividers, restrained controls, and `tabular-nums` everywhere a number lives.
 - Fix any FOUC (favor `media="screen"` not deferred CSS).
 - **Acceptance**: side-by-side screenshot vs mockup looks identical at default window size. **Human/Claude review required.**
 
@@ -121,13 +122,14 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T2.3 [UI+BE] · QueuePanel with file list
 - `src/store/queueSlice.ts`: extend with `pdfTotal: number`, `currentPage: number`, `removeFile(id)`. Track per-file state.
-- `src/components/queue/QueuePanel.tsx`: 220px-wide column on the left, mirroring `docs/mockups/main.html` lines 195-248. Header counts files; scrollable list of `<QueueItem/>`; footer with `添加`/`批量整页 OCR` (disabled in M2)/`批量分组生成` (disabled).
+- `src/components/queue/QueuePanel.tsx`: left queue rail mirroring `docs/mockups/xcvt-scan-structure-preview.html`. Header counts files; scrollable list of `<QueueItem/>`; keep bulk actions out of the rail unless they become real active workflows.
 - `src/components/queue/QueueItem.tsx`: filename, ext icon (PDF vs image), page indicator `N / M` for PDFs, status icon (✓/⋯/!N). Active item gets the 2px primary stripe (`queue-item-active` from mockup).
 - Click switches `currentFileId`; image canvas reloads.
 - **Acceptance**: load a mix of PDF + images; click each — canvas updates within 500ms (preview render only); current page indicator updates.
 
 ### T2.4 [UI+BE] · PDF page navigation
 - Toolbar prev/next buttons + page indicator (mockup lines 121-129). Wire to store: `prevPage()`/`nextPage()` clamp to `[1, pdfTotal]`.
+- **Note (carried from T1.3)**: M1 deliberately did *not* stub these — re-introduce them inside the floating top chip in `src/components/layout/Toolbar.tsx`. Render only when `currentFile.kind === "pdf"` and `pdfTotal > 1`; show `${currentPage} / ${pdfTotal}` between the prev/next buttons.
 - Hotkeys: `←` / `→` arrow keys.
 - On page change: call `render_page(path, newPage, 150, "preview")` and update current file's payload. Cache rendered bitmaps in front-end LRU (T2.5).
 - **Acceptance**: load a 5-page PDF; arrow keys navigate; page indicator updates; render <500ms per page.
@@ -290,14 +292,14 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - **Acceptance**: progress updates smoothly; cancel button takes effect within 1s.
 
 ### T5.7 [UI+BE] · "生成文档（OCR）" + result assembly + drawer
-- `<GenerateActions/>` (mockup lines 376-385): "生成文档（OCR）" primary button, "整页识别" secondary.
+- Bottom status bar primary action: "识别选中报道". Avoid duplicating OCR actions in the right rail.
 - On click: validate (≥1 article, ≥1 block per article, provider configured) → `start_grouped_ocr({ file_id, path, page, ocr_dpi: profile.ocrDpi, articles, newspaper_name, newspaper_date })` → show ProgressDialog → on done event, write to `pageStates[key].resultText` and slide up `<ResultDrawer/>`.
 - Document assembly: port `_on_ocr_finished` (`newspaper_ocr.py:2532-2549`). Format: `{newspaper}\n{date}\n\n{title1}\n{body1}\n\n{title2}\n{body2}\n...`. Helper in `src/lib/format-doc.ts`. **Unit test** with fixture comparing byte-for-byte against the same Python output.
 - `src/components/results/ResultDrawer.tsx`: bottom drawer (custom built on Radix Dialog primitive — can be `Sheet` with `side='bottom'`). Header shows summary + Copy/Save buttons. Body: per-file `<Tabs/>` with `<textarea/>` for each.
 - **Acceptance**: mark 2 articles → 生成文档 → result matches Python verbatim.
 
 ### T5.8 [UI+BE] · Provider quick-switch in status bar
-- Status bar segment showing current provider + model (mockup line 543); click → small Radix `Popover` listing providers; pick one → updates settingsSlice.provider; saves to store.
+- Status bar text/control showing current provider + profile + model; click → small Radix `Popover` listing providers; pick one → updates settingsSlice.provider; saves to store.
 - **Acceptance**: switch works without opening Settings; persists across restart.
 
 ### T5.9 · Verify M5 end-to-end

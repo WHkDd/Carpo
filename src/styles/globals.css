@@ -3,71 +3,72 @@
 @tailwind utilities;
 
 /*
- * Design tokens — see /DESIGN.md for the OKLCH source values and rationale.
+ * Design tokens, see /DESIGN.md for the OKLCH source values and rationale.
  * Stored as HSL for shadcn compatibility; OKLCH targets noted alongside.
  *
- * Strategy: Restrained. Tinted neutrals warmed toward archival paper +
- * terracotta-red accent. Dark is primary; light is "Day mode."
+ * Strategy: Restrained. White dominant app chrome + graphite accent.
+ * Only the newspaper reading canvas uses a gray backing surface.
+ * Color is reserved for article grouping and semantic states.
  */
 
 @layer base {
   :root {
-    /* Light theme — paper cream with ink-brown text */
-    --background: 38 33% 95%;          /* oklch(0.96 0.02 80) */
-    --surface: 36 33% 97%;
-    --surface-2: 38 25% 91%;
-    --surface-overlay: 36 22% 88%;
+    /* Light monochrome theme */
+    --background: 60 7% 98%;           /* near-white app chrome */
+    --surface: 60 7% 98%;
+    --surface-2: 220 10% 95%;
+    --surface-overlay: 220 10% 92%;
+    --canvas: 220 12% 93%;
 
-    --foreground: 28 18% 13%;          /* oklch(0.22 0.02 60) */
-    --foreground-muted: 28 11% 38%;
-    --foreground-subtle: 28 8% 53%;
+    --foreground: 0 0% 9%;             /* oklch(0.21 0 0) */
+    --foreground-muted: 0 0% 37%;
+    --foreground-subtle: 220 4% 58%;
 
-    --border: 36 22% 82%;
-    --border-strong: 36 18% 71%;
+    --border: 220 8% 82%;
+    --border-strong: 220 6% 70%;
 
-    --primary: 16 65% 43%;             /* terracotta */
-    --primary-foreground: 36 33% 97%;
-    --primary-muted: 18 55% 87%;
+    --primary: 0 0% 15%;               /* graphite */
+    --primary-foreground: 60 3% 97%;
+    --primary-muted: 220 10% 95%;
 
-    --secondary: 36 18% 89%;
-    --secondary-foreground: 28 18% 18%;
+    --secondary: 220 10% 95%;
+    --secondary-foreground: 0 0% 13%;
 
-    --muted: 36 16% 92%;
-    --muted-foreground: 28 8% 45%;
+    --muted: 220 10% 95%;
+    --muted-foreground: 0 0% 40%;
 
-    --accent: 16 65% 43%;
-    --accent-foreground: 36 33% 97%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 60 3% 97%;
 
-    --destructive: 8 60% 40%;
-    --destructive-foreground: 36 33% 97%;
+    --destructive: 4 37% 45%;
+    --destructive-foreground: 60 3% 97%;
 
-    --success: 100 28% 41%;
-    --warning: 38 56% 38%;
+    --success: 135 12% 42%;
+    --warning: 42 28% 40%;
 
-    --card: 36 33% 97%;
-    --card-foreground: 28 18% 13%;
+    --card: 60 7% 98%;
+    --card-foreground: 0 0% 9%;
 
-    --popover: 36 22% 95%;
-    --popover-foreground: 28 18% 13%;
+    --popover: 60 7% 98%;
+    --popover-foreground: 0 0% 9%;
 
-    --input: 36 22% 82%;
-    --ring: 16 65% 43%;
+    --input: 220 8% 82%;
+    --ring: 0 0% 15%;
 
     --radius: 0.375rem;
 
-    /* Article hues — dark/light theme uses same hue, light mode applies
-       --article-saturation-multiplier to drop chroma 30% on cream paper. */
-    --article-saturation-multiplier: 0.7;
-    --article-1:  20 70% 50%;   /* terracotta */
-    --article-2:  130 38% 42%;  /* moss */
-    --article-3:  320 38% 50%;  /* plum */
-    --article-4:  220 50% 52%;  /* lake */
-    --article-5:  75 60% 50%;   /* amber */
-    --article-6:  0 65% 55%;    /* magenta */
-    --article-7:  260 55% 55%;  /* cobalt */
-    --article-8:  50 35% 38%;   /* clay */
-    --article-9:  290 50% 55%;  /* iris */
-    --article-10: 190 45% 42%;  /* teal */
+    /* Low-chroma article hues, reserved for canvas grouping. */
+    --article-saturation-multiplier: 0.55;
+    --article-1:  220 18% 43%;  /* blue gray */
+    --article-2:  145 15% 38%;  /* green gray */
+    --article-3:  285 16% 45%;  /* violet gray */
+    --article-4:  190 16% 40%;  /* cyan gray */
+    --article-5:  42 24% 40%;   /* ochre gray */
+    --article-6:  15 22% 44%;   /* rust gray */
+    --article-7:  252 18% 44%;  /* indigo gray */
+    --article-8:  95 12% 36%;   /* olive gray */
+    --article-9:  320 14% 43%;  /* plum gray */
+    --article-10: 172 14% 38%;  /* teal gray */
 
     /* Typography */
     --font-sans: "PingFang SC", "Microsoft YaHei", -apple-system,
@@ -75,51 +76,6 @@
                  "Inter Variable", Inter, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code",
                  Menlo, Consolas, monospace;
-  }
-
-  .dark {
-    /* Dark theme — primary surface */
-    --background: 30 12% 9%;            /* oklch(0.16 0.01 60) */
-    --surface: 30 11% 11%;
-    --surface-2: 28 11% 14%;
-    --surface-overlay: 28 9% 17%;
-
-    --foreground: 36 26% 88%;
-    --foreground-muted: 36 12% 60%;
-    --foreground-subtle: 32 8% 41%;
-
-    --border: 30 10% 18%;
-    --border-strong: 28 9% 25%;
-
-    --primary: 16 60% 53%;              /* terracotta lifted for dark */
-    --primary-foreground: 30 12% 9%;
-    --primary-muted: 16 22% 22%;
-
-    --secondary: 28 9% 17%;
-    --secondary-foreground: 36 26% 88%;
-
-    --muted: 28 9% 15%;
-    --muted-foreground: 36 12% 60%;
-
-    --accent: 16 60% 53%;
-    --accent-foreground: 30 12% 9%;
-
-    --destructive: 8 55% 52%;
-    --destructive-foreground: 36 26% 88%;
-
-    --success: 100 28% 54%;
-    --warning: 38 56% 52%;
-
-    --card: 30 11% 11%;
-    --card-foreground: 36 26% 88%;
-
-    --popover: 28 11% 13%;
-    --popover-foreground: 36 26% 88%;
-
-    --input: 30 10% 18%;
-    --ring: 16 60% 53%;
-
-    --article-saturation-multiplier: 1;
   }
 
   * {
@@ -166,6 +122,7 @@
   .bg-surface         { background-color: hsl(var(--surface)); }
   .bg-surface-2       { background-color: hsl(var(--surface-2)); }
   .bg-surface-overlay { background-color: hsl(var(--surface-overlay)); }
+  .bg-canvas          { background-color: hsl(var(--canvas)); }
   .text-foreground-muted   { color: hsl(var(--foreground-muted)); }
   .text-foreground-subtle  { color: hsl(var(--foreground-subtle)); }
   .border-strong { border-color: hsl(var(--border-strong)); }

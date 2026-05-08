@@ -1,32 +1,32 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <title>Xcvt · Batch import review</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root {
-      --background: 30 12% 9%;
-      --surface: 30 11% 11%;
-      --surface-2: 28 11% 14%;
-      --surface-overlay: 28 9% 17%;
-      --foreground: 36 26% 88%;
-      --foreground-muted: 36 12% 60%;
-      --foreground-subtle: 32 8% 41%;
-      --border: 30 10% 18%;
-      --border-strong: 28 9% 25%;
-      --primary: 16 60% 53%;
-      --primary-foreground: 30 12% 9%;
-      --primary-muted: 16 22% 22%;
-      --destructive: 8 55% 52%;
-      --success: 100 28% 54%;
-      --warning: 38 56% 52%;
+      --background: 60 3% 95%;
+      --surface: 60 3% 98%;
+      --surface-2: 60 2% 93%;
+      --surface-overlay: 60 2% 88%;
+      --foreground: 0 0% 9%;
+      --foreground-muted: 0 0% 37%;
+      --foreground-subtle: 60 2% 51%;
+      --border: 60 3% 85%;
+      --border-strong: 60 3% 72%;
+      --primary: 0 0% 15%;
+      --primary-foreground: 60 3% 97%;
+      --primary-muted: 60 3% 91%;
+      --destructive: 4 37% 45%;
+      --success: 135 12% 42%;
+      --warning: 42 28% 40%;
     }
     body {
       font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       font-feature-settings: 'tnum';
       font-variant-numeric: tabular-nums;
-      letter-spacing: -0.005em;
+      letter-spacing: 0;
       background-color: hsl(var(--background));
       color: hsl(var(--foreground));
     }
@@ -41,13 +41,13 @@
     .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 
     .modal-backdrop {
-      background: hsl(0 0% 0% / 0.55);
+      background: hsl(0 0% 70% / 0.28);
     }
     .modal-card {
       background: hsl(var(--surface));
       border: 1px solid hsl(var(--border));
-      box-shadow: 0 20px 60px -20px hsl(0 0% 0% / 0.6),
-                  0 8px 24px -12px hsl(0 0% 0% / 0.45);
+      box-shadow: 0 20px 60px -24px hsl(0 0% 0% / 0.22),
+                  0 8px 24px -14px hsl(0 0% 0% / 0.16);
     }
     .checkbox {
       width: 14px;
