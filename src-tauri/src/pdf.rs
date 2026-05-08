@@ -5,9 +5,7 @@ use std::{
 };
 
 use ::image::{GenericImageView, ImageFormat};
-use pdfium_render::prelude::{
-    PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError,
-};
+use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError};
 
 use crate::error::{AppError, AppResult};
 
@@ -140,7 +138,9 @@ fn load_document<'a>(
         )));
     }
 
-    pdfium.load_pdf_from_file(path, None).map_err(map_pdfium_error)
+    pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(map_pdfium_error)
 }
 
 fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
@@ -201,7 +201,10 @@ mod tests {
     use super::*;
 
     fn sample_pdf() -> &'static Path {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.pdf"))
+        Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sample.pdf"
+        ))
     }
 
     #[test]
