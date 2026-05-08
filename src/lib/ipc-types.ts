@@ -36,6 +36,17 @@ export interface RenderedPagePayload {
   png_base64: string;
 }
 
+export type FileKind = "image" | "pdf";
+
+export interface FileEntry {
+  id: string;
+  path: string;
+  name: string;
+  ext: string;
+  kind: FileKind;
+  payload?: RenderedPagePayload;
+}
+
 export interface Rect {
   x: number;
   y: number;

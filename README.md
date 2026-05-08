@@ -8,6 +8,8 @@
 
 ✅ **M0 完成** — 项目脚手架就位，设计系统 + 高保真稿就绪，`pnpm tauri dev` 出空壳窗口，CI 雏形就位。
 
+🟡 **M1 非 UI 基础已推进** — 已完成 raster image 后端命令、Tauri IPC wrapper、queue/ui store slices。M1 的 AppShell、Toolbar、StatusBar、Konva Canvas、导入交互和视觉 polish 仍按计划留给人工或 Claude UI 评审。
+
 接下来：M1-M7 的详细任务分解见 [`plan.md`](./plan.md)。**[UI] 标记的任务需视觉评审，留给人工或 Claude；[BE] 标记的任务可由 codex 等自动代理推进。**
 
 设计依据：

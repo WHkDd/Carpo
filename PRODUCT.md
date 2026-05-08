@@ -24,7 +24,7 @@ The app must keep a long-running batch job alive, recoverable across crashes, an
 
 ## Tone
 
-- **Archival, not corporate.** This tool sits next to scanned 1947 broadsheets and Chinese-language scholarly notes, not next to Slack and Jira.
+- **Archival work, modern instrument.** This tool sits next to scanned 1947 broadsheets and Chinese-language scholarly notes, but the interface should feel like current professional software rather than a period-themed archive.
 - **Quiet competence.** No celebratory toasts, no animated emoji, no friendly empty-state mascots. Confirm with text and motion economy.
 - **Bilingual, Chinese-leaning UI.** Labels in 简体中文 first, English secondary where useful (e.g. provider names). Numerals and identifiers in tabular monospace.
 
@@ -33,13 +33,13 @@ The app must keep a long-running batch job alive, recoverable across crashes, an
 What this app is **not**:
 - **Not a SaaS dashboard.** No metric cards, no gradient hero numbers, no "Welcome back, Kai 👋."
 - **Not a photo editor.** Tool palettes that surround the image with chrome from four sides are a Photoshop affordance and they bury the canvas.
-- **Not Notion / Linear.** That breezy SaaS-cream + light-blue accent palette is exactly the category trap to avoid; this is heavier, warmer, more focused.
+- **Not Notion / Linear.** That breezy SaaS-cream + light-blue accent palette is exactly the category trap to avoid; this is denser, quieter, and more inspection-oriented.
 - **Not a vibe coder's "AI tool" with neon green on jet black.** That's the second-order trap — the right answer to "tool that's not SaaS-cream" is *not* "terminal-cyberpunk."
 
 Mental reference points instead:
-- A focused IDE in a quiet color (Sublime Text, Zed dark, Ghostty terminals) — *the work* dominates the screen.
-- The marginalia of a 1940s Shanghai manuscript: ink-warm browns, paper-cream off-whites, a single saturated red stamp for emphasis.
-- Linear's keyboard density and information rhythm, but in a much warmer, much less SaaS palette.
+- A well-tuned native macOS document tool, where *the work* dominates the screen.
+- A document inspection console: white and gray surfaces, precise dividers, low-chroma annotation color, no sentimental archive texture in the chrome.
+- Linear's keyboard density and information rhythm, but without the SaaS-cream palette or marketing softness.
 
 ## Strategic principles
 

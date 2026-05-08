@@ -2,7 +2,6 @@ import type { Config } from "tailwindcss";
 import animate from "tailwindcss-animate";
 
 export default {
-  darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     container: {
@@ -23,6 +22,7 @@ export default {
         surface: "hsl(var(--surface) / <alpha-value>)",
         "surface-2": "hsl(var(--surface-2) / <alpha-value>)",
         "surface-overlay": "hsl(var(--surface-overlay) / <alpha-value>)",
+        canvas: "hsl(var(--canvas) / <alpha-value>)",
         primary: {
           DEFAULT: "hsl(var(--primary) / <alpha-value>)",
           foreground: "hsl(var(--primary-foreground) / <alpha-value>)",

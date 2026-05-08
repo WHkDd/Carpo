@@ -1,4 +1,6 @@
+mod commands;
 mod error;
+mod image;
 
 #[tauri::command]
 async fn ping() -> Result<&'static str, error::AppError> {
@@ -19,7 +21,11 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![ping])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            commands::files::load_raster_image,
+            commands::files::list_supported_extensions
+        ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
