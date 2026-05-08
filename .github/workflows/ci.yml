@@ -45,6 +45,10 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev
+      - name: Create frontend dist placeholder
+        run: |
+          mkdir -p dist
+          touch dist/index.html
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

@@ -146,19 +146,16 @@ fn load_document<'a>(
 fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
     let mut candidates = Vec::new();
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if let Ok(exe) = env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            #[cfg(target_os = "macos")]
-            {
+            if cfg!(target_os = "macos") {
                 candidates.push(exe_dir.join("Frameworks").join("libpdfium.dylib"));
                 if let Some(contents_dir) = exe_dir.parent() {
                     candidates.push(contents_dir.join("Frameworks").join("libpdfium.dylib"));
                 }
                 candidates.push(exe_dir.join("libpdfium.dylib"));
-            }
-
-            #[cfg(target_os = "windows")]
-            {
+            } else if cfg!(target_os = "windows") {
                 candidates.push(exe_dir.join("pdfium.dll"));
             }
         }
@@ -196,7 +193,7 @@ fn map_pdfium_error(err: PdfiumError) -> AppError {
     AppError::Pdf(err.to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::*;
 
