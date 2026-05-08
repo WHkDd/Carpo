@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — see /DESIGN.md for the OKLCH source values and rationale.
+ * Stored as HSL for shadcn compatibility; OKLCH targets noted alongside.
+ *
+ * Strategy: Restrained. Tinted neutrals warmed toward archival paper +
+ * terracotta-red accent. Dark is primary; light is "Day mode."
+ */
+
+@layer base {
+  :root {
+    /* Light theme — paper cream with ink-brown text */
+    --background: 38 33% 95%;          /* oklch(0.96 0.02 80) */
+    --surface: 36 33% 97%;
+    --surface-2: 38 25% 91%;
+    --surface-overlay: 36 22% 88%;
+
+    --foreground: 28 18% 13%;          /* oklch(0.22 0.02 60) */
+    --foreground-muted: 28 11% 38%;
+    --foreground-subtle: 28 8% 53%;
+
+    --border: 36 22% 82%;
+    --border-strong: 36 18% 71%;
+
+    --primary: 16 65% 43%;             /* terracotta */
+    --primary-foreground: 36 33% 97%;
+    --primary-muted: 18 55% 87%;
+
+    --secondary: 36 18% 89%;
+    --secondary-foreground: 28 18% 18%;
+
+    --muted: 36 16% 92%;
+    --muted-foreground: 28 8% 45%;
+
+    --accent: 16 65% 43%;
+    --accent-foreground: 36 33% 97%;
+
+    --destructive: 8 60% 40%;
+    --destructive-foreground: 36 33% 97%;
+
+    --success: 100 28% 41%;
+    --warning: 38 56% 38%;
+
+    --card: 36 33% 97%;
+    --card-foreground: 28 18% 13%;
+
+    --popover: 36 22% 95%;
+    --popover-foreground: 28 18% 13%;
+
+    --input: 36 22% 82%;
+    --ring: 16 65% 43%;
+
+    --radius: 0.375rem;
+
+    /* Article hues — dark/light theme uses same hue, light mode applies
+       --article-saturation-multiplier to drop chroma 30% on cream paper. */
+    --article-saturation-multiplier: 0.7;
+    --article-1:  20 70% 50%;   /* terracotta */
+    --article-2:  130 38% 42%;  /* moss */
+    --article-3:  320 38% 50%;  /* plum */
+    --article-4:  220 50% 52%;  /* lake */
+    --article-5:  75 60% 50%;   /* amber */
+    --article-6:  0 65% 55%;    /* magenta */
+    --article-7:  260 55% 55%;  /* cobalt */
+    --article-8:  50 35% 38%;   /* clay */
+    --article-9:  290 50% 55%;  /* iris */
+    --article-10: 190 45% 42%;  /* teal */
+
+    /* Typography */
+    --font-sans: "PingFang SC", "Microsoft YaHei", -apple-system,
+                 BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI",
+                 "Inter Variable", Inter, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code",
+                 Menlo, Consolas, monospace;
+  }
+
+  .dark {
+    /* Dark theme — primary surface */
+    --background: 30 12% 9%;            /* oklch(0.16 0.01 60) */
+    --surface: 30 11% 11%;
+    --surface-2: 28 11% 14%;
+    --surface-overlay: 28 9% 17%;
+
+    --foreground: 36 26% 88%;
+    --foreground-muted: 36 12% 60%;
+    --foreground-subtle: 32 8% 41%;
+
+    --border: 30 10% 18%;
+    --border-strong: 28 9% 25%;
+
+    --primary: 16 60% 53%;              /* terracotta lifted for dark */
+    --primary-foreground: 30 12% 9%;
+    --primary-muted: 16 22% 22%;
+
+    --secondary: 28 9% 17%;
+    --secondary-foreground: 36 26% 88%;
+
+    --muted: 28 9% 15%;
+    --muted-foreground: 36 12% 60%;
+
+    --accent: 16 60% 53%;
+    --accent-foreground: 30 12% 9%;
+
+    --destructive: 8 55% 52%;
+    --destructive-foreground: 36 26% 88%;
+
+    --success: 100 28% 54%;
+    --warning: 38 56% 52%;
+
+    --card: 30 11% 11%;
+    --card-foreground: 36 26% 88%;
+
+    --popover: 28 11% 13%;
+    --popover-foreground: 36 26% 88%;
+
+    --input: 30 10% 18%;
+    --ring: 16 60% 53%;
+
+    --article-saturation-multiplier: 1;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv02", "tnum", "calt";
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Tabular numbers everywhere counts matter */
+  .tabular-nums,
+  kbd,
+  code {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Konva stages contain absolutely-positioned canvases */
+  .konvajs-content {
+    background: hsl(var(--background));
+  }
+}
+
+@layer utilities {
+  .text-xs    { font-size: 0.6875rem; line-height: 1rem; }    /* 11px */
+  .text-sm    { font-size: 0.8125rem; line-height: 1.125rem; } /* 13px */
+  .text-base  { font-size: 0.9375rem; line-height: 1.375rem; } /* 15px */
+  .text-lg    { font-size: 1.0625rem; line-height: 1.5rem; }   /* 17px */
+  .text-xl    { font-size: 1.25rem;   line-height: 1.625rem; } /* 20px */
+
+  .font-mono { font-family: var(--font-mono); }
+  .font-sans { font-family: var(--font-sans); }
+
+  /* Surface utilities not in default Tailwind */
+  .bg-surface         { background-color: hsl(var(--surface)); }
+  .bg-surface-2       { background-color: hsl(var(--surface-2)); }
+  .bg-surface-overlay { background-color: hsl(var(--surface-overlay)); }
+  .text-foreground-muted   { color: hsl(var(--foreground-muted)); }
+  .text-foreground-subtle  { color: hsl(var(--foreground-subtle)); }
+  .border-strong { border-color: hsl(var(--border-strong)); }
+
+  /* Article hue helpers — used by Konva via getComputedStyle */
+  .article-1  { color: hsl(var(--article-1)); }
+  .article-2  { color: hsl(var(--article-2)); }
+  .article-3  { color: hsl(var(--article-3)); }
+  .article-4  { color: hsl(var(--article-4)); }
+  .article-5  { color: hsl(var(--article-5)); }
+  .article-6  { color: hsl(var(--article-6)); }
+  .article-7  { color: hsl(var(--article-7)); }
+  .article-8  { color: hsl(var(--article-8)); }
+  .article-9  { color: hsl(var(--article-9)); }
+  .article-10 { color: hsl(var(--article-10)); }
+}
+
+/* Reduced motion — drawer + palette + transformer fade collapse to instant */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

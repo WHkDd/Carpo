@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin, pdfium: macos-arm64, suffix: macos-arm64 }
+          - { os: macos-13, target: x86_64-apple-darwin,  pdfium: macos-x64,   suffix: macos-x64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, pdfium: windows-x64, suffix: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # PDFium binary — populated at M2 once pdfium-render is wired.
+      # The cache key uses VERSION file; fetch script will live under
+      # src-tauri/scripts/fetch_pdfium.{sh,ps1}.
+      - name: Cache pdfium
+        if: hashFiles('src-tauri/pdfium/VERSION') != ''
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/pdfium/${{ matrix.pdfium }}
+          key: pdfium-${{ hashFiles('src-tauri/pdfium/VERSION') }}-${{ matrix.pdfium }}
+
+      - name: Fetch pdfium (unix)
+        if: hashFiles('src-tauri/pdfium/VERSION') != '' && runner.os != 'Windows'
+        run: bash src-tauri/scripts/fetch_pdfium.sh ${{ matrix.pdfium }}
+      - name: Fetch pdfium (windows)
+        if: hashFiles('src-tauri/pdfium/VERSION') != '' && runner.os == 'Windows'
+        run: pwsh src-tauri/scripts/fetch_pdfium.ps1 ${{ matrix.pdfium }}
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcvt-${{ matrix.suffix }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
+
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: false
