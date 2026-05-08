@@ -5,9 +5,7 @@ use std::{
 };
 
 use ::image::{GenericImageView, ImageFormat};
-use pdfium_render::prelude::{
-    PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError,
-};
+use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError};
 
 use crate::error::{AppError, AppResult};
 
@@ -140,31 +138,30 @@ fn load_document<'a>(
         )));
     }
 
-    pdfium.load_pdf_from_file(path, None).map_err(map_pdfium_error)
+    pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(map_pdfium_error)
 }
 
 fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
     let mut candidates = Vec::new();
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if let Ok(exe) = env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            #[cfg(target_os = "macos")]
-            {
+            if cfg!(target_os = "macos") {
                 candidates.push(exe_dir.join("Frameworks").join("libpdfium.dylib"));
                 if let Some(contents_dir) = exe_dir.parent() {
                     candidates.push(contents_dir.join("Frameworks").join("libpdfium.dylib"));
                 }
                 candidates.push(exe_dir.join("libpdfium.dylib"));
-            }
-
-            #[cfg(target_os = "windows")]
-            {
+            } else if cfg!(target_os = "windows") {
                 candidates.push(exe_dir.join("pdfium.dll"));
             }
         }
     }
 
-    candidates.push(dev_pdfium_library_path()?);
+    candidates.extend([dev_pdfium_library_path()?]);
     Ok(candidates)
 }
 
@@ -196,12 +193,15 @@ fn map_pdfium_error(err: PdfiumError) -> AppError {
     AppError::Pdf(err.to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::*;
 
     fn sample_pdf() -> &'static Path {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.pdf"))
+        Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sample.pdf"
+        ))
     }
 
     #[test]

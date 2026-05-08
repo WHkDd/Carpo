@@ -36,11 +36,23 @@ describe("usePageBitmapCache", () => {
   it("evicts least-recently-used entries and revokes URLs", () => {
     const cache = createPageBitmapCache(2);
 
-    const first = cache.set("a", 1, 150, new Blob(["first"]));
-    const second = cache.set("a", 2, 150, new Blob(["second"]));
+    const first = cache.set("a", 1, 150, {
+      blob: new Blob(["first"]),
+      width: 800,
+      height: 1200,
+    });
+    const second = cache.set("a", 2, 150, {
+      blob: new Blob(["second"]),
+      width: 800,
+      height: 1200,
+    });
 
     expect(cache.get("a", 1, 150)).toBe(first);
-    const third = cache.set("a", 3, 150, new Blob(["third"]));
+    const third = cache.set("a", 3, 150, {
+      blob: new Blob(["third"]),
+      width: 800,
+      height: 1200,
+    });
 
     expect(cache.size).toBe(2);
     expect(cache.get("a", 2, 150)).toBeNull();
@@ -49,11 +61,31 @@ describe("usePageBitmapCache", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith(second.url);
   });
 
+  it("preserves width/height on cached entries", () => {
+    const cache = createPageBitmapCache(2);
+    const entry = cache.set("a", 1, 150, {
+      blob: new Blob(["x"]),
+      width: 1024,
+      height: 768,
+    });
+    expect(entry.width).toBe(1024);
+    expect(entry.height).toBe(768);
+    expect(cache.get("a", 1, 150)?.width).toBe(1024);
+  });
+
   it("revokes all live URLs when the hook unmounts", () => {
     const { result, unmount } = renderHook(() => usePageBitmapCache(2));
 
-    const first = result.current.set("a", 1, 150, new Blob(["first"]));
-    const second = result.current.set("a", 2, 150, new Blob(["second"]));
+    const first = result.current.set("a", 1, 150, {
+      blob: new Blob(["first"]),
+      width: 1,
+      height: 1,
+    });
+    const second = result.current.set("a", 2, 150, {
+      blob: new Blob(["second"]),
+      width: 1,
+      height: 1,
+    });
     unmount();
 
     expect(revokeObjectURL).toHaveBeenCalledWith(first.url);

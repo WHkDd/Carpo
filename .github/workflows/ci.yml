@@ -17,8 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -47,6 +45,10 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev
+      - name: Create frontend dist placeholder
+        run: |
+          mkdir -p dist
+          touch dist/index.html
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
