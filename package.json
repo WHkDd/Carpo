@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
-    "test": "vitest"
+    "test": "vitest",
+    "prepare:pdfium": "node src-tauri/scripts/prepare_pdfium.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
