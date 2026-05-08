@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <title>Xcvt · Settings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --background: 30 12% 9%;
+      --surface: 30 11% 11%;
+      --surface-2: 28 11% 14%;
+      --surface-overlay: 28 9% 17%;
+      --foreground: 36 26% 88%;
+      --foreground-muted: 36 12% 60%;
+      --foreground-subtle: 32 8% 41%;
+      --border: 30 10% 18%;
+      --border-strong: 28 9% 25%;
+      --primary: 16 60% 53%;
+      --primary-foreground: 30 12% 9%;
+      --primary-muted: 16 22% 22%;
+      --destructive: 8 55% 52%;
+      --success: 100 28% 54%;
+    }
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-feature-settings: 'tnum';
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.005em;
+      background-color: hsl(var(--background));
+      color: hsl(var(--foreground));
+    }
+    .text-xs { font-size: 11px; line-height: 16px; }
+    .text-sm { font-size: 13px; line-height: 18px; }
+    .text-base { font-size: 15px; line-height: 22px; }
+    .text-lg { font-size: 17px; line-height: 24px; }
+    .font-mono { font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; }
+
+    .modal-card {
+      background: hsl(var(--surface));
+      border: 1px solid hsl(var(--border));
+      box-shadow: 0 20px 60px -20px hsl(0 0% 0% / 0.6);
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: hsl(var(--foreground-muted));
+      cursor: pointer;
+      transition: background 100ms ease;
+      position: relative;
+    }
+    .tab:hover { background: hsl(var(--surface-2)); color: hsl(var(--foreground)); }
+    .tab.active {
+      background: hsl(var(--surface-2));
+      color: hsl(var(--foreground));
+      font-weight: 500;
+    }
+    .tab.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: hsl(var(--primary));
+      border-radius: 0 2px 2px 0;
+    }
+    .input-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .input {
+      height: 32px;
+      padding: 0 10px;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      border-radius: 6px;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+    }
+    .input:focus {
+      outline: 2px solid hsl(var(--primary));
+      outline-offset: 1px;
+      border-color: transparent;
+    }
+    .input-mono { font-family: "JetBrains Mono", monospace; letter-spacing: 0; }
+    textarea.input {
+      height: auto;
+      padding: 10px;
+      resize: vertical;
+      min-height: 100px;
+    }
+    kbd {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: hsl(var(--surface-overlay));
+      color: hsl(var(--foreground-muted));
+      border: 1px solid hsl(var(--border));
+    }
+  </style>
+</head>
+<body class="h-screen overflow-hidden">
+
+  <div class="absolute inset-0" style="background: hsl(0 0% 0% / 0.55);"></div>
+
+  <div class="relative flex h-full items-center justify-center p-8">
+    <div class="modal-card flex w-full max-w-4xl flex-col rounded-[10px] overflow-hidden" style="height: 600px;">
+
+      <!-- Header -->
+      <header class="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
+        <h2 class="text-lg font-medium text-foreground">设置</h2>
+        <span class="font-mono text-xs text-foreground-subtle">⌘,</span>
+      </header>
+
+      <div class="flex flex-1 overflow-hidden">
+
+        <!-- Left tabs -->
+        <nav class="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border bg-surface-2/50 p-3">
+          <div class="mb-1 px-3 pt-1 text-xs font-medium uppercase tracking-wider text-foreground-subtle">OCR 服务商</div>
+          <div class="tab">
+            <span class="inline-block h-1.5 w-1.5 rounded-full" style="background: hsl(var(--foreground-subtle));"></span>
+            PaddleOCR
+          </div>
+          <div class="tab">
+            <span class="inline-block h-1.5 w-1.5 rounded-full" style="background: hsl(var(--success));"></span>
+            OpenAI
+          </div>
+          <div class="tab active">
+            <span class="inline-block h-1.5 w-1.5 rounded-full" style="background: hsl(var(--success));"></span>
+            Claude
+          </div>
+          <div class="tab">
+            <span class="inline-block h-1.5 w-1.5 rounded-full" style="background: hsl(var(--foreground-subtle));"></span>
+            OpenRouter
+          </div>
+
+          <div class="my-2 h-px bg-border"></div>
+
+          <div class="mb-1 px-3 pt-1 text-xs font-medium uppercase tracking-wider text-foreground-subtle">通用</div>
+          <div class="tab">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            自定义提示词
+          </div>
+          <div class="tab">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            外观与快捷键
+          </div>
+          <div class="tab">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            日志与崩溃恢复
+          </div>
+        </nav>
+
+        <!-- Right content: Claude provider panel -->
+        <div class="flex-1 overflow-y-auto">
+          <div class="px-7 py-6">
+            <div class="mb-1 flex items-center gap-2">
+              <h3 class="text-base font-medium text-foreground">Claude</h3>
+              <span class="rounded bg-primary-muted px-1.5 py-0.5 text-xs font-medium text-primary">已配置</span>
+            </div>
+            <p class="mb-5 text-sm text-foreground-muted">
+              使用 Anthropic Vision 模型识别版块。API Key 存于系统 Keychain，不会写入磁盘配置文件。
+            </p>
+
+            <div class="space-y-4">
+
+              <div class="input-row">
+                <div class="flex items-center justify-between">
+                  <label class="text-sm font-medium text-foreground">API Key</label>
+                  <button class="text-xs text-primary hover:underline">从 console.anthropic.com 获取 →</button>
+                </div>
+                <div class="flex gap-1.5">
+                  <input class="input input-mono flex-1" type="password" value="sk-ant-•••••••••••••••••••••••••••••••••••••••••••••••" />
+                  <button class="flex h-8 items-center rounded border border-border bg-transparent px-3 text-xs text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+                    显示
+                  </button>
+                  <button class="flex h-8 items-center rounded border border-destructive/40 bg-transparent px-3 text-xs text-destructive hover:bg-destructive/10">
+                    删除
+                  </button>
+                </div>
+                <span class="text-xs text-success">✓ 上次验证 2 分钟前</span>
+              </div>
+
+              <div class="input-row">
+                <div class="flex items-center justify-between">
+                  <label class="text-sm font-medium text-foreground">模型</label>
+                  <button class="flex items-center gap-1 text-xs text-primary hover:underline">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    刷新模型列表
+                  </button>
+                </div>
+                <select class="input">
+                  <option>claude-sonnet-4-6</option>
+                  <option>claude-opus-4-7</option>
+                  <option>claude-haiku-4-5-20251001</option>
+                </select>
+                <span class="text-xs text-foreground-subtle">最近用 Sonnet 4.6 单页 OCR ≈ 4.2s · 成本 ≈ $0.014</span>
+              </div>
+
+              <div class="my-5 h-px bg-border"></div>
+
+              <div class="input-row">
+                <label class="text-sm font-medium text-foreground">自定义识别提示词</label>
+                <textarea class="input" placeholder="留空使用默认提示词">请识别并转录图中所有文字，按原始版式分段输出。竖排请转为横排。繁体保留繁体；不要添加任何额外说明、不要使用 Markdown 格式、不要在末尾加省略号。</textarea>
+                <div class="flex items-center justify-between text-xs text-foreground-subtle">
+                  <span>提示词覆盖 OpenAI · Claude · OpenRouter；PaddleOCR 不接受自定义提示词。</span>
+                  <button class="text-foreground-muted hover:text-foreground">恢复默认</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Footer -->
+      <footer class="flex items-center justify-between gap-4 border-t border-border bg-surface-2 px-6 py-3">
+        <div class="text-xs text-foreground-muted">
+          配置存于 <span class="font-mono text-foreground-subtle">~/Library/Application Support/local.kai.xcvt/</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="flex h-8 items-center rounded border border-border bg-transparent px-3 text-sm text-foreground-muted hover:bg-surface hover:text-foreground">
+            取消
+          </button>
+          <button class="flex h-8 items-center gap-2 rounded bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            保存
+            <kbd class="bg-primary-foreground/15 text-primary-foreground/80 border-primary-foreground/15">⌘S</kbd>
+          </button>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,70 @@
+[package]
+name = "xcvt"
+version = "0.1.0"
+description = "Newspaper layout OCR — Tauri rewrite"
+authors = ["Kai <wanghaokai8@gmail.com>"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.78"
+
+[lib]
+name = "xcvt_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-log = "2"
+tauri-plugin-store = "2"
+tauri-plugin-os = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-shell = "2"
+
+# Serde / errors
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Imaging / PDF (pulled in incrementally per milestone)
+# image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }   # M1
+# pdfium-render = { version = "0.8", features = ["thread_safe"] }                                     # M2
+# fast_image_resize = "5"                                                                              # M5
+base64 = "0.22"
+
+# Secrets / paths
+keyring = "3"
+directories = "5"
+once_cell = "1"
+parking_lot = "0.12"
+
+# Logging
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Misc
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+mime_guess = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1440,initial-scale=1" />
+  <title>Xcvt · Main view mockup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: ['class'],
+      theme: {
+        extend: {
+          colors: {
+            border: 'hsl(var(--border) / <alpha-value>)',
+            background: 'hsl(var(--background) / <alpha-value>)',
+            foreground: 'hsl(var(--foreground) / <alpha-value>)',
+            'foreground-muted': 'hsl(var(--foreground-muted) / <alpha-value>)',
+            'foreground-subtle': 'hsl(var(--foreground-subtle) / <alpha-value>)',
+            surface: 'hsl(var(--surface) / <alpha-value>)',
+            'surface-2': 'hsl(var(--surface-2) / <alpha-value>)',
+            'surface-overlay': 'hsl(var(--surface-overlay) / <alpha-value>)',
+            primary: 'hsl(var(--primary) / <alpha-value>)',
+            'primary-foreground': 'hsl(var(--primary-foreground) / <alpha-value>)',
+            'primary-muted': 'hsl(var(--primary-muted) / <alpha-value>)',
+            destructive: 'hsl(var(--destructive) / <alpha-value>)',
+            success: 'hsl(var(--success) / <alpha-value>)',
+            warning: 'hsl(var(--warning) / <alpha-value>)',
+            article1: 'hsl(var(--article-1) / <alpha-value>)',
+            article2: 'hsl(var(--article-2) / <alpha-value>)',
+            article3: 'hsl(var(--article-3) / <alpha-value>)',
+            article4: 'hsl(var(--article-4) / <alpha-value>)',
+            article5: 'hsl(var(--article-5) / <alpha-value>)',
+          },
+          fontFamily: {
+            sans: ['"PingFang SC"', '"Microsoft YaHei"', '-apple-system', 'BlinkMacSystemFont', '"Inter Variable"', 'Inter', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', '"SF Mono"', 'ui-monospace', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root {
+      --background: 38 33% 95%;
+      --surface: 36 33% 97%;
+      --surface-2: 38 25% 91%;
+      --surface-overlay: 36 22% 88%;
+      --foreground: 28 18% 13%;
+      --foreground-muted: 28 11% 38%;
+      --foreground-subtle: 28 8% 53%;
+      --border: 36 22% 82%;
+      --primary: 16 65% 43%;
+      --primary-foreground: 36 33% 97%;
+      --primary-muted: 18 55% 87%;
+      --destructive: 8 60% 40%;
+      --success: 100 28% 41%;
+      --warning: 38 56% 38%;
+      --article-1: 20 70% 50%;
+      --article-2: 130 38% 42%;
+      --article-3: 320 38% 50%;
+      --article-4: 220 50% 52%;
+      --article-5: 75 60% 50%;
+    }
+    .dark {
+      --background: 30 12% 9%;
+      --surface: 30 11% 11%;
+      --surface-2: 28 11% 14%;
+      --surface-overlay: 28 9% 17%;
+      --foreground: 36 26% 88%;
+      --foreground-muted: 36 12% 60%;
+      --foreground-subtle: 32 8% 41%;
+      --border: 30 10% 18%;
+      --primary: 16 60% 53%;
+      --primary-foreground: 30 12% 9%;
+      --primary-muted: 16 22% 22%;
+      --destructive: 8 55% 52%;
+      --success: 100 28% 54%;
+      --warning: 38 56% 52%;
+      --article-1: 20 70% 55%;
+      --article-2: 130 38% 50%;
+      --article-3: 320 38% 58%;
+      --article-4: 220 50% 60%;
+      --article-5: 75 60% 55%;
+    }
+    body {
+      font-family: var(--font-sans, system-ui);
+      font-feature-settings: 'tnum';
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.005em;
+    }
+    .text-xs { font-size: 11px; line-height: 16px; }
+    .text-sm { font-size: 13px; line-height: 18px; }
+    .text-base { font-size: 15px; line-height: 22px; }
+    .text-lg { font-size: 17px; line-height: 24px; }
+    .text-xl { font-size: 20px; line-height: 26px; }
+    .grid-paper {
+      background-color: hsl(var(--surface));
+      background-image:
+        linear-gradient(hsl(var(--border)) 1px, transparent 1px),
+        linear-gradient(90deg, hsl(var(--border)) 1px, transparent 1px);
+      background-size: 32px 32px;
+      background-position: -1px -1px;
+    }
+    .canvas-bg {
+      background:
+        radial-gradient(ellipse at center, hsl(30 8% 14%) 0%, hsl(30 12% 9%) 60%);
+    }
+    .scan-paper {
+      background:
+        repeating-linear-gradient(
+          0deg,
+          hsl(38 18% 86%) 0px,
+          hsl(38 18% 86%) 1px,
+          hsl(38 22% 88%) 2px,
+          hsl(38 22% 88%) 3px
+        ),
+        radial-gradient(ellipse at 30% 30%, hsl(40 28% 92%), hsl(36 16% 84%));
+      filter: contrast(1.05);
+    }
+    .article-fill-1 { fill: hsl(var(--article-1)); fill-opacity: 0.22; stroke: hsl(var(--article-1)); stroke-width: 1.5; stroke-opacity: 0.85; }
+    .article-fill-2 { fill: hsl(var(--article-2)); fill-opacity: 0.22; stroke: hsl(var(--article-2)); stroke-width: 1.5; stroke-opacity: 0.85; }
+    .article-fill-3 { fill: hsl(var(--article-3)); fill-opacity: 0.22; stroke: hsl(var(--article-3)); stroke-width: 1.5; stroke-opacity: 0.85; }
+    .article-fill-4 { fill: hsl(var(--article-4)); fill-opacity: 0.22; stroke: hsl(var(--article-4)); stroke-width: 1.5; stroke-opacity: 0.85; }
+    .article-selected { fill: hsl(var(--primary)); fill-opacity: 0.18; stroke: hsl(var(--primary)); stroke-width: 2.5; stroke-dasharray: 0; }
+    .badge-num {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 600;
+      border-radius: 4px;
+    }
+    kbd {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: hsl(var(--surface-overlay));
+      color: hsl(var(--foreground-muted));
+      border: 1px solid hsl(var(--border));
+      letter-spacing: 0;
+    }
+    .focus-ring:focus-visible {
+      outline: 2px solid hsl(var(--primary));
+      outline-offset: 2px;
+    }
+    .queue-item {
+      transition: background-color 120ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    .queue-item:hover {
+      background-color: hsl(var(--surface-2));
+    }
+    .queue-item-active {
+      background-color: hsl(var(--surface-2));
+      position: relative;
+    }
+    .queue-item-active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background-color: hsl(var(--primary));
+      border-radius: 0 2px 2px 0;
+    }
+    .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body class="bg-background text-foreground">
+
+<div class="flex h-screen w-screen flex-col overflow-hidden">
+
+  <!-- TOOLBAR -->
+  <header class="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-surface px-2 text-sm">
+    <div class="mr-1 flex items-center gap-1.5 px-2 font-mono text-xs font-medium tracking-tight text-foreground-muted">
+      <span class="inline-block h-2 w-2 rounded-full bg-primary"></span>
+      <span>Xcvt</span>
+    </div>
+    <span class="h-5 w-px bg-border"></span>
+
+    <button class="focus-ring flex h-7 items-center gap-1.5 rounded px-2 text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+      添加文件
+    </button>
+    <button class="focus-ring flex h-7 items-center gap-1.5 rounded px-2 text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      添加文件夹
+    </button>
+
+    <span class="h-5 w-px bg-border"></span>
+
+    <div class="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
+      <button class="focus-ring flex h-6 w-6 items-center justify-center rounded text-foreground-muted hover:bg-surface-overlay" title="上一页">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span class="px-2 font-mono text-xs tabular-nums text-foreground-muted">3 / 8</span>
+      <button class="focus-ring flex h-6 w-6 items-center justify-center rounded text-foreground-muted hover:bg-surface-overlay" title="下一页">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+
+    <span class="h-5 w-px bg-border"></span>
+
+    <div class="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
+      <button class="focus-ring flex h-6 w-6 items-center justify-center rounded text-foreground-muted hover:bg-surface-overlay">−</button>
+      <input type="text" value="64%" class="w-12 bg-transparent text-center font-mono text-xs tabular-nums text-foreground focus:outline-none" />
+      <button class="focus-ring flex h-6 w-6 items-center justify-center rounded text-foreground-muted hover:bg-surface-overlay">+</button>
+      <button class="focus-ring ml-0.5 flex h-6 items-center justify-center rounded px-2 text-xs text-foreground-muted hover:bg-surface-overlay" title="缩放至窗口 ⌘0">适应</button>
+    </div>
+
+    <span class="h-5 w-px bg-border"></span>
+
+    <button class="focus-ring flex h-7 items-center gap-1 rounded px-2 text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      手动模式
+      <span class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-primary"></span>
+    </button>
+
+    <div class="ml-auto flex items-center gap-1">
+      <button class="focus-ring flex h-7 items-center gap-1.5 rounded border border-border bg-surface px-2 text-xs text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>命令</span>
+        <kbd>⌘K</kbd>
+      </button>
+      <button class="focus-ring flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground" title="设置 ⌘,">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- BODY -->
+  <main class="flex flex-1 overflow-hidden">
+
+    <!-- FILE QUEUE -->
+    <aside class="flex w-[220px] shrink-0 flex-col border-r border-border bg-surface">
+      <div class="flex h-9 items-center justify-between border-b border-border px-3 text-xs font-medium text-foreground-muted">
+        <span>文件队列 <span class="ml-1 font-mono tabular-nums text-foreground-subtle">8</span></span>
+        <button class="text-foreground-subtle hover:text-foreground" title="折叠">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto scrollbar-thin py-1">
+        <div class="queue-item flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-foreground-subtle"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="flex-1 truncate text-foreground-muted">19470101.tiff</span>
+          <span class="font-mono text-xs tabular-nums text-foreground-subtle">✓</span>
+        </div>
+        <div class="queue-item queue-item-active flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-primary"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+          <span class="flex-1 truncate font-medium text-foreground">字林西报-1947-04.pdf</span>
+          <span class="font-mono text-xs tabular-nums text-foreground-muted">3 / 8</span>
+        </div>
+        <div class="queue-item flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-foreground-subtle"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="flex-1 truncate text-foreground-muted">申报-1936-02-15.tiff</span>
+          <span class="font-mono text-xs tabular-nums text-foreground-subtle">⋯</span>
+        </div>
+        <div class="queue-item flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-warning"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="flex-1 truncate text-foreground-muted">大公报-1948-12.pdf</span>
+          <span class="font-mono text-xs tabular-nums text-warning" title="2 项失败">!2</span>
+        </div>
+        <div class="queue-item flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-foreground-subtle"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          <span class="flex-1 truncate text-foreground-muted">scan_0042.png</span>
+        </div>
+        <div class="queue-item flex items-center gap-2.5 px-3 py-1.5 text-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="shrink-0 text-foreground-subtle"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          <span class="flex-1 truncate text-foreground-muted">scan_0043.png</span>
+        </div>
+      </div>
+
+      <div class="border-t border-border p-2 space-y-1.5">
+        <button class="focus-ring flex h-7 w-full items-center justify-center gap-1.5 rounded bg-surface-2 text-xs text-foreground-muted hover:bg-surface-overlay hover:text-foreground">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          添加
+        </button>
+        <button class="focus-ring flex h-7 w-full items-center justify-center gap-1.5 rounded border border-primary/40 bg-primary-muted text-xs font-medium text-primary hover:bg-primary hover:text-primary-foreground">
+          批量整页 OCR
+        </button>
+        <button class="focus-ring flex h-7 w-full items-center justify-center gap-1.5 rounded border border-border bg-transparent text-xs text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+          批量分组生成
+        </button>
+      </div>
+    </aside>
+
+    <!-- CANVAS -->
+    <section class="relative flex flex-1 items-center justify-center canvas-bg overflow-hidden">
+
+      <!-- Newspaper scan with marked blocks -->
+      <div class="relative" style="width: 540px; height: 720px;">
+        <div class="scan-paper absolute inset-0 rounded-sm"></div>
+
+        <!-- Faux newspaper text -->
+        <div class="absolute inset-0 p-6 font-serif text-[6px] leading-[7px] text-stone-700 opacity-30 select-none">
+          <div class="text-center text-[14px] font-bold leading-tight">字林西報</div>
+          <div class="text-center text-[7px] leading-tight mt-0.5">民國三十六年四月六日　星期日</div>
+          <div class="mt-2 grid grid-cols-4 gap-2">
+            <div class="space-y-0.5">
+              <div class="font-bold text-[7px]">本埠新聞</div>
+              <div class="space-y-0.5">
+                <p>滬上連日陰雨，街市行人寥寥，惟商鋪門前依舊燈火通明。據當局昨日午後發佈公告，本月公共交通票價暫不調整，市民可暫舒一口氣。</p>
+                <p>南京路某老牌綢緞莊昨晨突起火警，幸消防迅捷，未及鄰舍。</p>
+                <p>外白渡橋近日車馬擁擠，警局擬增派巡警維持秩序。</p>
+              </div>
+            </div>
+            <div class="space-y-0.5">
+              <div class="font-bold text-[7px]">商業行情</div>
+              <p>美金市價昨日開二萬六千八百元，較前日略有回落。各大銀行公會發表聯合聲明，呼籲市民勿輕信坊間流言。</p>
+              <p>糧食供應見緊，北市米價每石漲洋五元。據悉鐵路恢復通車後南運糧食將陸續抵滬。</p>
+              <p>橡膠進口稅率有所調整，工廠主聯名上書當局請求酌減。</p>
+            </div>
+            <div class="space-y-0.5">
+              <div class="font-bold text-[7px]">國際電訊</div>
+              <p>路透社倫敦五日電：英國首相昨日在下議院發表演說，強調戰後重建之要務。法國代表團將於下週訪英。</p>
+              <p>美聯社華盛頓電：杜魯門總統會見駐美大使。中美貿易協定將續延一年。</p>
+              <p>東京特訓電：盟軍司令部宣佈新一批戰後改革法令。</p>
+            </div>
+            <div class="space-y-0.5">
+              <div class="font-bold text-[7px]">社會見聞</div>
+              <p>霞飛路某戲院連日上演新派粵劇，場場爆滿。劇中主角李紅菱昨日接受本報訪問時表示，希望演藝事業能有更好發展。</p>
+              <p>本埠各大學春季招生報名踴躍，較去年增加三成有餘。</p>
+              <p>舊書市場興旺，明清古籍多有現身。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Block overlays (SVG for crisp scaling) -->
+        <svg class="absolute inset-0 h-full w-full" viewBox="0 0 540 720" preserveAspectRatio="none">
+          <!-- Article 1: 头版社论 -->
+          <rect x="36" y="40" width="468" height="60" class="article-fill-1" rx="2"/>
+          <!-- Article 2: 商业行情 -->
+          <rect x="158" y="118" width="115" height="240" class="article-fill-2" rx="2"/>
+          <!-- Article 3: 国际电讯 -->
+          <rect x="280" y="118" width="115" height="240" class="article-fill-3" rx="2"/>
+          <!-- Article 4: 本埠新闻 (split L-shape rendered as 2 rects) -->
+          <rect x="36" y="118" width="115" height="240" class="article-fill-4" rx="2"/>
+          <rect x="36" y="380" width="240" height="60" class="article-fill-4" rx="2"/>
+          <!-- Currently selected (3 blocks of social news, in selection state) -->
+          <rect x="402" y="118" width="102" height="120" class="article-selected" rx="2"/>
+          <rect x="402" y="246" width="102" height="112" class="article-selected" rx="2"/>
+          <rect x="280" y="380" width="224" height="60" class="article-selected" rx="2"/>
+        </svg>
+
+        <!-- Selection-order badges -->
+        <div class="absolute" style="top: 122px; left: 406px;">
+          <span class="badge-num bg-primary text-primary-foreground">1</span>
+        </div>
+        <div class="absolute" style="top: 250px; left: 406px;">
+          <span class="badge-num bg-primary text-primary-foreground">2</span>
+        </div>
+        <div class="absolute" style="top: 384px; left: 284px;">
+          <span class="badge-num bg-primary text-primary-foreground">3</span>
+        </div>
+
+        <!-- Article badges -->
+        <div class="absolute" style="top: 44px; left: 40px;">
+          <span class="badge-num" style="background: hsl(var(--article-1)); color: hsl(var(--background));">①</span>
+        </div>
+        <div class="absolute" style="top: 122px; left: 162px;">
+          <span class="badge-num" style="background: hsl(var(--article-2)); color: hsl(var(--background));">②</span>
+        </div>
+        <div class="absolute" style="top: 122px; left: 284px;">
+          <span class="badge-num" style="background: hsl(var(--article-3)); color: hsl(var(--background));">③</span>
+        </div>
+        <div class="absolute" style="top: 122px; left: 40px;">
+          <span class="badge-num" style="background: hsl(var(--article-4)); color: hsl(var(--background));">④</span>
+        </div>
+      </div>
+
+      <!-- Floating help -->
+      <div class="absolute bottom-4 left-4 flex items-center gap-2 rounded-md border border-border bg-surface/90 px-2.5 py-1.5 text-xs text-foreground-muted backdrop-blur-sm">
+        <kbd>⌘Z</kbd> 撤销选择 · <kbd>Del</kbd> 删除 · <kbd>⌘G</kbd> 标记报道
+      </div>
+    </section>
+
+    <!-- WORKSPACE -->
+    <aside class="flex w-[320px] shrink-0 flex-col border-l border-border bg-surface overflow-y-auto scrollbar-thin">
+
+      <!-- Metadata -->
+      <section class="px-4 py-3 border-b border-border">
+        <h3 class="mb-2 text-xs font-medium uppercase tracking-wider text-foreground-subtle">报刊信息</h3>
+        <div class="space-y-2">
+          <label class="block">
+            <span class="mb-1 block text-xs text-foreground-muted">报刊名</span>
+            <input type="text" value="字林西报" class="focus-ring h-8 w-full rounded border border-border bg-background px-2.5 text-sm text-foreground placeholder:text-foreground-subtle" />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs text-foreground-muted">日期</span>
+            <input type="text" value="民国三十六年四月六日" class="focus-ring h-8 w-full rounded border border-border bg-background px-2.5 text-sm text-foreground" />
+          </label>
+        </div>
+      </section>
+
+      <!-- Selection actions -->
+      <section class="px-4 py-3 border-b border-border">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-xs font-medium uppercase tracking-wider text-foreground-subtle">当前选区</h3>
+          <span class="font-mono text-xs tabular-nums text-foreground-muted">3 块</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button class="focus-ring h-8 rounded bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90">
+            标记为报道 ⌘G
+          </button>
+          <button class="focus-ring h-8 rounded border border-border bg-transparent text-xs text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+            清除选择
+          </button>
+        </div>
+      </section>
+
+      <!-- Article list -->
+      <section class="px-4 py-3 border-b border-border">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-xs font-medium uppercase tracking-wider text-foreground-subtle">报道</h3>
+          <span class="font-mono text-xs tabular-nums text-foreground-muted">4 篇</span>
+        </div>
+        <ul class="space-y-1">
+          <li class="group flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+            <span class="badge-num shrink-0" style="background: hsl(var(--article-1)); color: hsl(var(--background));">1</span>
+            <span class="flex-1 truncate text-foreground">头版社论</span>
+            <span class="font-mono text-xs tabular-nums text-foreground-subtle">1 块</span>
+          </li>
+          <li class="group flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+            <span class="badge-num shrink-0" style="background: hsl(var(--article-2)); color: hsl(var(--background));">2</span>
+            <span class="flex-1 truncate text-foreground">商业行情</span>
+            <span class="font-mono text-xs tabular-nums text-foreground-subtle">1 块</span>
+          </li>
+          <li class="group flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+            <span class="badge-num shrink-0" style="background: hsl(var(--article-3)); color: hsl(var(--background));">3</span>
+            <span class="flex-1 truncate text-foreground">国际电讯</span>
+            <span class="font-mono text-xs tabular-nums text-foreground-subtle">1 块</span>
+          </li>
+          <li class="group flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+            <span class="badge-num shrink-0" style="background: hsl(var(--article-4)); color: hsl(var(--background));">4</span>
+            <span class="flex-1 truncate text-foreground">本埠新闻</span>
+            <span class="font-mono text-xs tabular-nums text-foreground-subtle">2 块</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- OCR -->
+      <section class="px-4 py-3">
+        <h3 class="mb-2 text-xs font-medium uppercase tracking-wider text-foreground-subtle">OCR</h3>
+
+        <div class="space-y-2 mb-3">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-foreground-muted">服务商</span>
+            <button class="focus-ring flex h-7 items-center gap-1.5 rounded border border-border bg-background px-2 text-xs text-foreground hover:bg-surface-2">
+              <span class="inline-block h-1.5 w-1.5 rounded-full bg-success"></span>
+              Claude
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-foreground-muted">速度档位</span>
+            <div class="flex items-center gap-0 rounded-md border border-border bg-surface p-0.5">
+              <button class="h-6 rounded bg-primary px-2.5 text-xs font-medium text-primary-foreground">标准</button>
+              <button class="h-6 rounded px-2.5 text-xs text-foreground-muted hover:bg-surface-2">快速</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <button class="focus-ring flex h-9 w-full items-center justify-center gap-2 rounded bg-primary font-medium text-sm text-primary-foreground hover:bg-primary/90">
+            生成文档（OCR）
+            <kbd class="bg-primary-foreground/20 text-primary-foreground/80 border-primary-foreground/20">⌘⏎</kbd>
+          </button>
+          <button class="focus-ring flex h-8 w-full items-center justify-center gap-2 rounded border border-border bg-transparent text-sm text-foreground-muted hover:bg-surface-2 hover:text-foreground">
+            整页识别
+          </button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- RESULT DRAWER (peek state) -->
+  <div class="border-t border-border bg-surface-overlay shadow-[0_-8px_24px_-12px_hsl(0_0%_0%_/_0.45)]">
+    <button class="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-surface-2">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="text-foreground-muted"><polyline points="18 15 12 9 6 15"/></svg>
+      <span class="font-medium text-foreground">已生成 4 篇</span>
+      <span class="font-mono text-xs tabular-nums text-foreground-muted">字林西报 · 民国三十六年四月六日</span>
+      <span class="ml-auto flex items-center gap-1.5">
+        <button class="focus-ring h-6 rounded px-2 text-xs text-foreground-muted hover:bg-background">复制</button>
+        <button class="focus-ring h-6 rounded px-2 text-xs text-foreground-muted hover:bg-background">保存 .md</button>
+      </span>
+    </button>
+  </div>
+
+  <!-- STATUS BAR -->
+  <footer class="flex h-7 shrink-0 items-center gap-2 border-t border-border bg-surface px-3 text-xs text-foreground-muted">
+    <span class="flex items-center gap-1.5">
+      <span class="inline-block h-1.5 w-1.5 rounded-full bg-success"></span>
+      就绪
+    </span>
+    <span class="text-border">·</span>
+    <span class="font-mono tabular-nums">Claude · sonnet-4-6</span>
+    <span class="text-border">·</span>
+    <span>standard 300 DPI</span>
+    <span class="text-border">·</span>
+    <span class="font-mono tabular-nums">选中 3 块</span>
+    <span class="text-border">·</span>
+    <span class="font-mono tabular-nums">报道 4</span>
+    <span class="ml-auto font-mono tabular-nums">缩放 64%</span>
+  </footer>
+</div>
+
+</body>
+</html>

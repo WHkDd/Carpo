@@ -1,0 +1,34 @@
+# Node
+node_modules/
+dist/
+dist-node/
+.vite/
+*.log
+.npm/
+.pnpm-store/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/Cargo.lock
+src-tauri/pdfium/macos-arm64/
+src-tauri/pdfium/macos-x64/
+src-tauri/pdfium/windows-x64/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+
+# Test / coverage
+coverage/
+.cache/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
