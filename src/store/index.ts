@@ -1,18 +1,18 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import {
-  createPageStateSlice,
-  type PageStateSlice,
-} from "./pageStateSlice";
+  createFileViewSlice,
+  type FileViewSlice,
+} from "./fileViewSlice";
 import { createQueueSlice, type QueueSlice } from "./queueSlice";
 import { createUiSlice, type UiSlice } from "./uiSlice";
 
-export type AppStore = QueueSlice & UiSlice & PageStateSlice;
+export type AppStore = QueueSlice & UiSlice & FileViewSlice;
 
 export const useStore = create<AppStore>()(
   immer((...args) => ({
     ...createQueueSlice(...args),
-    ...createPageStateSlice(...args),
+    ...createFileViewSlice(...args),
     ...createUiSlice(...args),
   }))
 );

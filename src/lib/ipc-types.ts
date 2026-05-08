@@ -41,6 +41,9 @@ export interface RenderedPagePayload {
   width: number;
   height: number;
   png_base64: string;
+  // Set by the frontend after decoding `png_base64` into a Blob and registering
+  // it with the bitmap cache. Backend never sets this.
+  objectUrl?: string;
 }
 
 export type FileKind = "image" | "pdf";
@@ -54,6 +57,8 @@ export interface FileEntry {
   pdfTotal?: number;
   currentPage?: number;
   payload?: RenderedPagePayload;
+  // Page number that `payload` was rendered for. PDFs only; undefined for images.
+  payloadPage?: number;
 }
 
 export interface Rect {

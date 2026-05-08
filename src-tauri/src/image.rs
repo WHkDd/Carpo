@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use crate::error::{AppError, AppResult};
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "bmp"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "bmp", "pdf"];
 
 pub fn supported_extensions() -> &'static [&'static str] {
     SUPPORTED_EXTENSIONS

@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { Minus, Plus } from "lucide-react";
 import type { CanvasController } from "@/components/canvas/ImageCanvas";
 import { useStore } from "@/store";
+import { DEFAULT_FILE_VIEW } from "@/store/fileViewSlice";
 import { clampZoomPercent } from "@/store/uiSlice";
 
 interface StatusBarProps {
@@ -9,8 +10,14 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ canvasRef }: StatusBarProps) {
-  const zoomPercent = useStore((s) => s.zoomPercent);
   const hasFile = useStore((s) => s.currentFileId !== null);
+  const zoomPercent = useStore((s) => {
+    if (!s.currentFileId) return DEFAULT_FILE_VIEW.zoomPercent;
+    return (
+      s.fileViews[s.currentFileId]?.zoomPercent ??
+      DEFAULT_FILE_VIEW.zoomPercent
+    );
+  });
 
   const [draftZoom, setDraftZoom] = useState<string>(String(zoomPercent));
 
