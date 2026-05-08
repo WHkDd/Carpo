@@ -2,8 +2,17 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { FileEntry, FileKind } from "@/lib/ipc-types";
-import { listSupportedExtensions, loadRasterImage } from "@/lib/tauri";
+import {
+  getPdfInfo,
+  listSupportedExtensions,
+  loadRasterImage,
+  renderPage,
+} from "@/lib/tauri";
 import { useStore } from "@/store";
+import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
+import { pngBase64ToBlob } from "./usePageBitmapCache";
+
+const PDF_PREVIEW_DPI = 150;
 
 function basename(p: string): string {
   const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
@@ -29,6 +38,7 @@ function makeId(): string {
 export function useFileImport() {
   const addFile = useStore((s) => s.addFile);
   const setStatusText = useStore((s) => s.setStatusText);
+  const cache = usePageBitmapCacheContext();
 
   const supportedRef = useRef<string[] | null>(null);
 
@@ -54,31 +64,83 @@ export function useFileImport() {
 
       let okCount = 0;
       for (const path of accepted) {
+        const name = basename(path);
+        const ext = extensionOf(name);
+        const kind = classify(ext);
         try {
-          const payload = await loadRasterImage(path);
-          const name = basename(path);
-          const ext = extensionOf(name);
-          const entry: FileEntry = {
-            id: makeId(),
-            path,
-            name,
-            ext,
-            kind: classify(ext),
-            payload,
-          };
+          const entry: FileEntry =
+            kind === "pdf"
+              ? await buildPdfEntry(path, name, ext)
+              : await buildImageEntry(path, name, ext);
           addFile(entry);
           okCount += 1;
         } catch (err) {
-          console.error("loadRasterImage failed", path, err);
-          setStatusText(`加载失败 · ${basename(path)}`);
+          console.error(`${kind} import failed`, path, err);
+          setStatusText(`加载失败 · ${name}`);
         }
+      }
+
+      async function buildImageEntry(
+        path: string,
+        name: string,
+        ext: string
+      ): Promise<FileEntry> {
+        const payload = await loadRasterImage(path);
+        return {
+          id: makeId(),
+          path,
+          name,
+          ext,
+          kind: "image",
+          payload,
+        };
+      }
+
+      async function buildPdfEntry(
+        path: string,
+        name: string,
+        ext: string
+      ): Promise<FileEntry> {
+        const info = await getPdfInfo(path);
+        const pdfTotal = Math.max(1, info.page_count);
+        const ipc = await renderPage({
+          path,
+          page: 1,
+          dpi: PDF_PREVIEW_DPI,
+          purpose: "preview",
+        });
+
+        const id = makeId();
+        const blob = pngBase64ToBlob(ipc.png_base64);
+        const entry = cache.set(id, 1, PDF_PREVIEW_DPI, {
+          blob,
+          width: ipc.width,
+          height: ipc.height,
+        });
+
+        return {
+          id,
+          path,
+          name,
+          ext,
+          kind: "pdf",
+          payload: {
+            width: ipc.width,
+            height: ipc.height,
+            png_base64: "",
+            objectUrl: entry.url,
+          },
+          pdfTotal,
+          currentPage: 1,
+          payloadPage: 1,
+        };
       }
 
       if (okCount > 0) {
         setStatusText(okCount === 1 ? "就绪" : `已加载 ${okCount} 个文件`);
       }
     },
-    [addFile, getSupported, setStatusText]
+    [addFile, cache, getSupported, setStatusText]
   );
 
   const openFiles = useCallback(async () => {

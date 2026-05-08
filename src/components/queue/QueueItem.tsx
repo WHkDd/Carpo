@@ -14,6 +14,10 @@ export function QueueItem({ entry, active, onSelect }: QueueItemProps) {
     entry.kind === "pdf"
       ? `pdf · ${entry.ext.toUpperCase()}`
       : `image · ${entry.ext.toUpperCase()}`;
+  const pageBadge =
+    entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
+      ? `${entry.currentPage ?? 1} / ${entry.pdfTotal}`
+      : null;
 
   return (
     <button
@@ -44,6 +48,11 @@ export function QueueItem({ entry, active, onSelect }: QueueItemProps) {
           {meta}
         </span>
       </span>
+      {pageBadge && (
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle">
+          {pageBadge}
+        </span>
+      )}
     </button>
   );
 }

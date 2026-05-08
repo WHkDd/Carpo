@@ -1,6 +1,6 @@
 import type { StateCreator } from "zustand";
 import type { FileEntry, RenderedPagePayload } from "@/lib/ipc-types";
-import type { PageStateSlice } from "./pageStateSlice";
+import type { FileViewSlice } from "./fileViewSlice";
 import type { UiSlice } from "./uiSlice";
 
 export interface QueueSlice {
@@ -15,11 +15,15 @@ export interface QueueSlice {
   setCurrentPage: (id: string, page: number) => void;
   prevPage: () => void;
   nextPage: () => void;
-  setFilePayload: (id: string, payload: RenderedPagePayload) => void;
+  setFilePayload: (
+    id: string,
+    payload: RenderedPagePayload,
+    payloadPage?: number
+  ) => void;
 }
 
 export const createQueueSlice: StateCreator<
-  QueueSlice & UiSlice & PageStateSlice,
+  QueueSlice & UiSlice & FileViewSlice,
   [["zustand/immer", never]],
   [],
   QueueSlice
@@ -94,11 +98,14 @@ export const createQueueSlice: StateCreator<
       file.currentPage = clampPage((file.currentPage ?? 1) + 1, file.pdfTotal ?? 1);
       syncCurrentPageFields(state, file);
     }),
-  setFilePayload: (id, payload) =>
+  setFilePayload: (id, payload, payloadPage) =>
     set((state) => {
       const file = state.files.find((entry) => entry.id === id);
       if (file) {
         file.payload = payload;
+        if (payloadPage !== undefined) {
+          file.payloadPage = payloadPage;
+        }
       }
     }),
 });

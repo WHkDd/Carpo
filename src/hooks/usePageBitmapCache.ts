@@ -3,6 +3,14 @@ import { useEffect, useRef } from "react";
 export interface PageBitmapEntry {
   blob: Blob;
   url: string;
+  width: number;
+  height: number;
+}
+
+export interface PageBitmapInput {
+  blob: Blob;
+  width: number;
+  height: number;
 }
 
 export interface PageBitmapCache {
@@ -12,7 +20,7 @@ export interface PageBitmapCache {
     fileId: string,
     page: number,
     dpi: number,
-    blob: Blob
+    input: PageBitmapInput
   ) => PageBitmapEntry;
   delete: (fileId: string, page: number, dpi: number) => boolean;
   clear: () => void;
@@ -62,7 +70,7 @@ export function createPageBitmapCache(
       entries.set(key, entry);
       return entry;
     },
-    set(fileId, page, dpi, blob) {
+    set(fileId, page, dpi, input) {
       const key = pageBitmapCacheKey(fileId, page, dpi);
       const previous = entries.get(key);
       if (previous) {
@@ -70,7 +78,12 @@ export function createPageBitmapCache(
         entries.delete(key);
       }
 
-      const entry = { blob, url: URL.createObjectURL(blob) };
+      const entry: PageBitmapEntry = {
+        blob: input.blob,
+        url: URL.createObjectURL(input.blob),
+        width: input.width,
+        height: input.height,
+      };
       entries.set(key, entry);
 
       while (entries.size > maxEntries) {

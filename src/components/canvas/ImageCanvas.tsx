@@ -23,23 +23,21 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     );
     const payload = file?.payload ?? null;
 
-    const dataUrl = useMemo(
-      () => (payload ? `data:image/png;base64,${payload.png_base64}` : ""),
-      [payload]
-    );
-    const [image, status] = useImage(dataUrl);
-
-    const fitKey = useMemo(() => {
-      if (!file || !payload) return null;
-      return `${file.id}::${payload.width}x${payload.height}::${cw}x${ch}`;
-    }, [file, payload, cw, ch]);
+    const imageSrc = useMemo(() => {
+      if (!payload) return "";
+      if (payload.objectUrl) return payload.objectUrl;
+      if (payload.png_base64) return `data:image/png;base64,${payload.png_base64}`;
+      return "";
+    }, [payload]);
+    const [image, status] = useImage(imageSrc);
 
     const { pan, scale, onWheel, onDragEnd, controller } = usePanZoom({
+      fileId: file?.id ?? null,
+      currentPage: file?.currentPage ?? null,
       containerWidth: cw,
       containerHeight: ch,
       imageWidth: payload?.width ?? null,
       imageHeight: payload?.height ?? null,
-      fitKey,
     });
 
     useImperativeHandle(ref, () => controller, [controller]);
