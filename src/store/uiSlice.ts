@@ -1,4 +1,5 @@
 import type { StateCreator } from "zustand";
+import type { PageStateSlice } from "./pageStateSlice";
 import type { QueueSlice } from "./queueSlice";
 
 const MIN_ZOOM_PERCENT = 1;
@@ -15,7 +16,7 @@ export const clampZoomPercent = (zoomPercent: number): number =>
   Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, zoomPercent));
 
 export const createUiSlice: StateCreator<
-  QueueSlice & UiSlice,
+  QueueSlice & UiSlice & PageStateSlice,
   [["zustand/immer", never]],
   [],
   UiSlice

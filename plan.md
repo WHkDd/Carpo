@@ -124,6 +124,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T2.3 [UI+BE] · QueuePanel with file list
 - `src/store/queueSlice.ts`: extend with `pdfTotal: number`, `currentPage: number`, `removeFile(id)`. Track per-file state.
+- ~~T2.3-BE scaffold~~ (2026-05-08): `queueSlice` now exposes current `pdfTotal/currentPage`, tracks those fields per file, and supports `removeFile(id)`; JSX queue rendering remains for the UI loop.
 - `src/components/queue/QueuePanel.tsx`: left queue rail mirroring `docs/mockups/xcvt-scan-structure-preview.html`. Header counts files; scrollable list of `<QueueItem/>`; keep bulk actions out of the rail unless they become real active workflows.
 - `src/components/queue/QueueItem.tsx`: filename, ext icon (PDF vs image), page indicator `N / M` for PDFs, status icon (✓/⋯/!N). Active item gets the 2px primary stripe (`queue-item-active` from mockup).
 - Click switches `currentFileId`; image canvas reloads.
@@ -131,12 +132,13 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T2.4 [UI+BE] · PDF page navigation
 - Toolbar prev/next buttons + page indicator (mockup lines 121-129). Wire to store: `prevPage()`/`nextPage()` clamp to `[1, pdfTotal]`.
+- ~~T2.4-BE scaffold~~ (2026-05-08): `queueSlice` exposes clamped `prevPage()`/`nextPage()` actions and `currentPage/pdfTotal` for the floating toolbar; JSX and render-on-change wiring remain for the UI loop.
 - **Note (carried from T1.3)**: M1 deliberately did *not* stub these — re-introduce them inside the floating top chip in `src/components/layout/Toolbar.tsx`. Render only when `currentFile.kind === "pdf"` and `pdfTotal > 1`; show `${currentPage} / ${pdfTotal}` between the prev/next buttons.
 - Hotkeys: `←` / `→` arrow keys.
 - On page change: call `render_page(path, newPage, 150, "preview")` and update current file's payload. Cache rendered bitmaps in front-end LRU (T2.5).
 - **Acceptance**: load a 5-page PDF; arrow keys navigate; page indicator updates; render <500ms per page.
 
-### T2.5 [BE] · Frontend bitmap LRU cache
+### ~~T2.5~~ [BE] · Frontend bitmap LRU cache
 - `src/hooks/usePageBitmapCache.ts`: LRU keyed by `${fileId}::${page}::${dpi}`, capacity 12 preview entries. Stores `{blob: Blob, url: string}`. Evict on capacity → `URL.revokeObjectURL`.
 - ImageCanvas reads from cache before requesting; falls back to `render_page` invocation, then writes back.
 - Switch from base64 data URL (M1 simple path) to Blob+ObjectURL approach: build `Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], {type:'image/png'})` once on receipt; store URL.
@@ -144,6 +146,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T2.6 [UI+BE] · Per-file state preservation across switch
 - `src/store/pageStateSlice.ts`: `pageStates: Record<string, PageState>` keyed `${fileId}::${page}`. M2 tracks: `zoomPercent`, `panX`, `panY` per (file, page). M3 will add blocks/articles.
+- ~~T2.6-BE scaffold~~ (2026-05-08): `pageStateSlice` added with `${fileId}::${page}` keys and M2 `zoomPercent/panX/panY` actions; UI capture/restore wiring remains for the UI loop.
 - Switching file: capture current pan/zoom into pageStates, restore the new file's pageStates.
 - **Acceptance**: zoom into file A page 2 to 200%, switch to file B (zoom resets to fit), switch back to file A — page 2 still at 200% pan position.
 

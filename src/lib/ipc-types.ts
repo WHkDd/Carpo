@@ -51,6 +51,8 @@ export interface FileEntry {
   name: string;
   ext: string;
   kind: FileKind;
+  pdfTotal?: number;
+  currentPage?: number;
   payload?: RenderedPagePayload;
 }
 
