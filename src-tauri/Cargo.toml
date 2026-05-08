@@ -40,7 +40,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 # Imaging / PDF (pulled in incrementally per milestone)
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }   # M1
-# pdfium-render = { version = "0.8", features = ["thread_safe"] }                                     # M2
+pdfium-render = { version = "0.8", features = ["thread_safe"] }                                     # M2
 # fast_image_resize = "5"                                                                              # M5
 base64 = "0.22"
 

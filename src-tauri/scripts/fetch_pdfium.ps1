@@ -34,7 +34,7 @@ switch ($Arch) {
 
 $asset = "pdfium-$assetArch.tgz"
 $url = "https://github.com/bblanchon/pdfium-binaries/releases/download/$version/$asset"
-$cacheDir = Join-Path $pdfiumDir ".cache"
+$cacheDir = Join-Path (Join-Path $pdfiumDir ".cache") ($version -replace "/", "_")
 $archive = Join-Path $cacheDir $asset
 $extractDir = Join-Path $cacheDir ($asset -replace "\.tgz$", "")
 $outputDir = Join-Path $pdfiumDir $outputArch

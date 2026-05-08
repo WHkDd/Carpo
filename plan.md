@@ -98,6 +98,8 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Risk**: pdfium binary distribution. See top-level plan §3 — use `bblanchon/pdfium-binaries` releases; bundle into `src-tauri/pdfium/<arch>/`; load via `Pdfium::bind_to_library`. CI cache key on `src-tauri/pdfium/VERSION`.
 
+- QUESTION(m2): latest `bblanchon/pdfium-binaries` was verified as `chromium/7825` on 2026-05-08, but `pdfium-render 0.8.37` only exposes non-future bindings through `chromium/7543`; `src-tauri/pdfium/VERSION` is pinned to `chromium/7543` until the Rust dependency is upgraded and re-tested.
+
 ### ~~T2.1~~ [BE] · pdfium binary fetch infrastructure
 - Create `src-tauri/pdfium/VERSION` containing `chromium/6996` (or current latest from bblanchon — verify before pinning).
 - Create `src-tauri/scripts/fetch_pdfium.sh` (bash) and `src-tauri/scripts/fetch_pdfium.ps1` (PowerShell). Each takes one arg: `macos-arm64 | macos-x64 | windows-x64`. Downloads matching tarball from `https://github.com/bblanchon/pdfium-binaries/releases/download/<VERSION>/pdfium-<arch>.tgz`, verifies SHA-256 against a checksum file, extracts `lib/libpdfium.dylib` or `bin/pdfium.dll` into `src-tauri/pdfium/<arch>/`.
@@ -106,7 +108,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - Add `prepare:pdfium` npm script that runs the appropriate fetch script for the current host arch.
 - **Acceptance**: `pnpm prepare:pdfium` on macOS arm64 populates `src-tauri/pdfium/macos-arm64/libpdfium.dylib` (>5 MB).
 
-### T2.2 [BE] · Rust pdfium init + render_page command
+### ~~T2.2~~ [BE] · Rust pdfium init + render_page command
 - Uncomment `pdfium-render` in `Cargo.toml`. Add `directories` if not already present (it is).
 - `src-tauri/src/pdf.rs`:
   - `init_pdfium() -> AppResult<Pdfium>`: locate libpdfium next to executable on macOS (`Frameworks/`) or Windows (same dir); fall back to `src-tauri/pdfium/<arch>/` for `cargo run` development. Use `Pdfium::bind_to_library`.
