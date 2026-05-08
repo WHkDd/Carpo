@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   NonSecretSettings,
+  PdfInfo,
+  RenderPagePayload,
   RenderedPagePayload,
   SecretKey,
 } from "./ipc-types";
@@ -23,6 +25,21 @@ export async function loadRasterImage(
 
 export async function listSupportedExtensions(): Promise<string[]> {
   return invoke<string[]>("list_supported_extensions");
+}
+
+export async function getPdfInfo(path: string): Promise<PdfInfo> {
+  return invoke<PdfInfo>("get_pdf_info", { path });
+}
+
+export async function renderPage(
+  payload: RenderPagePayload
+): Promise<RenderedPagePayload> {
+  return invoke<RenderedPagePayload>("render_page", {
+    path: payload.path,
+    page: payload.page,
+    dpi: payload.dpi,
+    purpose: payload.purpose,
+  });
 }
 
 export async function getSettings(): Promise<NonSecretSettings> {

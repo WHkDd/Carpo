@@ -30,6 +30,13 @@ export interface PdfInfo {
 
 export type RenderPurpose = "preview" | "ocr";
 
+export interface RenderPagePayload {
+  path: string;
+  page: number;
+  dpi: number;
+  purpose: RenderPurpose;
+}
+
 export interface RenderedPagePayload {
   width: number;
   height: number;
