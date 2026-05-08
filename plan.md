@@ -98,7 +98,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Risk**: pdfium binary distribution. See top-level plan §3 — use `bblanchon/pdfium-binaries` releases; bundle into `src-tauri/pdfium/<arch>/`; load via `Pdfium::bind_to_library`. CI cache key on `src-tauri/pdfium/VERSION`.
 
-### T2.1 [BE] · pdfium binary fetch infrastructure
+### ~~T2.1~~ [BE] · pdfium binary fetch infrastructure
 - Create `src-tauri/pdfium/VERSION` containing `chromium/6996` (or current latest from bblanchon — verify before pinning).
 - Create `src-tauri/scripts/fetch_pdfium.sh` (bash) and `src-tauri/scripts/fetch_pdfium.ps1` (PowerShell). Each takes one arg: `macos-arm64 | macos-x64 | windows-x64`. Downloads matching tarball from `https://github.com/bblanchon/pdfium-binaries/releases/download/<VERSION>/pdfium-<arch>.tgz`, verifies SHA-256 against a checksum file, extracts `lib/libpdfium.dylib` or `bin/pdfium.dll` into `src-tauri/pdfium/<arch>/`.
 - Maintain `src-tauri/pdfium/SHA256SUMS` with one line per arch.
