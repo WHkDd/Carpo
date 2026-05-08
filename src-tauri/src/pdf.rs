@@ -161,7 +161,7 @@ fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
         }
     }
 
-    candidates.push(dev_pdfium_library_path()?);
+    candidates.extend([dev_pdfium_library_path()?]);
     Ok(candidates)
 }
 
