@@ -4,18 +4,20 @@ export function StructureRail() {
   const hasFile = useStore((s) => s.currentFileId !== null);
 
   return (
-    <aside className="grid min-h-0 grid-rows-[48px_minmax(0,1fr)_auto] bg-surface">
-      <div className="flex items-center justify-between px-4">
-        <div className="text-[13px] font-semibold text-foreground">
-          扫描文本结构
-        </div>
-        <span className="font-mono text-[11px] text-foreground-subtle">
-          —
-        </span>
-      </div>
+    <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface">
+      <div aria-hidden />
 
-      <div className="min-h-0 overflow-hidden px-4 pb-3">
-        <p className="mt-2 text-[12px] leading-5 text-foreground-subtle">
+      <div className="min-h-0 overflow-hidden px-2 pb-2 pt-px">
+        <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5">
+          <span className="text-[13px] font-semibold text-foreground">
+            扫描文本结构
+          </span>
+          <span className="font-mono text-[11px] text-foreground-subtle/80">
+            —
+          </span>
+        </div>
+
+        <p className="px-1.5 text-[12px] leading-5 text-foreground-subtle">
           {hasFile
             ? "完成版块标注后，此处将显示报道结构与阅读顺序。"
             : "尚未导入扫描件。"}

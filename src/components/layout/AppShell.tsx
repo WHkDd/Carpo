@@ -5,6 +5,7 @@ import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { useStore } from "@/store";
 import { Toolbar } from "./Toolbar";
+import { PageNavigator } from "./PageNavigator";
 import { StatusBar } from "./StatusBar";
 import { StructureRail } from "./StructureRail";
 
@@ -28,6 +29,7 @@ function AppShellInner() {
   const canvasRef = useRef<CanvasController>(null);
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
+  const queueCollapsed = useStore((s) => s.queueCollapsed);
 
   usePdfPageSync();
 
@@ -67,13 +69,23 @@ function AppShellInner() {
   }, [prevPage, nextPage]);
 
   return (
-    <main className="grid h-screen min-w-[1100px] grid-cols-[244px_minmax(620px,1fr)_304px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background text-foreground">
+    <main
+      className="grid h-screen min-w-[1100px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background text-foreground"
+      style={{
+        gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
+      }}
+    >
       <QueuePanel />
-      <section className="min-h-0 min-w-0 overflow-hidden p-2">
-        <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
-          <ImageCanvas ref={canvasRef} />
+      <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
+        <div className="flex items-center justify-center px-3">
           <Toolbar />
-          <StatusBar canvasRef={canvasRef} />
+        </div>
+        <div className="min-h-0 overflow-hidden p-2">
+          <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
+            <ImageCanvas ref={canvasRef} />
+            <PageNavigator />
+            <StatusBar canvasRef={canvasRef} />
+          </div>
         </div>
       </section>
       <StructureRail />

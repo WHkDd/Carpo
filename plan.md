@@ -150,14 +150,16 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - Switching file: capture current pan/zoom into pageStates, restore the new file's pageStates.
 - **Acceptance**: zoom into file A page 2 to 200%, switch to file B (zoom resets to fit), switch back to file A — page 2 still at 200% pan position.
 
-### T2.7 [UI] · QueuePanel collapsed icon-rail mode
+### ~~T2.7~~ [UI] · QueuePanel collapsed icon-rail mode
 - Header chevron toggles `bg-surface` → 56px-wide rail showing only ext icons + status dot. Tooltip on hover shows filename. Persist collapsed state in `uiSlice`.
+- ~~T2.7~~ (2026-05-09): `uiSlice.queueCollapsed` + `toggleQueueCollapsed`; `AppShell` switches the left grid track between 244px↔56px; `QueuePanel` renders compact-rail variant with `QueueItemCompact` (icon + active stripe + dot, native `title` tooltip).
 - **Acceptance**: collapse toggle works; tooltips legible; expand restores full panel.
 
 ### T2.8 · Verify M2 end-to-end (smoke gate)
 - Load 3 files (1 PDF, 2 images). Switch between them. Navigate PDF pages. Collapse/expand queue. All states preserve correctly.
 - Run on macOS arm64; **also build for x64 (Rosetta) and Windows** if possible — pdfium binary path resolution is the highest-risk piece.
 - All commands clean; no clippy warnings.
+- Static gates passed 2026-05-09 on macOS arm64: `pnpm typecheck`, `pnpm build`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (3 suites). Interactive multi-file smoke + cross-arch builds remain for human/CI verification.
 
 ---
 
