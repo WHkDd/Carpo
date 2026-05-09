@@ -56,3 +56,35 @@ export function QueueItem({ entry, active, onSelect }: QueueItemProps) {
     </button>
   );
 }
+
+export function QueueItemCompact({ entry, active, onSelect }: QueueItemProps) {
+  const Icon = entry.kind === "pdf" ? FileText : FileImage;
+  const tooltip =
+    entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
+      ? `${entry.name} · ${entry.currentPage ?? 1}/${entry.pdfTotal}`
+      : entry.name;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(entry.id)}
+      title={tooltip}
+      aria-label={tooltip}
+      aria-current={active ? "true" : undefined}
+      className={cn(
+        "relative grid h-10 w-14 place-items-center rounded-lg transition-colors duration-100",
+        active
+          ? "bg-surface-2 text-foreground"
+          : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+      )}
+    >
+      {active && (
+        <span
+          aria-hidden
+          className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
+        />
+      )}
+      <Icon className="h-4 w-4" strokeWidth={1.5} />
+    </button>
+  );
+}
