@@ -74,7 +74,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               <ImageOff className="h-9 w-9 opacity-60" strokeWidth={1.4} />
               <div className="text-sm">将扫描件拖入此处，或使用顶栏「添加文件」</div>
               <div className="font-mono text-xs">
-                支持 PNG · JPG · TIFF · BMP
+                支持 PDF · PNG · JPG · TIFF · BMP
               </div>
             </div>
           </div>
