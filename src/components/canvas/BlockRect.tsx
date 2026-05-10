@@ -1,8 +1,10 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Rect } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Rect as KRect } from "konva/lib/shapes/Rect";
 import type { Block } from "@/store/pageStateSlice";
+import { articleHsl } from "@/lib/article-color-token";
+import { tweenFill } from "./tween-fill";
 
 const FILL_BASE = "rgba(59,130,246,0.15)";
 const FILL_HOVER = "rgba(59,130,246,0.32)";
@@ -16,6 +18,7 @@ export interface BlockRectProps {
   isSelected: boolean;
   scale: number;
   interactive: boolean;
+  articleNum?: number;
   registerRef: (id: string, node: KRect | null) => void;
   onMouseDown: (e: KonvaEventObject<MouseEvent>) => void;
   onTransformEnd: (e: KonvaEventObject<Event>) => void;
@@ -30,6 +33,7 @@ function BlockRectImpl(props: BlockRectProps) {
     isSelected,
     scale,
     interactive,
+    articleNum,
     registerRef,
     onMouseDown,
     onTransformEnd,
@@ -38,8 +42,26 @@ function BlockRectImpl(props: BlockRectProps) {
     onDragEnd,
   } = props;
 
-  const baseFill = isSelected ? FILL_SELECTED : FILL_BASE;
-  const hoverFill = isSelected ? FILL_SELECTED_HOVER : FILL_HOVER;
+  const hasArticle = articleNum != null;
+
+  const baseFill = useMemo(() => {
+    if (isSelected) {
+      return hasArticle ? articleHsl(articleNum!, 0.38) : FILL_SELECTED;
+    }
+    return hasArticle ? articleHsl(articleNum!, 0.15) : FILL_BASE;
+  }, [isSelected, articleNum, hasArticle]);
+
+  const hoverFill = useMemo(() => {
+    if (isSelected) {
+      return hasArticle ? articleHsl(articleNum!, 0.42) : FILL_SELECTED_HOVER;
+    }
+    return hasArticle ? articleHsl(articleNum!, 0.32) : FILL_HOVER;
+  }, [isSelected, articleNum, hasArticle]);
+
+  const stroke = useMemo(() => {
+    if (hasArticle) return articleHsl(articleNum!, 1);
+    return isSelected ? STROKE_SELECTED : STROKE_BASE;
+  }, [isSelected, articleNum, hasArticle]);
 
   return (
     <Rect
@@ -50,7 +72,7 @@ function BlockRectImpl(props: BlockRectProps) {
       width={block.w}
       height={block.h}
       fill={baseFill}
-      stroke={isSelected ? STROKE_SELECTED : STROKE_BASE}
+      stroke={stroke}
       strokeWidth={(isSelected ? 2 : 1) / scale}
       listening={interactive}
       draggable={interactive}
@@ -60,10 +82,10 @@ function BlockRectImpl(props: BlockRectProps) {
       onDragMove={onDragMove}
       onDragEnd={onDragEnd}
       onMouseEnter={(e) => {
-        (e.target as KRect).fill(hoverFill);
+        tweenFill(e.target, hoverFill);
       }}
       onMouseLeave={(e) => {
-        (e.target as KRect).fill(baseFill);
+        tweenFill(e.target, baseFill);
       }}
     />
   );

@@ -70,6 +70,10 @@
     --article-9:  320 14% 43%;  /* plum gray */
     --article-10: 172 14% 38%;  /* teal gray */
 
+    /* Transitions */
+    --transition-duration-fast: 120ms;
+    --transition-ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+
     /* Typography */
     --font-sans: "PingFang SC", "Microsoft YaHei", -apple-system,
                  BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI",
