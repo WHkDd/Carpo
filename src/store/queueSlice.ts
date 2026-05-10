@@ -2,6 +2,8 @@ import type { StateCreator } from "zustand";
 import type { FileEntry, RenderedPagePayload } from "@/lib/ipc-types";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { UiSlice } from "./uiSlice";
+import type { PageStateSlice } from "./pageStateSlice";
+import type { SelectionSlice } from "./selectionSlice";
 
 export interface QueueSlice {
   files: FileEntry[];
@@ -23,7 +25,7 @@ export interface QueueSlice {
 }
 
 export const createQueueSlice: StateCreator<
-  QueueSlice & UiSlice & FileViewSlice,
+  QueueSlice & UiSlice & FileViewSlice & PageStateSlice & SelectionSlice,
   [["zustand/immer", never]],
   [],
   QueueSlice
