@@ -178,10 +178,14 @@ export function usePanZoom(args: UsePanZoomArgs) {
 
   const onDragEnd = useCallback(
     (e: KonvaEventObject<DragEvent>) => {
-      const target = e.target;
+      // Konva drag events bubble — ignore drags that originated on a child
+      // (block Rect, Transformer anchor) so we only commit pan when the Stage
+      // itself was dragged.
+      const stage = e.target.getStage();
+      if (!stage || e.target !== stage) return;
       const fid = stateRef.current.fileId;
       if (!fid) return;
-      setFilePan(fid, target.x(), target.y());
+      setFilePan(fid, stage.x(), stage.y());
     },
     [setFilePan]
   );
