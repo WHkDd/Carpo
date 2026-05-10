@@ -8,9 +8,15 @@
 
 ✅ **M0 完成** — 项目脚手架就位，设计系统 + 高保真稿就绪，`pnpm tauri dev` 出空壳窗口，CI 雏形就位。
 
-🟡 **M1 非 UI 基础已推进** — 已完成 raster image 后端命令、Tauri IPC wrapper、queue/ui store slices。M1 的 AppShell、Toolbar、StatusBar、Konva Canvas、导入交互和视觉 polish 仍按计划留给人工或 Claude UI 评审。
+✅ **M1 完成** — 基础 UI shell、Toolbar、StatusBar、Konva Canvas、导入交互、raster image 后端命令、Tauri IPC wrapper、queue/ui store slices 已落地。
 
-接下来：M1-M7 的详细任务分解见 [`plan.md`](./plan.md)。**[UI] 标记的任务需视觉评审，留给人工或 Claude；[BE] 标记的任务可由 codex 等自动代理推进。**
+✅ **M2 完成** — PDF 队列、PDF 页导航、preview bitmap cache、per-file/page view state、collapsed queue rail 已落地。
+
+✅ **M3 完成** — 手动画块、多选、Transformer resize/drag、选择顺序标签、Delete/Backspace 删除、方向键微调、右键菜单、article color token bridge 已落地。M3 只负责 block geometry 与临时 selection；最终报道建模进入 M4。
+
+🟡 **M4 待开始** — 需要先按 [`plan.md`](./plan.md) 中 2026-05-11 的决策调整：Article 应为 file/document-scoped，以支持跨页报道；`selectionOrder` 只作为临时选择顺序，点击“标记为报道”后固化为 `articleOrder`，清空 selection，但不删除或隐藏选框。
+
+接下来：M4-M7 的详细任务分解见 [`plan.md`](./plan.md)。**[UI] 标记的任务需视觉评审，留给人工或 Claude；[BE] 标记的任务可由 codex 等自动代理推进。**
 
 设计依据：
 - [`PRODUCT.md`](./PRODUCT.md) — 用户、口吻、反例、战略原则

@@ -169,6 +169,10 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Dependencies added**: none (Konva already in).
 
+**Status (2026-05-11)**: M3 is implemented on branch `m2-pdf-queue` through `fix(m3): T3.7 T3.8 polish canvas interactions`. Static gates are green: `pnpm typecheck`, `pnpm build`, `npx vitest run`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`.
+
+**Boundary for M4**: M3 owns only block geometry and temporary selection. It must not encode final article semantics beyond the fields needed by later milestones. A block should remain visible unless the user explicitly deletes it via Delete/Backspace or the block context menu.
+
 ### T3.1 [BE] · Block + Article + Selection store slices
 - `src/store/pageStateSlice.ts`: extend `PageState` with `blocks: Block[]`, `articles: Article[]`. `Block { id, x, y, w, h, articleId | null, articleOrder | null }`. `Article { id, num, title }`.
 - `src/store/selectionSlice.ts`: `manualDrawMode: boolean`, `selectionOrder: string[]` (block ids). Actions: `toggleDrawMode()`, `pushSelection(id)`, `popSelection()`, `clearSelection()`, `removeFromSelection(id)`.
@@ -199,6 +203,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T3.6 [UI+BE] · Selection-order labels
 - `src/components/canvas/SelectionOrderLabel.tsx`: Konva `<Group>` containing a small filled `<Rect>` (background `--primary`) + `<Text>` showing `selectionOrder.indexOf(blockId) + 1`. Rendered only when block is in selectionOrder. Anchored at block's top-left + 4px inset.
+- The displayed number is a temporary selection order, not yet the persisted article order. M4 will persist it as `articleOrder` only when the user confirms "标记为报道".
 - **Acceptance**: select 3 blocks in order; numbers 1, 2, 3 appear; deselect middle → 1, 2 reflow correctly.
 
 ### T3.7 [BE] · Article color token bridge
@@ -227,15 +232,22 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Goal**: mark selected blocks as a named article; right-rail article list with rename/remove/clear-all; newspaper-name + date inputs; OCR profile toggle (standard/fast).
 
+**Design decision before implementation (2026-05-11)**:
+- Articles must be file/document-scoped, not page-scoped. Real newspaper articles can span pages, so M4 should not store final `articles[]` only inside `${fileId}::${page}` page state.
+- Blocks remain page-scoped because coordinates belong to a concrete page. Article membership should reference blocks by `{ page, blockId, order }` or an equivalent typed structure.
+- `selectionOrder` remains a temporary per-page selection queue. When the user clicks "标记为报道", M4 must create/update a document-scoped article, persist the selected blocks' order as `articleOrder = index + 1`, then clear `selectionOrder`. Clearing selection must not delete or hide the selected block rectangles.
+- After marking an article, the selected blocks should stay visible and switch from temporary selected styling to article color styling. The next article selection starts from temporary order `1`.
+- A future cross-page workflow should allow appending blocks from another page to the same article without creating a duplicate article. The article list is therefore scoped to the current file, while canvas highlighting only affects blocks present on the current page.
+
 ### T4.1 [UI+BE] · "Mark as article" workflow
-- Right-rail `<BlockOpsPanel/>` (mockup lines 290-302): "标记为报道" button is enabled iff `selectionOrder.length >= 1`. On click: create `Article { id: uuid(), num: nextNum, title: \`报道${nextNum}\` }`, assign each selected block's `articleId = article.id` and `articleOrder = orderInSelection`. Clear selection. Re-color blocks.
-- `nextNum` = max existing `num` + 1, scoped per (file, page).
+- Right-rail `<BlockOpsPanel/>` (mockup lines 290-302): "标记为报道" button is enabled iff `selectionOrder.length >= 1`. On click: create or update a file-scoped `Article { id: uuid(), num: nextNum, title: \`报道${nextNum}\`, blockRefs }`, assign each selected block's `articleId = article.id` and `articleOrder = orderInSelection`, then clear selection. Do not remove blocks. Re-color blocks.
+- `nextNum` = max existing `num` + 1, scoped per file/document.
 - Hotkey `⌘G`.
-- **Acceptance**: select 3 blocks → ⌘G → blocks turn article-1 colored, article appears in list.
+- **Acceptance**: select 3 blocks → ⌘G → blocks remain visible, turn article-1 colored, article appears in file-level list, temporary labels disappear; selecting the next article starts at label 1.
 
 ### T4.2 [UI+BE] · Article list with rename/remove/clear-all
 - `<ArticleList/>` (mockup lines 305-340): list of articles with badge (cycling `--article-N`), title, block count.
-- Click row → highlights its blocks in canvas (transient ring stroke at `--accent`).
+- Click row → highlights that article's blocks on the current canvas page (transient ring stroke at `--accent`). Cross-page blocks remain part of the same article but become visible/highlightable when their page is opened.
 - Right-click row → context menu: "重命名" (inline text editor), "删除" (unassigns blocks, removes article), "解除分组并保留版块".
 - "全清" button: confirm dialog ("确定清除全部 N 篇报道？") → reset all `articleId/articleOrder` to null and clear `articles[]`.
 - Renumbering: when deleting article #2 of 4, remaining articles re-number to 1,2,3 and re-color.
@@ -243,12 +255,12 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T4.3 [UI+BE] · MetadataInline + ProfileToggle
 - `<MetadataInline/>` (mockup lines 274-287): two text inputs `报刊名` + `日期`. Bound to `pageStates[currentKey].newspaperName` / `.newspaperDate` (extend `PageState`).
-- Note: per the mockup direction, metadata is *page-scoped*, not file-scoped. Re-confirm with human/Claude before committing — the Python original was file-scoped.
+- Note: article grouping is file/document-scoped, but metadata still needs a product decision. The previous mockup treated metadata as page-scoped, while the Python original was file-scoped. Re-confirm before committing this task; do not infer metadata scope from article scope.
 - `<ProfileToggle/>` in BlockOpsPanel: segmented toggle "标准 / 快速" bound to `settingsSlice.ocrProfile`.
 - **Acceptance**: typing persists across page navigation; toggle changes profile (verifiable via store devtools).
 
 ### T4.4 · Verify M4 end-to-end
-- Mark 5 articles in different colors. Rename, remove, clear all. Switch pages → metadata + articles persist. Visual matches mockup right-rail.
+- Mark 5 articles in different colors. Rename, remove, clear all. Switch pages → file-level article list persists; current page only shows that page's blocks. Visual matches mockup right-rail.
 
 ---
 
@@ -279,9 +291,9 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T5.4 [BE] · Job registry + cancellation
 - `src-tauri/src/jobs/mod.rs`: `JobRegistry { by_id: HashMap<Uuid, JobHandle> }`, `JobHandle { token: CancellationToken, kind: JobKind }`. Stored in `AppState`.
-- `src-tauri/src/jobs/grouped.rs`: spawn tokio task that iterates articles → blocks → crops bitmap → calls `OcrProvider::recognize` → emits `xcvt://job/progress` after each block, `xcvt://job/done` at end. Cancellation check between blocks.
+- `src-tauri/src/jobs/grouped.rs`: spawn tokio task that iterates file-scoped articles → ordered block refs (`{ page, blockId, rect, order }`) → renders/caches the needed OCR bitmap for each page → crops bitmap → calls `OcrProvider::recognize` → emits `xcvt://job/progress` after each block, `xcvt://job/done` at end. Cancellation check between blocks.
 - `src-tauri/src/commands/jobs.rs`: `cancel_job(job_id)`, `list_jobs()`.
-- `src-tauri/src/commands/ocr.rs`: `start_grouped_ocr(req: GroupedOcrRequest) -> JobStarted`. Reads OCR-DPI bitmap (re-render PDF page if needed), crops per block, dispatches.
+- `src-tauri/src/commands/ocr.rs`: `start_grouped_ocr(req: GroupedOcrRequest) -> JobStarted`. Reads OCR-DPI bitmap per referenced page (re-render PDF page if needed), crops per block, dispatches.
 - **Acceptance**: cancel mid-job stops within 1s; `tracing` shows clean shutdown.
 
 ### T5.5 [UI+BE] · Settings dialog (4 provider tabs + custom prompt)
@@ -300,7 +312,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 ### T5.7 [UI+BE] · "生成文档（OCR）" + result assembly + drawer
 - Bottom status bar primary action: "识别选中报道". Avoid duplicating OCR actions in the right rail.
-- On click: validate (≥1 article, ≥1 block per article, provider configured) → `start_grouped_ocr({ file_id, path, page, ocr_dpi: profile.ocrDpi, articles, newspaper_name, newspaper_date })` → show ProgressDialog → on done event, write to `pageStates[key].resultText` and slide up `<ResultDrawer/>`.
+- On click: validate (≥1 file-scoped article, ≥1 block ref per article, provider configured) → `start_grouped_ocr({ file_id, path, ocr_dpi: profile.ocrDpi, articles: [{ id, title, num, blocks: [{ page, block_id, rect, order }] }], newspaper_name, newspaper_date })` → show ProgressDialog → on done event, write result to a file/document-level result store and slide up `<ResultDrawer/>`.
 - Document assembly: port `_on_ocr_finished` (`newspaper_ocr.py:2532-2549`). Format: `{newspaper}\n{date}\n\n{title1}\n{body1}\n\n{title2}\n{body2}\n...`. Helper in `src/lib/format-doc.ts`. **Unit test** with fixture comparing byte-for-byte against the same Python output.
 - `src/components/results/ResultDrawer.tsx`: bottom drawer (custom built on Radix Dialog primitive — can be `Sheet` with `side='bottom'`). Header shows summary + Copy/Save buttons. Body: per-file `<Tabs/>` with `<textarea/>` for each.
 - **Acceptance**: mark 2 articles → 生成文档 → result matches Python verbatim.
