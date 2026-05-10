@@ -6,8 +6,15 @@ import { createUiSlice, type UiSlice } from "../uiSlice";
 import { createFileViewSlice, type FileViewSlice } from "../fileViewSlice";
 import { createPageStateSlice, type PageStateSlice } from "../pageStateSlice";
 import { createSelectionSlice, type SelectionSlice } from "../selectionSlice";
+import { createSettingsSlice, type SettingsSlice } from "../settingsSlice";
 
-type Store = QueueSlice & UiSlice & FileViewSlice & PageStateSlice & SelectionSlice;
+type Store =
+  QueueSlice &
+  UiSlice &
+  FileViewSlice &
+  PageStateSlice &
+  SelectionSlice &
+  SettingsSlice;
 
 function makeStore() {
   return create<Store>()(
@@ -17,6 +24,7 @@ function makeStore() {
       ...createFileViewSlice(...args),
       ...createPageStateSlice(...args),
       ...createSelectionSlice(...args),
+      ...createSettingsSlice(...args),
     }))
   );
 }
