@@ -238,6 +238,7 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - `selectionOrder` remains a temporary per-page selection queue. When the user clicks "标记为报道", M4 must create/update a document-scoped article, persist the selected blocks' order as `articleOrder = index + 1`, then clear `selectionOrder`. Clearing selection must not delete or hide the selected block rectangles.
 - After marking an article, the selected blocks should stay visible and switch from temporary selected styling to article color styling. The next article selection starts from temporary order `1`.
 - A future cross-page workflow should allow appending blocks from another page to the same article without creating a duplicate article. The article list is therefore scoped to the current file, while canvas highlighting only affects blocks present on the current page.
+- Metadata is also file/document-scoped for M4: `报刊名` and `日期` are stored once per imported file/document, not separately per page. A later mixed-source PDF workflow can add page-level overrides if needed.
 
 ### T4.1 [UI+BE] · "Mark as article" workflow
 - Right-rail `<BlockOpsPanel/>` (mockup lines 290-302): "标记为报道" button is enabled iff `selectionOrder.length >= 1`. On click: create or update a file-scoped `Article { id: uuid(), num: nextNum, title: \`报道${nextNum}\`, blockRefs }`, assign each selected block's `articleId = article.id` and `articleOrder = orderInSelection`, then clear selection. Do not remove blocks. Re-color blocks.
@@ -254,8 +255,8 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - **Acceptance**: full CRUD on articles; visual state synced to canvas blocks.
 
 ### T4.3 [UI+BE] · MetadataInline + ProfileToggle
-- `<MetadataInline/>` (mockup lines 274-287): two text inputs `报刊名` + `日期`. Bound to `pageStates[currentKey].newspaperName` / `.newspaperDate` (extend `PageState`).
-- Note: article grouping is file/document-scoped, but metadata still needs a product decision. The previous mockup treated metadata as page-scoped, while the Python original was file-scoped. Re-confirm before committing this task; do not infer metadata scope from article scope.
+- `<MetadataInline/>` (mockup lines 274-287): two text inputs `报刊名` + `日期`. Bound to `documentStates[currentFileId].newspaperName` / `.newspaperDate`.
+- Product decision (2026-05-11): metadata is file/document-scoped, matching the normal one-file/one-newspaper-issue OCR workflow. Do not bind these fields to `pageStates`.
 - `<ProfileToggle/>` in BlockOpsPanel: segmented toggle "标准 / 快速" bound to `settingsSlice.ocrProfile`.
 - **Acceptance**: typing persists across page navigation; toggle changes profile (verifiable via store devtools).
 

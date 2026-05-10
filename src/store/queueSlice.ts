@@ -4,6 +4,7 @@ import type { FileViewSlice } from "./fileViewSlice";
 import type { UiSlice } from "./uiSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
+import type { SettingsSlice } from "./settingsSlice";
 
 export interface QueueSlice {
   files: FileEntry[];
@@ -25,7 +26,12 @@ export interface QueueSlice {
 }
 
 export const createQueueSlice: StateCreator<
-  QueueSlice & UiSlice & FileViewSlice & PageStateSlice & SelectionSlice,
+  QueueSlice &
+    UiSlice &
+    FileViewSlice &
+    PageStateSlice &
+    SelectionSlice &
+    SettingsSlice,
   [["zustand/immer", never]],
   [],
   QueueSlice

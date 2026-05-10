@@ -44,6 +44,13 @@ export function useKeyboardShortcuts({
     useStore.getState().popSelection(fileId, page);
   }, []);
 
+  const handleMarkSelectionAsArticle = useCallback(() => {
+    const ctx = getActivePage();
+    if (!ctx) return;
+    const { fileId, page } = ctx;
+    useStore.getState().markSelectionAsArticle(fileId, page);
+  }, []);
+
   const handleNudge = useCallback((dx: number, dy: number) => {
     const ctx = getActivePage();
     if (!ctx) return;
@@ -68,6 +75,13 @@ export function useKeyboardShortcuts({
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
         handleUndoSelection();
+        return;
+      }
+
+      // ⌘G / Ctrl+G
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "g" && !e.shiftKey) {
+        e.preventDefault();
+        handleMarkSelectionAsArticle();
         return;
       }
 
@@ -97,5 +111,11 @@ export function useKeyboardShortcuts({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [enabled, handleDelete, handleUndoSelection, handleNudge]);
+  }, [
+    enabled,
+    handleDelete,
+    handleMarkSelectionAsArticle,
+    handleUndoSelection,
+    handleNudge,
+  ]);
 }
