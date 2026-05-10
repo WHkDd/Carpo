@@ -82,6 +82,19 @@
                  Menlo, Consolas, monospace;
   }
 
+  .dark {
+    --article-1:  220 30% 68%;
+    --article-2:  145 24% 62%;
+    --article-3:  285 25% 70%;
+    --article-4:  190 26% 64%;
+    --article-5:  42 34% 65%;
+    --article-6:  15 34% 68%;
+    --article-7:  252 28% 70%;
+    --article-8:  95 20% 60%;
+    --article-9:  320 24% 68%;
+    --article-10: 172 24% 62%;
+  }
+
   * {
     @apply border-border;
   }

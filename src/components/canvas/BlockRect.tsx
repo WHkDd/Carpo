@@ -19,6 +19,7 @@ export interface BlockRectProps {
   scale: number;
   interactive: boolean;
   articleNum?: number;
+  colorVersion: number;
   registerRef: (id: string, node: KRect | null) => void;
   onMouseDown: (e: KonvaEventObject<MouseEvent>) => void;
   onTransformEnd: (e: KonvaEventObject<Event>) => void;
@@ -34,6 +35,7 @@ function BlockRectImpl(props: BlockRectProps) {
     scale,
     interactive,
     articleNum,
+    colorVersion,
     registerRef,
     onMouseDown,
     onTransformEnd,
@@ -49,19 +51,19 @@ function BlockRectImpl(props: BlockRectProps) {
       return hasArticle ? articleHsl(articleNum!, 0.38) : FILL_SELECTED;
     }
     return hasArticle ? articleHsl(articleNum!, 0.15) : FILL_BASE;
-  }, [isSelected, articleNum, hasArticle]);
+  }, [isSelected, articleNum, hasArticle, colorVersion]);
 
   const hoverFill = useMemo(() => {
     if (isSelected) {
       return hasArticle ? articleHsl(articleNum!, 0.42) : FILL_SELECTED_HOVER;
     }
     return hasArticle ? articleHsl(articleNum!, 0.32) : FILL_HOVER;
-  }, [isSelected, articleNum, hasArticle]);
+  }, [isSelected, articleNum, hasArticle, colorVersion]);
 
   const stroke = useMemo(() => {
     if (hasArticle) return articleHsl(articleNum!, 1);
     return isSelected ? STROKE_SELECTED : STROKE_BASE;
-  }, [isSelected, articleNum, hasArticle]);
+  }, [isSelected, articleNum, hasArticle, colorVersion]);
 
   return (
     <Rect
