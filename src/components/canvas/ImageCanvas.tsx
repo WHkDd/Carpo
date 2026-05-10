@@ -5,9 +5,11 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { Stage, Layer, Image as KImage, Rect, Transformer } from "react-konva";
 import { BlockRect } from "./BlockRect";
+import { SelectionOrderLabel } from "./SelectionOrderLabel";
 import type { Stage as KStage } from "konva/lib/Stage";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Rect as KRect } from "konva/lib/shapes/Rect";
@@ -53,11 +55,17 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     const currentPage = file?.currentPage ?? 1;
     const pageState = useStore((s) => s.getPageState(file?.id ?? "", currentPage));
     const blocks = pageState.blocks;
+    const articles = pageState.articles;
     const selectionOrder = useStore((s) => s.getSelectionOrder(file?.id ?? "", currentPage));
     const selectedSet = useMemo(
       () => new Set(selectionOrder),
       [selectionOrder]
     );
+    const articleNumById = useMemo(() => {
+      const map = new Map<string, number>();
+      for (const a of articles) map.set(a.id, a.num);
+      return map;
+    }, [articles]);
 
     const imageSrc = useMemo(() => {
       if (!payload) return "";
@@ -76,16 +84,106 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       imageHeight: payload?.height ?? null,
     });
 
-    useImperativeHandle(ref, () => controller, [controller]);
-
-    useKeyboardShortcuts();
-
     const isReady = !!image && status === "loaded" && cw > 0 && ch > 0;
     const showEmpty = !file;
 
     const blockRefs = useRef<Record<string, KRect>>({});
     const transformerRef = useRef<KTransformer>(null);
     const dragStartPos = useRef<Record<string, { x: number; y: number }>>({});
+
+    const [ctxMenu, setCtxMenu] = useState<{
+      x: number;
+      y: number;
+      blockId: string;
+    } | null>(null);
+
+    useImperativeHandle(ref, () => controller, [controller]);
+
+    useKeyboardShortcuts();
+
+    useEffect(() => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const container = stage.container();
+      if (!container) return;
+
+      const onContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+        if (!useStore.getState().manualDrawMode) return;
+
+        const rect = container.getBoundingClientRect();
+        const x = (e.clientX - rect.left - stage.x()) / stage.scaleX();
+        const y = (e.clientY - rect.top - stage.y()) / stage.scaleY();
+        const shape = stage.getIntersection({ x, y });
+        if (!shape) return;
+
+        const blockId = shape.id();
+        if (!blockId) return;
+
+        setCtxMenu({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+          blockId,
+        });
+      };
+
+      const onClick = () => setCtxMenu(null);
+
+      container.addEventListener("contextmenu", onContextMenu);
+      window.addEventListener("click", onClick, true);
+      return () => {
+        container.removeEventListener("contextmenu", onContextMenu);
+        window.removeEventListener("click", onClick, true);
+      };
+    }, [isReady]);
+
+    const handleCtxDelete = useCallback(() => {
+      if (!ctxMenu) return;
+      const { blockId } = ctxMenu;
+      const ctx = getActivePage();
+      if (!ctx) return;
+      const { fileId, page } = ctx;
+      const s = useStore.getState();
+      const order = s.getSelectionOrder(fileId, page);
+
+      if (order.includes(blockId)) {
+        if (order.length > 5) {
+          const ok = window.confirm(`确定要删除选中的 ${order.length} 个版块吗？`);
+          if (!ok) { setCtxMenu(null); return; }
+        }
+        s.removeBlocks(fileId, page, [...order]);
+        s.clearSelection(fileId, page);
+      } else {
+        s.removeBlock(fileId, page, blockId);
+      }
+      setCtxMenu(null);
+    }, [ctxMenu]);
+
+    const handleCtxUngroup = useCallback(() => {
+      if (!ctxMenu) return;
+      const { blockId } = ctxMenu;
+      const ctx = getActivePage();
+      if (!ctx) return;
+      const { fileId, page } = ctx;
+      const s = useStore.getState();
+      const ps = s.getPageState(fileId, page);
+      const block = ps.blocks.find((b) => b.id === blockId);
+      if (!block || !block.articleId) { setCtxMenu(null); return; }
+
+      const articleId = block.articleId;
+      const order = s.getSelectionOrder(fileId, page);
+      const targetIds = order.includes(blockId)
+        ? order.filter((id) => {
+            const b = ps.blocks.find((bb) => bb.id === id);
+            return b?.articleId === articleId;
+          })
+        : [blockId];
+
+      for (const id of targetIds) {
+        s.updateBlock(fileId, page, id, { articleId: null, articleOrder: null });
+      }
+      setCtxMenu(null);
+    }, [ctxMenu]);
 
     const registerBlockRef = useCallback((id: string, node: KRect | null) => {
       if (node) blockRefs.current[id] = node;
@@ -286,6 +384,9 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   isSelected={manualDrawMode && selectedSet.has(block.id)}
                   scale={scale}
                   interactive={manualDrawMode}
+                  articleNum={
+                    block.articleId ? articleNumById.get(block.articleId) : undefined
+                  }
                   registerRef={registerBlockRef}
                   onMouseDown={handleBlockMouseDown}
                   onTransformEnd={handleBlockTransformEnd}
@@ -294,6 +395,19 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   onDragEnd={handleBlockDragEnd}
                 />
               ))}
+              {manualDrawMode &&
+                selectionOrder.map((blockId, idx) => {
+                  const block = blocks.find((b) => b.id === blockId);
+                  if (!block) return null;
+                  return (
+                    <SelectionOrderLabel
+                      key={`label-${blockId}`}
+                      x={block.x}
+                      y={block.y}
+                      order={idx + 1}
+                    />
+                  );
+                })}
               {manualDrawMode && (
                 <Transformer
                   ref={transformerRef}
@@ -315,6 +429,41 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               )}
             </Layer>
           </Stage>
+        )}
+
+        {ctxMenu && (
+          <div
+            className="absolute z-50 min-w-[140px] overflow-hidden rounded-md border bg-white py-1 shadow-lg"
+            style={{
+              left: ctxMenu.x,
+              top: ctxMenu.y,
+              borderColor: "hsl(var(--border))",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const b = blocks.find((bb) => bb.id === ctxMenu.blockId);
+              const hasArticle = !!b?.articleId;
+              return (
+                <>
+                  {hasArticle && (
+                    <button
+                      className="block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100"
+                      onClick={handleCtxUngroup}
+                    >
+                      解除报道分组
+                    </button>
+                  )}
+                  <button
+                    className="block w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-gray-100"
+                    onClick={handleCtxDelete}
+                  >
+                    删除版块
+                  </button>
+                </>
+              );
+            })()}
+          </div>
         )}
 
         {showEmpty && (
