@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useStore } from "@/store";
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -18,9 +18,15 @@ function getActivePage() {
   return { fileId, page: file.currentPage ?? 1 };
 }
 
-export function useKeyboardShortcuts() {
-  const confirmOpenRef = useRef(false);
+export interface UseKeyboardShortcutsArgs {
+  onDeleteSelected: () => void;
+  enabled?: boolean;
+}
 
+export function useKeyboardShortcuts({
+  onDeleteSelected,
+  enabled = true,
+}: UseKeyboardShortcutsArgs) {
   const handleDelete = useCallback(() => {
     const ctx = getActivePage();
     if (!ctx) return;
@@ -28,18 +34,8 @@ export function useKeyboardShortcuts() {
     const s = useStore.getState();
     const order = s.getSelectionOrder(fileId, page);
     if (order.length === 0) return;
-
-    if (order.length > 5) {
-      if (confirmOpenRef.current) return;
-      confirmOpenRef.current = true;
-      const ok = window.confirm(`确定要删除选中的 ${order.length} 个版块吗？`);
-      confirmOpenRef.current = false;
-      if (!ok) return;
-    }
-
-    s.removeBlocks(fileId, page, [...order]);
-    s.clearSelection(fileId, page);
-  }, []);
+    onDeleteSelected();
+  }, [onDeleteSelected]);
 
   const handleUndoSelection = useCallback(() => {
     const ctx = getActivePage();
@@ -65,6 +61,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!enabled) return;
       if (isEditableTarget(e.target)) return;
 
       // ⌘Z / Ctrl+Z
@@ -100,5 +97,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleDelete, handleUndoSelection, handleNudge]);
+  }, [enabled, handleDelete, handleUndoSelection, handleNudge]);
 }

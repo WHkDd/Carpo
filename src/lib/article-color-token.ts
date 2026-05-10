@@ -1,13 +1,30 @@
 const cache = new Map<string, string>();
 let observer: MutationObserver | null = null;
+const listeners = new Set<() => void>();
+
+function normalizeArticleNum(articleNum: number): number {
+  const n = Math.trunc(articleNum);
+  if (!Number.isFinite(n)) return 1;
+  return ((Math.max(1, n) - 1) % 10) + 1;
+}
+
+function invalidate(): void {
+  cache.clear();
+  listeners.forEach((listener) => listener());
+}
 
 function initObserver(): void {
-  if (observer || typeof window === "undefined" || typeof document === "undefined")
+  if (
+    observer ||
+    typeof window === "undefined" ||
+    typeof document === "undefined" ||
+    typeof MutationObserver === "undefined"
+  )
     return;
   observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
       if (m.type === "attributes" && m.attributeName === "class") {
-        cache.clear();
+        invalidate();
         return;
       }
     }
@@ -18,16 +35,23 @@ function initObserver(): void {
   });
 }
 
+export function subscribeArticleColorTokens(listener: () => void): () => void {
+  initObserver();
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 /**
  * Read `--article-N` from computed styles and return a CSS `hsl(... / alpha)`
- * string. Results are cached; cache is cleared when `<html>` class changes
- * (dark-mode toggle).
+ * string. Results are cached; cache is cleared and subscribers are notified
+ * when `<html>` class changes (dark-mode toggle).
  *
- * Falls back to a blue-gray for out-of-range article numbers.
+ * Article numbers cycle through the 10 token slots.
  */
 export function articleHsl(articleNum: number, alpha = 1): string {
   initObserver();
-  const key = `${articleNum}:${alpha}`;
+  const slot = normalizeArticleNum(articleNum);
+  const key = `${slot}:${alpha}`;
   const cached = cache.get(key);
   if (cached != null) return cached;
 
@@ -37,7 +61,7 @@ export function articleHsl(articleNum: number, alpha = 1): string {
     return fallback;
   }
 
-  const cssVar = `--article-${articleNum}`;
+  const cssVar = `--article-${slot}`;
   const raw = getComputedStyle(document.documentElement)
     .getPropertyValue(cssVar)
     .trim();
