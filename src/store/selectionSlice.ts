@@ -3,6 +3,7 @@ import type { QueueSlice } from "./queueSlice";
 import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { PageStateSlice } from "./pageStateSlice";
+import type { SettingsSlice } from "./settingsSlice";
 import { pageKey } from "./pageStateSlice";
 
 const EMPTY_SELECTION: readonly string[] = Object.freeze([]);
@@ -20,7 +21,12 @@ export interface SelectionSlice {
 }
 
 export const createSelectionSlice: StateCreator<
-  QueueSlice & UiSlice & FileViewSlice & PageStateSlice & SelectionSlice,
+  QueueSlice &
+    UiSlice &
+    FileViewSlice &
+    PageStateSlice &
+    SelectionSlice &
+    SettingsSlice,
   [["zustand/immer", never]],
   [],
   SelectionSlice

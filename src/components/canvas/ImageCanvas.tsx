@@ -58,8 +58,9 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
     const currentPage = file?.currentPage ?? 1;
     const pageState = useStore((s) => s.getPageState(file?.id ?? "", currentPage));
+    const documentState = useStore((s) => s.getDocumentState(file?.id ?? ""));
     const blocks = pageState.blocks;
-    const articles = pageState.articles;
+    const articles = documentState.articles;
     const selectionOrder = useStore((s) => s.getSelectionOrder(file?.id ?? "", currentPage));
     const selectedSet = useMemo(
       () => new Set(selectionOrder),
@@ -213,16 +214,9 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       const ctx = getActivePage();
       if (!ctx) return;
       const { fileId, page } = ctx;
-      const s = useStore.getState();
-      for (const id of contextTargetIds) {
-        if (!blockById.get(id)?.articleId) continue;
-        s.updateBlock(fileId, page, id, {
-          articleId: null,
-          articleOrder: null,
-        });
-      }
+      useStore.getState().unassignBlocksFromArticles(fileId, page, contextTargetIds);
       setCtxMenu(null);
-    }, [blockById, contextTargetIds]);
+    }, [contextTargetIds]);
 
     const registerBlockRef = useCallback((id: string, node: KRect | null) => {
       if (node) blockRefs.current[id] = node;
