@@ -18,11 +18,15 @@ import useImage from "use-image";
 import { ImageOff } from "lucide-react";
 import { useStore } from "@/store";
 import { useElementSize } from "@/hooks/useElementSize";
+import { subscribeArticleColorTokens } from "@/lib/article-color-token";
 import { usePanZoom, type PanZoomController } from "./usePanZoom";
 import { useDrawBlock } from "./useDrawBlock";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 
 export type CanvasController = PanZoomController;
+
+const CONTEXT_MENU_W = 160;
+const CONTEXT_MENU_H = 80;
 
 function newBlockId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -61,6 +65,11 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       () => new Set(selectionOrder),
       [selectionOrder]
     );
+    const blockById = useMemo(() => {
+      const map = new Map<string, (typeof blocks)[number]>();
+      for (const block of blocks) map.set(block.id, block);
+      return map;
+    }, [blocks]);
     const articleNumById = useMemo(() => {
       const map = new Map<string, number>();
       for (const a of articles) map.set(a.id, a.num);
@@ -96,10 +105,67 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       y: number;
       blockId: string;
     } | null>(null);
+    const [deleteConfirm, setDeleteConfirm] = useState<{
+      ids: string[];
+      clearSelection: boolean;
+    } | null>(null);
+    const [colorVersion, setColorVersion] = useState(0);
 
     useImperativeHandle(ref, () => controller, [controller]);
 
-    useKeyboardShortcuts();
+    useEffect(() => {
+      return subscribeArticleColorTokens(() => {
+        setColorVersion((version) => version + 1);
+      });
+    }, []);
+
+    const performDelete = useCallback(
+      (ids: string[], clearSelection: boolean) => {
+        const ctx = getActivePage();
+        if (!ctx || ids.length === 0) return;
+        const { fileId, page } = ctx;
+        const s = useStore.getState();
+        s.removeBlocks(fileId, page, ids);
+        if (clearSelection) s.clearSelection(fileId, page);
+      },
+      []
+    );
+
+    const requestDelete = useCallback(
+      (ids: string[], clearSelection: boolean) => {
+        const uniqueIds = Array.from(new Set(ids)).filter((id) =>
+          blockById.has(id)
+        );
+        if (uniqueIds.length === 0) return;
+        if (uniqueIds.length > 5) {
+          setDeleteConfirm({ ids: uniqueIds, clearSelection });
+          return;
+        }
+        performDelete(uniqueIds, clearSelection);
+      },
+      [blockById, performDelete]
+    );
+
+    const requestDeleteSelected = useCallback(() => {
+      requestDelete([...selectionOrder], true);
+    }, [requestDelete, selectionOrder]);
+
+    useKeyboardShortcuts({
+      enabled: !deleteConfirm,
+      onDeleteSelected: requestDeleteSelected,
+    });
+
+    const contextTargetIds = useMemo(() => {
+      if (!ctxMenu || !blockById.has(ctxMenu.blockId)) return [];
+      if (selectedSet.has(ctxMenu.blockId) && selectionOrder.length > 1) {
+        return selectionOrder.filter((id) => blockById.has(id));
+      }
+      return [ctxMenu.blockId];
+    }, [blockById, ctxMenu, selectedSet, selectionOrder]);
+
+    const contextHasArticle = contextTargetIds.some(
+      (id) => blockById.get(id)?.articleId
+    );
 
     useEffect(() => {
       const stage = stageRef.current;
@@ -108,21 +174,21 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       if (!container) return;
 
       const onContextMenu = (e: MouseEvent) => {
-        e.preventDefault();
         if (!useStore.getState().manualDrawMode) return;
+        e.preventDefault();
 
         const rect = container.getBoundingClientRect();
-        const x = (e.clientX - rect.left - stage.x()) / stage.scaleX();
-        const y = (e.clientY - rect.top - stage.y()) / stage.scaleY();
-        const shape = stage.getIntersection({ x, y });
+        const stageX = e.clientX - rect.left;
+        const stageY = e.clientY - rect.top;
+        const shape = stage.getIntersection({ x: stageX, y: stageY });
         if (!shape) return;
 
         const blockId = shape.id();
-        if (!blockId) return;
+        if (!blockId || !blockById.has(blockId)) return;
 
         setCtxMenu({
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
+          x: Math.min(stageX, Math.max(0, cw - CONTEXT_MENU_W)),
+          y: Math.min(stageY, Math.max(0, ch - CONTEXT_MENU_H)),
           blockId,
         });
       };
@@ -135,55 +201,28 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         container.removeEventListener("contextmenu", onContextMenu);
         window.removeEventListener("click", onClick, true);
       };
-    }, [isReady]);
+    }, [blockById, ch, cw, isReady]);
 
     const handleCtxDelete = useCallback(() => {
-      if (!ctxMenu) return;
-      const { blockId } = ctxMenu;
-      const ctx = getActivePage();
-      if (!ctx) return;
-      const { fileId, page } = ctx;
-      const s = useStore.getState();
-      const order = s.getSelectionOrder(fileId, page);
-
-      if (order.includes(blockId)) {
-        if (order.length > 5) {
-          const ok = window.confirm(`确定要删除选中的 ${order.length} 个版块吗？`);
-          if (!ok) { setCtxMenu(null); return; }
-        }
-        s.removeBlocks(fileId, page, [...order]);
-        s.clearSelection(fileId, page);
-      } else {
-        s.removeBlock(fileId, page, blockId);
-      }
+      const clearSelection = contextTargetIds.some((id) => selectedSet.has(id));
+      requestDelete(contextTargetIds, clearSelection);
       setCtxMenu(null);
-    }, [ctxMenu]);
+    }, [contextTargetIds, requestDelete, selectedSet]);
 
     const handleCtxUngroup = useCallback(() => {
-      if (!ctxMenu) return;
-      const { blockId } = ctxMenu;
       const ctx = getActivePage();
       if (!ctx) return;
       const { fileId, page } = ctx;
       const s = useStore.getState();
-      const ps = s.getPageState(fileId, page);
-      const block = ps.blocks.find((b) => b.id === blockId);
-      if (!block || !block.articleId) { setCtxMenu(null); return; }
-
-      const articleId = block.articleId;
-      const order = s.getSelectionOrder(fileId, page);
-      const targetIds = order.includes(blockId)
-        ? order.filter((id) => {
-            const b = ps.blocks.find((bb) => bb.id === id);
-            return b?.articleId === articleId;
-          })
-        : [blockId];
-
-      for (const id of targetIds) {
-        s.updateBlock(fileId, page, id, { articleId: null, articleOrder: null });
+      for (const id of contextTargetIds) {
+        if (!blockById.get(id)?.articleId) continue;
+        s.updateBlock(fileId, page, id, {
+          articleId: null,
+          articleOrder: null,
+        });
       }
       setCtxMenu(null);
-    }, [ctxMenu]);
+    }, [blockById, contextTargetIds]);
 
     const registerBlockRef = useCallback((id: string, node: KRect | null) => {
       if (node) blockRefs.current[id] = node;
@@ -387,6 +426,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   articleNum={
                     block.articleId ? articleNumById.get(block.articleId) : undefined
                   }
+                  colorVersion={colorVersion}
                   registerRef={registerBlockRef}
                   onMouseDown={handleBlockMouseDown}
                   onTransformEnd={handleBlockTransformEnd}
@@ -397,7 +437,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               ))}
               {manualDrawMode &&
                 selectionOrder.map((blockId, idx) => {
-                  const block = blocks.find((b) => b.id === blockId);
+                  const block = blockById.get(blockId);
                   if (!block) return null;
                   return (
                     <SelectionOrderLabel
@@ -405,6 +445,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                       x={block.x}
                       y={block.y}
                       order={idx + 1}
+                      colorVersion={colorVersion}
                     />
                   );
                 })}
@@ -433,7 +474,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
         {ctxMenu && (
           <div
-            className="absolute z-50 min-w-[140px] overflow-hidden rounded-md border bg-white py-1 shadow-lg"
+            className="absolute z-50 min-w-[160px] overflow-hidden rounded-md border bg-popover py-1 text-popover-foreground shadow-lg"
             style={{
               left: ctxMenu.x,
               top: ctxMenu.y,
@@ -441,28 +482,78 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {(() => {
-              const b = blocks.find((bb) => bb.id === ctxMenu.blockId);
-              const hasArticle = !!b?.articleId;
-              return (
-                <>
-                  {hasArticle && (
-                    <button
-                      className="block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100"
-                      onClick={handleCtxUngroup}
-                    >
-                      解除报道分组
-                    </button>
-                  )}
-                  <button
-                    className="block w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-gray-100"
-                    onClick={handleCtxDelete}
-                  >
-                    删除版块
-                  </button>
-                </>
-              );
-            })()}
+            {contextHasArticle && (
+              <button
+                type="button"
+                className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-2"
+                onClick={handleCtxUngroup}
+              >
+                解除报道分组
+              </button>
+            )}
+            <button
+              type="button"
+              className="block w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-surface-2"
+              onClick={handleCtxDelete}
+            >
+              删除版块
+            </button>
+          </div>
+        )}
+
+        {deleteConfirm && (
+          <div
+            className="absolute inset-0 z-[60] grid place-items-center bg-black/10"
+            role="presentation"
+            onMouseDown={() => setDeleteConfirm(null)}
+          >
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="delete-blocks-title"
+              aria-describedby="delete-blocks-desc"
+              className="w-[320px] rounded-md border bg-popover p-4 shadow-xl"
+              onMouseDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setDeleteConfirm(null);
+              }}
+            >
+              <div
+                id="delete-blocks-title"
+                className="text-sm font-semibold text-foreground"
+              >
+                删除选中的版块？
+              </div>
+              <div
+                id="delete-blocks-desc"
+                className="mt-2 text-sm text-foreground-muted"
+              >
+                将删除 {deleteConfirm.ids.length} 个版块。此操作不会删除原始图像。
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border px-3 py-1.5 text-sm text-foreground hover:bg-surface-2"
+                  onClick={() => setDeleteConfirm(null)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:opacity-90"
+                  autoFocus
+                  onClick={() => {
+                    performDelete(
+                      deleteConfirm.ids,
+                      deleteConfirm.clearSelection
+                    );
+                    setDeleteConfirm(null);
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
