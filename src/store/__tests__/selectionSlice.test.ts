@@ -47,6 +47,10 @@ describe("selectionSlice", () => {
     store.getState().pushSelection(fid, page, "a");
     store.getState().pushSelection(fid, page, "b");
     expect(store.getState().getSelectionOrder(fid, page)).toEqual(["a", "b"]);
+    expect(store.getState().getFileSelectionOrder(fid)).toEqual([
+      { page, blockId: "a" },
+      { page, blockId: "b" },
+    ]);
   });
 
   it("pushSelection re-orders duplicates (moves to end)", () => {
@@ -82,11 +86,22 @@ describe("selectionSlice", () => {
     expect(store.getState().getSelectionOrder(fid, page)).toEqual([]);
   });
 
-  it("isolates selection per page", () => {
+  it("keeps a file-level order while filtering display by page", () => {
     store.getState().pushSelection(fid, page, "a");
     store.getState().pushSelection(fid, 2, "x");
     expect(store.getState().getSelectionOrder(fid, page)).toEqual(["a"]);
     expect(store.getState().getSelectionOrder(fid, 2)).toEqual(["x"]);
+    expect(store.getState().getFileSelectionOrder(fid)).toEqual([
+      { page: 1, blockId: "a" },
+      { page: 2, blockId: "x" },
+    ]);
+  });
+
+  it("clearSelection clears the file-level draft queue", () => {
+    store.getState().pushSelection(fid, 1, "a");
+    store.getState().pushSelection(fid, 2, "x");
+    store.getState().clearSelection(fid, 1);
+    expect(store.getState().getFileSelectionOrder(fid)).toEqual([]);
   });
 
   it("toggleDrawMode toggles boolean", () => {

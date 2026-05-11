@@ -57,6 +57,16 @@ export const createQueueSlice: StateCreator<
       if (index === -1) return;
 
       state.files.splice(index, 1);
+      delete state.documentStates[id];
+      delete state.fileViews[id];
+      delete state.selectionOrders[id];
+      state.highlightedArticleId = null;
+      const pagePrefix = `${id}::`;
+      Object.keys(state.pageStates).forEach((key) => {
+        if (key.startsWith(pagePrefix)) {
+          delete state.pageStates[key];
+        }
+      });
       if (state.currentFileId !== id) return;
 
       const replacement = state.files[index] ?? state.files[index - 1] ?? null;
