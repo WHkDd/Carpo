@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
+import { getSettings } from "@/lib/tauri";
 import { useStore } from "@/store";
 import { Toolbar } from "./Toolbar";
 import { PageNavigator } from "./PageNavigator";
@@ -32,13 +34,40 @@ function AppShellInner() {
   const queueCollapsed = useStore((s) => s.queueCollapsed);
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
+  const setSettings = useStore((s) => s.setSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   usePdfPageSync();
 
+  // Hydrate persisted settings into the slice on mount. Failures are
+  // non-fatal — the slice's DEFAULT_SETTINGS keep the UI usable.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await getSettings();
+        if (!cancelled) setSettings(s);
+      } catch (e) {
+        console.warn("settings hydrate failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setSettings]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!isHotkeyTarget(e.target)) return;
       const meta = e.metaKey || e.ctrlKey;
+
+      // ⌘, opens settings from anywhere, even when an input is focused.
+      if (meta && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+
+      if (!isHotkeyTarget(e.target)) return;
 
       if (meta) {
         const ctl = canvasRef.current;
@@ -83,26 +112,32 @@ function AppShellInner() {
   }, [prevPage, nextPage, markSelectionAsArticle, toggleDrawMode]);
 
   return (
-    <main
-      className="grid h-screen min-w-[1100px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background text-foreground"
-      style={{
-        gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
-      }}
-    >
-      <QueuePanel />
-      <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
-        <div className="flex items-center justify-center px-3">
-          <Toolbar />
-        </div>
-        <div className="min-h-0 overflow-hidden p-2">
-          <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
-            <ImageCanvas ref={canvasRef} />
-            <PageNavigator />
-            <StatusBar canvasRef={canvasRef} />
+    <>
+      <main
+        className="grid h-screen min-w-[1100px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background text-foreground"
+        style={{
+          gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
+        }}
+      >
+        <QueuePanel />
+        <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
+          <div className="flex items-center justify-center px-3">
+            <Toolbar onOpenSettings={() => setSettingsOpen(true)} />
           </div>
-        </div>
-      </section>
-      <StructureRail />
-    </main>
+          <div className="min-h-0 overflow-hidden p-2">
+            <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
+              <ImageCanvas ref={canvasRef} />
+              <PageNavigator />
+              <StatusBar canvasRef={canvasRef} />
+            </div>
+          </div>
+        </section>
+        <StructureRail />
+      </main>
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+    </>
   );
 }

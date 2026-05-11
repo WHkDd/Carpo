@@ -27,21 +27,37 @@ pub async fn start_grouped_ocr(
     })
 }
 
+/// Lists models for a provider. The dialog edits a draft locally; rather
+/// than force a Save before the user can click 刷新, the command accepts an
+/// optional `settings` override (with the draft state) and an optional
+/// `secret` override (with a just-typed but not-yet-persisted API key). The
+/// keychain is only consulted for the secret when the caller doesn't pass one
+/// — that way an existing saved key works for an `openai` refresh without
+/// the user re-typing.
 #[tauri::command]
 pub async fn list_provider_models(
     app: AppHandle,
     state: State<'_, AppState>,
+    settings: Option<crate::config::NonSecretSettings>,
+    secret: Option<String>,
 ) -> AppResult<Vec<String>> {
-    let settings = crate::config::load(&app)?;
-    let secret_key = match settings.provider {
-        crate::config::Provider::Paddleocr => crate::secrets::SecretKey::PaddleToken,
-        crate::config::Provider::Openai => crate::secrets::SecretKey::OpenaiKey,
-        crate::config::Provider::Openrouter => crate::secrets::SecretKey::OpenrouterKey,
-        crate::config::Provider::OpenaiCompatible => {
-            crate::secrets::SecretKey::OpenaiCompatibleKey
-        }
+    let settings = match settings {
+        Some(s) => s,
+        None => crate::config::load(&app)?,
     };
-    let secret = crate::secrets::get(secret_key)?;
+    let secret = if let Some(s) = secret {
+        Some(s)
+    } else {
+        let secret_key = match settings.provider {
+            crate::config::Provider::Paddleocr => crate::secrets::SecretKey::PaddleToken,
+            crate::config::Provider::Openai => crate::secrets::SecretKey::OpenaiKey,
+            crate::config::Provider::Openrouter => crate::secrets::SecretKey::OpenrouterKey,
+            crate::config::Provider::OpenaiCompatible => {
+                crate::secrets::SecretKey::OpenaiCompatibleKey
+            }
+        };
+        crate::secrets::get(secret_key)?
+    };
     crate::ocr::list_models(&state.http, &settings, secret.as_deref()).await
 }
 
