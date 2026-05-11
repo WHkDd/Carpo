@@ -278,16 +278,20 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Dependencies added**: Rust `wiremock` already in dev-deps. No new runtime deps.
 
+**Deviation (2026-05-11)**: provider lineup changed from `paddleocr/openai/claude/openrouter` to `paddleocr/openai/openrouter/openai_compatible`. Anthropic native API is dropped — Claude is still reachable via the OpenAI-compatible custom endpoint or OpenRouter. The OpenAI-compatible provider accepts a user-supplied `base_url` + key and exposes "刷新模型" against `${base_url}/v1/models`. Prefer the latest official SDK / current API surfaces over byte-for-byte parity with `newspaper_ocr.py:359-478` — that file remains a reference for prompt + result shape, not for HTTP wire format.
+
 ### T5.1 [BE] · Secrets layer (`secrets.rs` via keyring)
 - `src-tauri/src/secrets.rs`: `SecretKey` enum matching `ipc-types.ts`. `get(key) -> AppResult<Option<String>>`, `set(key, value)`, `delete(key)` via `keyring::Entry::new("local.kai.xcvt", key.as_str())`.
 - `src-tauri/src/commands/settings.rs`: `get_secret(key) -> bool` (existence only — never return raw secret), `set_secret(key, value)`, `delete_secret(key)`.
 - **Acceptance**: round-trip set→get on macOS Keychain; user prompted for first-time access; subsequent runs no prompt.
+- ~~T5.1~~ (2026-05-11): `secrets.rs` with new `SecretKey { PaddleToken, OpenaiKey, OpenrouterKey, OpenaiCompatibleKey }`; commands wired in `lib.rs`. Frontend wrappers (`getSecret/setSecret/deleteSecret` in `src/lib/tauri.ts`) and `ipc-types.ts` aligned to the new lineup (claude_key dropped, openai_compatible_key added). Static gates green: `pnpm typecheck`, `pnpm build`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`. Manual Keychain round-trip remains for the UI loop when T5.5 lands.
 
 ### T5.2 [BE] · Non-secret settings (`config.rs` via tauri-plugin-store)
 - `src-tauri/src/config.rs`: load/save `NonSecretSettings` via `tauri-plugin-store` at `${AppConfig}/settings.json`. Default values match Python `_OCR_PROMPT`, model defaults from `newspaper_ocr.py:309-311`.
 - `get_settings()`, `set_settings(s)` commands.
 - Mirror `src/store/settingsSlice.ts` to load/save through these commands.
 - **Acceptance**: settings survive app restart; default prompt matches Python.
+- ~~T5.2 (BE)~~ (2026-05-11): `config.rs` with `Provider`/`OcrProfile`/`NonSecretSettings` (serde snake_case), defaults sourced from `newspaper_ocr.py:296-311` (`_OCR_PROMPT`, `gpt-4o`, `google/gemini-2.5-flash-preview`). Persisted under key `settings` inside `${AppConfig}/settings.json` via `tauri-plugin-store`. `get_settings`/`set_settings` commands wired in `lib.rs`. Frontend `tauri.ts` wrappers already existed and remain compatible after the lineup change (M5 deviation). Slice expansion in `src/store/settingsSlice.ts` deferred to **T5.5** (settings dialog) — current slice still only owns `ocrProfile` until the dialog drives full hydrate/save. Static gates green.
 
 ### T5.3 [BE] · OcrProvider trait + 4 implementations
 - `src-tauri/src/ocr/mod.rs`: `Provider` enum, `OcrProfile` constants (STANDARD/FAST), `#[async_trait] OcrProvider { recognize(&self, png_b64, prompt, ct) -> AppResult<String>; list_models(&self) -> AppResult<Vec<String>>; }`.

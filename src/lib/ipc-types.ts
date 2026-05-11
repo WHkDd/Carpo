@@ -3,15 +3,19 @@
  * specta or ts-rs. Anything sent across the Tauri boundary lives here.
  */
 
-export type Provider = "paddleocr" | "openai" | "claude" | "openrouter";
+export type Provider =
+  | "paddleocr"
+  | "openai"
+  | "openrouter"
+  | "openai_compatible";
 
 export type OcrProfile = "standard" | "fast";
 
 export type SecretKey =
   | "paddle_token"
   | "openai_key"
-  | "claude_key"
-  | "openrouter_key";
+  | "openrouter_key"
+  | "openai_compatible_key";
 
 export interface NonSecretSettings {
   provider: Provider;
@@ -19,8 +23,9 @@ export interface NonSecretSettings {
   ocr_prompt: string;
   paddle_url: string;
   openai_model: string;
-  claude_model: string;
   openrouter_model: string;
+  openai_compatible_base_url: string;
+  openai_compatible_model: string;
 }
 
 export interface PdfInfo {
