@@ -9,6 +9,7 @@ import { createUiSlice, type UiSlice } from "./uiSlice";
 import { createPageStateSlice, type PageStateSlice } from "./pageStateSlice";
 import { createSelectionSlice, type SelectionSlice } from "./selectionSlice";
 import { createSettingsSlice, type SettingsSlice } from "./settingsSlice";
+import { createJobSlice, type JobSlice } from "./jobSlice";
 
 export type AppStore =
   QueueSlice &
@@ -16,7 +17,8 @@ export type AppStore =
   FileViewSlice &
   PageStateSlice &
   SelectionSlice &
-  SettingsSlice;
+  SettingsSlice &
+  JobSlice;
 
 export const useStore = create<AppStore>()(
   immer((...args) => ({
@@ -26,5 +28,6 @@ export const useStore = create<AppStore>()(
     ...createPageStateSlice(...args),
     ...createSelectionSlice(...args),
     ...createSettingsSlice(...args),
+    ...createJobSlice(...args),
   }))
 );

@@ -4,6 +4,7 @@ import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { SelectionRef, SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
+import type { JobSlice } from "./jobSlice";
 
 export interface Block {
   id: string;
@@ -230,7 +231,8 @@ export const createPageStateSlice: StateCreator<
     FileViewSlice &
     PageStateSlice &
     SelectionSlice &
-    SettingsSlice,
+    SettingsSlice &
+    JobSlice,
   [["zustand/immer", never]],
   [],
   PageStateSlice
