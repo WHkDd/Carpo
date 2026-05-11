@@ -2,6 +2,10 @@ mod commands;
 mod config;
 mod error;
 mod image;
+// Wired into commands in T5.4. Until then the public surface lives only in
+// `cfg(test)` and would otherwise trip dead_code on `cargo clippy -D warnings`.
+#[allow(dead_code)]
+mod ocr;
 mod pdf;
 mod secrets;
 mod state;
