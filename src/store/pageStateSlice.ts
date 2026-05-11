@@ -161,10 +161,27 @@ function removeSelectionRefs(
   refs: readonly ArticleBlockRef[]
 ): void {
   const selection = state.selectionOrders[fileId];
-  if (!selection || refs.length === 0) return;
-  state.selectionOrders[fileId] = selection.filter(
-    (selected) => !refs.some((ref) => refMatches(selected, ref))
-  );
+  if (selection && refs.length > 0) {
+    state.selectionOrders[fileId] = selection.filter(
+      (selected) => !refs.some((ref) => refMatches(selected, ref))
+    );
+  }
+  const editing = state.editingBlock[fileId];
+  if (editing && refs.some((ref) => refMatches(editing, ref))) {
+    state.editingBlock[fileId] = null;
+  }
+}
+
+function clearEditingForBlockIds(
+  state: PageSelectionState,
+  fileId: string,
+  page: number,
+  blockIds: Set<string>
+): void {
+  const editing = state.editingBlock[fileId];
+  if (editing && editing.page === page && blockIds.has(editing.blockId)) {
+    state.editingBlock[fileId] = null;
+  }
 }
 
 function syncArticleBlocks(
@@ -255,6 +272,7 @@ export const createPageStateSlice: StateCreator<
           (ref) => !(ref.page === page && ref.blockId === blockId)
         );
       }
+      clearEditingForBlockIds(state, fileId, page, new Set([blockId]));
       unassignBlockRefs(state, fileId, page, new Set([blockId]));
     }),
 
@@ -271,6 +289,7 @@ export const createPageStateSlice: StateCreator<
           (ref) => !(ref.page === page && idSet.has(ref.blockId))
         );
       }
+      clearEditingForBlockIds(state, fileId, page, idSet);
       unassignBlockRefs(state, fileId, page, idSet);
     }),
 

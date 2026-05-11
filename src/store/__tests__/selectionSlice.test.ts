@@ -111,4 +111,18 @@ describe("selectionSlice", () => {
     store.getState().toggleDrawMode();
     expect(store.getState().manualDrawMode).toBe(false);
   });
+
+  it("setEditingBlock stores and clears a single edit target per file", () => {
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
+    expect(store.getState().getEditingBlockId(fid, page)).toBe("b1");
+    store.getState().setEditingBlock(fid, null);
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+  });
+
+  it("getEditingBlockId is scoped to the current page", () => {
+    store.getState().setEditingBlock(fid, { page: 1, blockId: "b1" });
+    expect(store.getState().getEditingBlockId(fid, 1)).toBe("b1");
+    expect(store.getState().getEditingBlockId(fid, 2)).toBe(null);
+  });
 });

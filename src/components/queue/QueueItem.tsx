@@ -11,10 +11,7 @@ interface QueueItemProps {
 
 export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps) {
   const Icon = entry.kind === "pdf" ? FileText : FileImage;
-  const meta =
-    entry.kind === "pdf"
-      ? `pdf · ${entry.ext.toUpperCase()}`
-      : `image · ${entry.ext.toUpperCase()}`;
+  const meta = entry.ext.toUpperCase();
   const pageBadge =
     entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
       ? `${entry.currentPage ?? 1} / ${entry.pdfTotal}`

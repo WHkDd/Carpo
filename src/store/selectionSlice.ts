@@ -13,17 +13,25 @@ export interface SelectionRef {
   blockId: string;
 }
 
+export interface EditingBlockRef {
+  page: number;
+  blockId: string;
+}
+
 export interface SelectionSlice {
   manualDrawMode: boolean;
   selectionOrders: Record<string, SelectionRef[]>;
+  editingBlock: Record<string, EditingBlockRef | null>;
   toggleDrawMode: () => void;
   setDrawMode: (active: boolean) => void;
   pushSelection: (fileId: string, page: number, id: string) => void;
   popSelection: (fileId: string, page: number) => void;
   clearSelection: (fileId: string, page: number) => void;
   removeFromSelection: (fileId: string, page: number, id: string) => void;
+  setEditingBlock: (fileId: string, ref: EditingBlockRef | null) => void;
   getSelectionOrder: (fileId: string, page: number) => readonly string[];
   getFileSelectionOrder: (fileId: string) => readonly SelectionRef[];
+  getEditingBlockId: (fileId: string, page: number) => string | null;
 }
 
 export const createSelectionSlice: StateCreator<
@@ -39,6 +47,7 @@ export const createSelectionSlice: StateCreator<
 > = (set, get) => ({
   manualDrawMode: false,
   selectionOrders: {},
+  editingBlock: {},
 
   toggleDrawMode: () =>
     set((state) => {
@@ -85,6 +94,11 @@ export const createSelectionSlice: StateCreator<
       );
     }),
 
+  setEditingBlock: (fileId, ref) =>
+    set((state) => {
+      state.editingBlock[fileId] = ref;
+    }),
+
   getSelectionOrder: (fileId, page) => {
     const refs = get().selectionOrders[fileId];
     if (!refs) return EMPTY_SELECTION;
@@ -95,5 +109,11 @@ export const createSelectionSlice: StateCreator<
 
   getFileSelectionOrder: (fileId) => {
     return get().selectionOrders[fileId] ?? EMPTY_SELECTION_REFS;
+  },
+
+  getEditingBlockId: (fileId, page) => {
+    const ref = get().editingBlock[fileId];
+    if (!ref) return null;
+    return ref.page === page ? ref.blockId : null;
   },
 });

@@ -90,7 +90,7 @@ function AppShellInner() {
       }}
     >
       <QueuePanel />
-      <section className="grid min-h-0 min-w-0 grid-rows-[40px_minmax(0,1fr)] overflow-hidden">
+      <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
         <div className="flex items-center justify-center px-3">
           <Toolbar />
         </div>
