@@ -1,9 +1,13 @@
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Settings as SettingsIcon } from "lucide-react";
 import { useFileImport } from "@/hooks/useFileImport";
 import { useStore } from "@/store";
 import { QueueItem, QueueItemCompact } from "./QueueItem";
 
-export function QueuePanel() {
+interface QueuePanelProps {
+  onOpenSettings: () => void;
+}
+
+export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
   const files = useStore((s) => s.files);
   const currentFileId = useStore((s) => s.currentFileId);
   const setCurrent = useStore((s) => s.setCurrent);
@@ -14,7 +18,7 @@ export function QueuePanel() {
 
   if (queueCollapsed) {
     return (
-      <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)] bg-surface">
+      <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface pb-2">
         <div className="flex items-center px-3.5" aria-hidden>
           <div className="flex gap-2">
             <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ff5f57]" />
@@ -58,12 +62,23 @@ export function QueuePanel() {
             </div>
           )}
         </div>
+
+        <div className="grid place-items-center border-t border-border/50 p-2">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label="设置"
+            className="grid h-7 w-7 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <SettingsIcon className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
       </aside>
     );
   }
 
   return (
-    <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)] bg-surface">
+    <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface pb-2">
       <div className="flex items-center px-3.5">
         <div className="flex gap-2" aria-hidden>
           <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ff5f57]" />
@@ -125,6 +140,18 @@ export function QueuePanel() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="border-t border-border/50 p-1.5">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          aria-label="设置"
+          className="flex h-8 w-full translate-y-[0.5px] items-center gap-2 rounded-md px-2.5 text-[12px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        >
+          <SettingsIcon className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <span>设置</span>
+        </button>
       </div>
     </aside>
   );

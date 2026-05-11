@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { useStore } from "@/store";
 import { Newspaper } from "lucide-react";
-import { ProfileToggle } from "./ProfileToggle";
 
 export function BlockOpsPanel() {
   const fileId = useStore((s) => s.currentFileId) ?? "";
@@ -20,7 +19,6 @@ export function BlockOpsPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <ProfileToggle />
       <button
         type="button"
         disabled={!canMark}

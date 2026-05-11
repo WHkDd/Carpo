@@ -203,15 +203,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
       <div className="relative flex h-[600px] w-full max-w-4xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]">
         <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
-          <div className="flex items-center gap-2">
-            <h2
-              id="settings-title"
-              className="text-[17px] font-medium text-foreground"
-            >
-              设置
-            </h2>
-            <span className="font-mono text-[11px] text-foreground-subtle">⌘,</span>
-          </div>
+          <h2
+            id="settings-title"
+            className="text-[17px] font-medium text-foreground"
+          >
+            设置
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -274,7 +271,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </section>
         </div>
 
-        <footer className="flex items-center justify-between gap-4 border-t border-border bg-surface-2 px-6 py-3">
+        <footer className="flex items-center justify-between gap-4 border-t border-border bg-surface-2 pl-6 pr-7 py-3">
           <div className="text-[11px] text-foreground-muted">
             {saveError ? (
               <span className="text-destructive">保存失败：{saveError}</span>
@@ -287,26 +284,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-8 items-center rounded border border-border bg-transparent px-3 text-[13px] text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={() => void trySave()}
-              disabled={saving}
-              className="flex h-8 items-center gap-2 rounded bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? "保存中…" : "保存"}
-              <kbd className="rounded border border-primary-foreground/15 bg-primary-foreground/15 px-1 py-px font-mono text-[10px] text-primary-foreground/80">
-                ⌘S
-              </kbd>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => void trySave()}
+            disabled={saving}
+            className="flex h-[34px] items-center rounded border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
         </footer>
       </div>
     </div>
