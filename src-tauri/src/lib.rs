@@ -1,7 +1,9 @@
 mod commands;
+mod config;
 mod error;
 mod image;
 mod pdf;
+mod secrets;
 mod state;
 
 use tauri::Manager;
@@ -30,7 +32,12 @@ pub fn run() {
             commands::files::load_raster_image,
             commands::files::list_supported_extensions,
             commands::render::get_pdf_info,
-            commands::render::render_page
+            commands::render::render_page,
+            commands::settings::get_secret,
+            commands::settings::set_secret,
+            commands::settings::delete_secret,
+            commands::settings::get_settings,
+            commands::settings::set_settings
         ])
         .setup(|app| {
             app.manage(state::AppState::new()?);
