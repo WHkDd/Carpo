@@ -22,6 +22,7 @@ export interface NonSecretSettings {
   ocr_profile: OcrProfile;
   ocr_prompt: string;
   paddle_url: string;
+  paddle_model: string;
   openai_model: string;
   openrouter_model: string;
   openai_compatible_base_url: string;
