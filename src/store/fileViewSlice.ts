@@ -4,6 +4,7 @@ import type { UiSlice } from "./uiSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
+import type { JobSlice } from "./jobSlice";
 
 export interface FileView {
   zoomPercent: number;
@@ -40,7 +41,8 @@ export const createFileViewSlice: StateCreator<
     FileViewSlice &
     PageStateSlice &
     SelectionSlice &
-    SettingsSlice,
+    SettingsSlice &
+    JobSlice,
   [["zustand/immer", never]],
   [],
   FileViewSlice

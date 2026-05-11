@@ -4,6 +4,7 @@ import type { QueueSlice } from "./queueSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
+import type { JobSlice } from "./jobSlice";
 
 const MIN_ZOOM_PERCENT = 1;
 const MAX_ZOOM_PERCENT = 800;
@@ -27,7 +28,8 @@ export const createUiSlice: StateCreator<
     FileViewSlice &
     PageStateSlice &
     SelectionSlice &
-    SettingsSlice,
+    SettingsSlice &
+    JobSlice,
   [["zustand/immer", never]],
   [],
   UiSlice

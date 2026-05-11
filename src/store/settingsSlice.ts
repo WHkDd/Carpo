@@ -4,6 +4,7 @@ import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
+import type { JobSlice } from "./jobSlice";
 import type {
   NonSecretSettings,
   OcrProfile as IpcOcrProfile,
@@ -49,7 +50,8 @@ export const createSettingsSlice: StateCreator<
     FileViewSlice &
     PageStateSlice &
     SelectionSlice &
-    SettingsSlice,
+    SettingsSlice &
+    JobSlice,
   [["zustand/immer", never]],
   [],
   SettingsSlice

@@ -4,6 +4,7 @@ import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SettingsSlice } from "./settingsSlice";
+import type { JobSlice } from "./jobSlice";
 
 const EMPTY_SELECTION: readonly string[] = Object.freeze([]);
 const EMPTY_SELECTION_REFS: readonly SelectionRef[] = Object.freeze([]);
@@ -40,7 +41,8 @@ export const createSelectionSlice: StateCreator<
     FileViewSlice &
     PageStateSlice &
     SelectionSlice &
-    SettingsSlice,
+    SettingsSlice &
+    JobSlice,
   [["zustand/immer", never]],
   [],
   SelectionSlice
