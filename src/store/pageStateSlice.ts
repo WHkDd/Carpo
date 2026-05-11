@@ -155,13 +155,14 @@ function refMatches(ref: ArticleBlockRef | SelectionRef, target: ArticleBlockRef
   return ref.page === target.page && ref.blockId === target.blockId;
 }
 
-function removeSelectionRefs(
+function pruneSelectionAndEditing(
   state: PageSelectionState,
   fileId: string,
   refs: readonly ArticleBlockRef[]
 ): void {
+  if (refs.length === 0) return;
   const selection = state.selectionOrders[fileId];
-  if (selection && refs.length > 0) {
+  if (selection) {
     state.selectionOrders[fileId] = selection.filter(
       (selected) => !refs.some((ref) => refMatches(selected, ref))
     );
@@ -172,16 +173,11 @@ function removeSelectionRefs(
   }
 }
 
-function clearEditingForBlockIds(
-  state: PageSelectionState,
-  fileId: string,
+function refsForBlockIds(
   page: number,
-  blockIds: Set<string>
-): void {
-  const editing = state.editingBlock[fileId];
-  if (editing && editing.page === page && blockIds.has(editing.blockId)) {
-    state.editingBlock[fileId] = null;
-  }
+  blockIds: Iterable<string>
+): ArticleBlockRef[] {
+  return Array.from(blockIds, (blockId) => ({ page, blockId, order: 0 }));
 }
 
 function syncArticleBlocks(
@@ -266,13 +262,7 @@ export const createPageStateSlice: StateCreator<
       const ps = state.pageStates[key];
       if (!ps) return;
       ps.blocks = ps.blocks.filter((b) => b.id !== blockId);
-      const selection = state.selectionOrders[fileId];
-      if (selection) {
-        state.selectionOrders[fileId] = selection.filter(
-          (ref) => !(ref.page === page && ref.blockId === blockId)
-        );
-      }
-      clearEditingForBlockIds(state, fileId, page, new Set([blockId]));
+      pruneSelectionAndEditing(state, fileId, refsForBlockIds(page, [blockId]));
       unassignBlockRefs(state, fileId, page, new Set([blockId]));
     }),
 
@@ -283,13 +273,7 @@ export const createPageStateSlice: StateCreator<
       if (!ps) return;
       const idSet = new Set(blockIds);
       ps.blocks = ps.blocks.filter((b) => !idSet.has(b.id));
-      const selection = state.selectionOrders[fileId];
-      if (selection) {
-        state.selectionOrders[fileId] = selection.filter(
-          (ref) => !(ref.page === page && idSet.has(ref.blockId))
-        );
-      }
-      clearEditingForBlockIds(state, fileId, page, idSet);
+      pruneSelectionAndEditing(state, fileId, refsForBlockIds(page, idSet));
       unassignBlockRefs(state, fileId, page, idSet);
     }),
 
@@ -394,7 +378,7 @@ export const createPageStateSlice: StateCreator<
           ps.blocks = ps.blocks.filter((candidate) => candidate.id !== ref.blockId);
         }
       });
-      removeSelectionRefs(state, fileId, refsToDelete);
+      pruneSelectionAndEditing(state, fileId, refsToDelete);
       doc.articles = doc.articles.filter((candidate) => candidate.id !== articleId);
       renumberArticles(doc);
       syncArticleBlocks(state, fileId, doc);
@@ -425,7 +409,7 @@ export const createPageStateSlice: StateCreator<
           }
         });
       });
-      removeSelectionRefs(state, fileId, refsToDelete);
+      pruneSelectionAndEditing(state, fileId, refsToDelete);
       doc.articles = [];
       state.documentStates[fileId] = doc;
       syncArticleBlocks(state, fileId, doc);

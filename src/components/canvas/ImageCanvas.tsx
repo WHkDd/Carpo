@@ -138,7 +138,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     } | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<{
       ids: string[];
-      clearSelection: boolean;
     } | null>(null);
     const [colorVersion, setColorVersion] = useState(0);
 
@@ -150,29 +149,25 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       });
     }, []);
 
-    const performDelete = useCallback(
-      (ids: string[], clearSelection: boolean) => {
-        void clearSelection;
-        const ctx = getActivePage();
-        if (!ctx || ids.length === 0) return;
-        const { fileId, page } = ctx;
-        const s = useStore.getState();
-        s.removeBlocks(fileId, page, ids);
-      },
-      []
-    );
+    const performDelete = useCallback((ids: string[]) => {
+      const ctx = getActivePage();
+      if (!ctx || ids.length === 0) return;
+      const { fileId, page } = ctx;
+      const s = useStore.getState();
+      s.removeBlocks(fileId, page, ids);
+    }, []);
 
     const requestDelete = useCallback(
-      (ids: string[], clearSelection: boolean) => {
+      (ids: string[]) => {
         const uniqueIds = Array.from(new Set(ids)).filter((id) =>
           blockById.has(id)
         );
         if (uniqueIds.length === 0) return;
         if (uniqueIds.length > 5) {
-          setDeleteConfirm({ ids: uniqueIds, clearSelection });
+          setDeleteConfirm({ ids: uniqueIds });
           return;
         }
-        performDelete(uniqueIds, clearSelection);
+        performDelete(uniqueIds);
       },
       [blockById, performDelete]
     );
@@ -183,12 +178,12 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       const s = useStore.getState();
       const order = [...s.getSelectionOrder(ctx.fileId, ctx.page)];
       if (order.length > 0) {
-        requestDelete(order, true);
+        requestDelete(order);
         return;
       }
       const editingId = s.getEditingBlockId(ctx.fileId, ctx.page);
       if (editingId) {
-        requestDelete([editingId], false);
+        requestDelete([editingId]);
       }
     }, [requestDelete]);
 
@@ -205,7 +200,21 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       return [ctxMenu.blockId];
     }, [blockById, ctxMenu, selectedSet, selectionOrder]);
 
+    // Live refs so the context-menu listener (mounted once per stage) can
+    // read the latest geometry / block index without resubscribing on every
+    // pan, zoom, resize, or block edit.
+    const cwRef = useRef(cw);
+    const chRef = useRef(ch);
+    const blockByIdRef = useRef(blockById);
     useEffect(() => {
+      cwRef.current = cw;
+      chRef.current = ch;
+      blockByIdRef.current = blockById;
+    });
+
+    const stageMounted = cw > 0 && ch > 0;
+    useEffect(() => {
+      if (!stageMounted) return;
       const stage = stageRef.current;
       if (!stage) return;
       const container = stage.container();
@@ -222,11 +231,11 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         if (!shape) return;
 
         const blockId = shape.id();
-        if (!blockId || !blockById.has(blockId)) return;
+        if (!blockId || !blockByIdRef.current.has(blockId)) return;
 
         setCtxMenu({
-          x: Math.min(stageX, Math.max(0, cw - CONTEXT_MENU_W)),
-          y: Math.min(stageY, Math.max(0, ch - CONTEXT_MENU_H)),
+          x: Math.min(stageX, Math.max(0, cwRef.current - CONTEXT_MENU_W)),
+          y: Math.min(stageY, Math.max(0, chRef.current - CONTEXT_MENU_H)),
           blockId,
         });
       };
@@ -239,13 +248,12 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         container.removeEventListener("contextmenu", onContextMenu);
         window.removeEventListener("click", onClick);
       };
-    }, [blockById, ch, cw, isReady]);
+    }, [stageMounted]);
 
     const handleCtxDelete = useCallback(() => {
-      const clearSelection = contextTargetIds.some((id) => selectedSet.has(id));
-      requestDelete(contextTargetIds, clearSelection);
+      requestDelete(contextTargetIds);
       setCtxMenu(null);
-    }, [contextTargetIds, requestDelete, selectedSet]);
+    }, [contextTargetIds, requestDelete]);
 
     const registerBlockRef = useCallback((id: string, node: KRect | null) => {
       if (node) blockRefs.current[id] = node;
@@ -619,10 +627,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:opacity-90"
                   autoFocus
                   onClick={() => {
-                    performDelete(
-                      deleteConfirm.ids,
-                      deleteConfirm.clearSelection
-                    );
+                    performDelete(deleteConfirm.ids);
                     setDeleteConfirm(null);
                   }}
                 >
