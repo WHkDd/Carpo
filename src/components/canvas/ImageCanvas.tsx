@@ -86,6 +86,9 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       }
       return map;
     }, [currentPage, fileSelectionOrder]);
+    const editingBlockId = useStore((s) =>
+      file?.id ? s.getEditingBlockId(file.id, currentPage) : null
+    );
     const highlightedArticleId = useStore((s) => s.highlightedArticleId);
     const isHighlighted = useCallback(
       (articleId: string | null) => {
@@ -175,8 +178,19 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     );
 
     const requestDeleteSelected = useCallback(() => {
-      requestDelete([...selectionOrder], true);
-    }, [requestDelete, selectionOrder]);
+      const ctx = getActivePage();
+      if (!ctx) return;
+      const s = useStore.getState();
+      const order = [...s.getSelectionOrder(ctx.fileId, ctx.page)];
+      if (order.length > 0) {
+        requestDelete(order, true);
+        return;
+      }
+      const editingId = s.getEditingBlockId(ctx.fileId, ctx.page);
+      if (editingId) {
+        requestDelete([editingId], false);
+      }
+    }, [requestDelete]);
 
     useKeyboardShortcuts({
       enabled: !deleteConfirm,
@@ -190,10 +204,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       }
       return [ctxMenu.blockId];
     }, [blockById, ctxMenu, selectedSet, selectionOrder]);
-
-    const contextHasArticle = contextTargetIds.some(
-      (id) => blockById.get(id)?.articleId
-    );
 
     useEffect(() => {
       const stage = stageRef.current;
@@ -237,15 +247,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       setCtxMenu(null);
     }, [contextTargetIds, requestDelete, selectedSet]);
 
-    const handleCtxUngroup = useCallback(() => {
-      const ctx = getActivePage();
-      if (!ctx) return;
-      const { fileId, page } = ctx;
-      const s = useStore.getState();
-      s.unassignBlocksFromArticles(fileId, page, contextTargetIds);
-      setCtxMenu(null);
-    }, [contextTargetIds]);
-
     const registerBlockRef = useCallback((id: string, node: KRect | null) => {
       if (node) blockRefs.current[id] = node;
       else delete blockRefs.current[id];
@@ -254,14 +255,23 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     useEffect(() => {
       const transformer = transformerRef.current;
       if (!transformer) return;
-      const nodes = manualDrawMode
-        ? (selectionOrder
-            .map((id) => blockRefs.current[id])
-            .filter(Boolean) as KRect[])
-        : [];
+      if (!manualDrawMode) {
+        transformer.nodes([]);
+        transformer.getLayer()?.batchDraw();
+        return;
+      }
+      const nodes: KRect[] = [];
+      for (const id of selectionOrder) {
+        const node = blockRefs.current[id];
+        if (node) nodes.push(node);
+      }
+      if (editingBlockId && !selectionOrder.includes(editingBlockId)) {
+        const node = blockRefs.current[editingBlockId];
+        if (node) nodes.push(node);
+      }
       transformer.nodes(nodes);
       transformer.getLayer()?.batchDraw();
-    }, [selectionOrder, manualDrawMode]);
+    }, [selectionOrder, manualDrawMode, editingBlockId]);
 
     const handleBlockMouseDown = useCallback(
       (e: KonvaEventObject<MouseEvent>) => {
@@ -271,18 +281,35 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         const ctx = getActivePage();
         if (!ctx) return;
         const { fileId, page } = ctx;
+        const s = useStore.getState();
+        const ps = s.getPageState(fileId, page);
+        const block = ps.blocks.find((b) => b.id === blockId);
+        if (!block) return;
         const isMulti = e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey;
-        const order = useStore.getState().getSelectionOrder(fileId, page);
+
+        if (block.articleId) {
+          // Grouped blocks enter "edit mode" only — they never join the
+          // selection draft, so their article identity is preserved across
+          // resize/drag and Mark-as-Article never strips them.
+          if (isMulti) return;
+          s.clearSelection(fileId, page);
+          s.setEditingBlock(fileId, { page, blockId });
+          return;
+        }
+
+        // Ungrouped block: existing selection flow, but exit any prior edit.
+        s.setEditingBlock(fileId, null);
+        const order = s.getSelectionOrder(fileId, page);
         const already = order.includes(blockId);
 
         if (isMulti) {
           if (already) {
-            useStore.getState().removeFromSelection(fileId, page, blockId);
+            s.removeFromSelection(fileId, page, blockId);
           } else {
-            useStore.getState().pushSelection(fileId, page, blockId);
+            s.pushSelection(fileId, page, blockId);
           }
         } else if (!already) {
-          useStore.getState().pushSelection(fileId, page, blockId);
+          s.pushSelection(fileId, page, blockId);
         }
         // Already selected, no multi-key: leave selection intact so a group drag
         // can begin from any member of the group.
@@ -342,18 +369,24 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     const handleBlockDragEnd = useCallback((e: KonvaEventObject<DragEvent>) => {
       const ctx = getActivePage();
       if (!ctx) return;
-      const blockId = (e.target as KRect).id();
+      const node = e.target as KRect;
+      const blockId = node.id();
       const order = useStore.getState().getSelectionOrder(ctx.fileId, ctx.page);
       if (!order.includes(blockId)) {
+        // Single-block edit drag (e.g. a grouped block being repositioned).
+        useStore.getState().updateBlock(ctx.fileId, ctx.page, blockId, {
+          x: node.x(),
+          y: node.y(),
+        });
         dragStartPos.current = {};
         return;
       }
       order.forEach((id) => {
-        const node = blockRefs.current[id];
-        if (!node) return;
+        const peer = blockRefs.current[id];
+        if (!peer) return;
         useStore.getState().updateBlock(ctx.fileId, ctx.page, id, {
-          x: node.x(),
-          y: node.y(),
+          x: peer.x(),
+          y: peer.y(),
         });
       });
       dragStartPos.current = {};
@@ -375,12 +408,22 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
           articleId: null,
           articleOrder: null,
         });
+        useStore.getState().setEditingBlock(file.id, null);
         useStore.getState().pushSelection(file.id, page, id);
       },
     });
 
     const onStageMouseDown = useCallback(
       (e: KonvaEventObject<MouseEvent>) => {
+        // Clicking the empty canvas exits "edit mode" so the Transformer
+        // handles around a previously-edited grouped block don't block the
+        // user from drawing a new rubber-band selection nearby.
+        if (e.target === e.target.getStage()) {
+          const s = useStore.getState();
+          if (s.manualDrawMode && s.currentFileId) {
+            s.setEditingBlock(s.currentFileId, null);
+          }
+        }
         handlers.onMouseDown(e);
       },
       [handlers.onMouseDown]
@@ -440,6 +483,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   key={block.id}
                   block={block}
                   isSelected={manualDrawMode && selectedSet.has(block.id)}
+                  isEditing={manualDrawMode && block.id === editingBlockId}
                   scale={scale}
                   interactive={manualDrawMode}
                   articleNum={
@@ -523,15 +567,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            {contextHasArticle && (
-              <button
-                type="button"
-                className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-2"
-                onClick={handleCtxUngroup}
-              >
-                解除报道分组
-              </button>
-            )}
             <button
               type="button"
               className="block w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-surface-2"

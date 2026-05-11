@@ -16,25 +16,27 @@ export function StructureRail() {
 
   return (
     <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface">
-      <div className="flex items-center justify-between px-3">
-        <span className="text-[13px] font-semibold text-foreground">
-          扫描文本结构
-        </span>
-        <span className="font-mono text-[11px] text-foreground-subtle/80 tabular-nums">
-          {hasFile ? `${articles.length} · ${totalBlocks}` : "—"}
-        </span>
-      </div>
+      <div aria-hidden />
 
-      <div className="min-h-0 overflow-y-auto px-3 pb-2">
+      <div className="min-h-0 overflow-hidden px-2 pt-px pb-2">
+        <div className="mb-2 flex h-7 items-center justify-between px-1.5">
+          <span className="text-[13px] font-semibold text-foreground">
+            扫描文本结构
+          </span>
+          <span className="font-mono text-[11px] text-foreground-subtle/80 tabular-nums">
+            {hasFile ? `${articles.length} · ${totalBlocks}` : "—"}
+          </span>
+        </div>
+
         {hasFile ? (
-          <div className="flex flex-col gap-3 py-2">
+          <div className="flex flex-col gap-3 overflow-y-auto px-1.5 pb-2">
             <MetadataInline />
             <BlockOpsPanel />
             <div className="border-t border-border/40" />
             <ArticleList />
           </div>
         ) : (
-          <p className="px-1 pt-4 text-[12px] leading-5 text-foreground-subtle">
+          <p className="px-1.5 pt-2 text-[12px] leading-5 text-foreground-subtle">
             完成版块标注后，此处将显示报道结构与阅读顺序。
           </p>
         )}

@@ -33,7 +33,8 @@ export function useKeyboardShortcuts({
     const { fileId, page } = ctx;
     const s = useStore.getState();
     const order = s.getSelectionOrder(fileId, page);
-    if (order.length === 0) return;
+    const editingId = s.getEditingBlockId(fileId, page);
+    if (order.length === 0 && !editingId) return;
     onDeleteSelected();
   }, [onDeleteSelected]);
 
@@ -57,8 +58,14 @@ export function useKeyboardShortcuts({
     const { fileId, page } = ctx;
     const s = useStore.getState();
     const order = s.getSelectionOrder(fileId, page);
-    if (order.length === 0) return;
-    for (const id of order) {
+    const ids = order.length > 0
+      ? [...order]
+      : (() => {
+          const editingId = s.getEditingBlockId(fileId, page);
+          return editingId ? [editingId] : [];
+        })();
+    if (ids.length === 0) return;
+    for (const id of ids) {
       const ps = s.getPageState(fileId, page);
       const block = ps.blocks.find((b) => b.id === id);
       if (!block) continue;

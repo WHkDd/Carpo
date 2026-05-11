@@ -19,6 +19,7 @@ const STROKE_HIGHLIGHT = "#242424";
 export interface BlockRectProps {
   block: Block;
   isSelected: boolean;
+  isEditing?: boolean;
   scale: number;
   interactive: boolean;
   articleNum?: number;
@@ -36,6 +37,7 @@ function BlockRectImpl(props: BlockRectProps) {
   const {
     block,
     isSelected,
+    isEditing,
     scale,
     interactive,
     articleNum,
@@ -80,7 +82,7 @@ function BlockRectImpl(props: BlockRectProps) {
       height={block.h}
       fill={baseFill}
       stroke={stroke}
-      strokeWidth={(isHighlighted || isSelected ? 2 : 1) / scale}
+      strokeWidth={(isHighlighted || isSelected || isEditing ? 2 : 1) / scale}
       listening={interactive}
       draggable={interactive}
       onMouseDown={onMouseDown}

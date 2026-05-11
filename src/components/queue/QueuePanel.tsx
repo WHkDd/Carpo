@@ -23,7 +23,7 @@ export function QueuePanel() {
           </div>
         </div>
 
-        <div className="min-h-0 overflow-hidden px-2 pb-2">
+        <div className="min-h-0 overflow-hidden p-2">
           <div className="mb-2 flex h-7 items-center justify-center gap-1">
             <button
               type="button"

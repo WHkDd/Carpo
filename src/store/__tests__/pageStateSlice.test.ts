@@ -285,4 +285,27 @@ describe("pageStateSlice", () => {
     });
     expect(store.getState().getPageState(fid, page)).toEqual({ blocks: [] });
   });
+
+  it("removeBlock clears editingBlock when the deleted block was being edited", () => {
+    store.getState().addBlock(fid, page, block("b1"));
+    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
+    store.getState().removeBlock(fid, page, "b1");
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+  });
+
+  it("removeBlocks clears editingBlock if it falls in the removed set", () => {
+    store.getState().addBlock(fid, page, block("b1"));
+    store.getState().addBlock(fid, page, block("b2"));
+    store.getState().setEditingBlock(fid, { page, blockId: "b2" });
+    store.getState().removeBlocks(fid, page, ["b1", "b2"]);
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+  });
+
+  it("removeArticle clears editingBlock when its blocks are removed", () => {
+    store.getState().addBlock(fid, page, block("b1"));
+    store.getState().addArticle(fid, page, { id: "a1", num: 1, title: "报道1" }, ["b1"]);
+    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
+    store.getState().removeArticle(fid, "a1");
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+  });
 });
