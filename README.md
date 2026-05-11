@@ -14,7 +14,7 @@
 
 ✅ **M3 完成** — 手动画块、多选、Transformer resize/drag、选择顺序标签、Delete/Backspace 删除、方向键微调、右键菜单、article color token bridge 已落地。M3 只负责 block geometry 与临时 selection；最终报道建模进入 M4。
 
-🟡 **M4 待开始** — 需要先按 [`plan.md`](./plan.md) 中 2026-05-11 的决策调整：Article 应为 file/document-scoped，以支持跨页报道；`selectionOrder` 只作为临时选择顺序，点击“标记为报道”后固化为 `articleOrder`，清空 selection，但不删除或隐藏选框。
+✅ **M4 完成** — 报道分组、右栏报道列表、inline rename/delete/clear-all、报刊名/日期元数据、标准/快速 OCR profile toggle 已落地。Article 与 metadata 保持 file/document-scoped；blocks 保持 page-scoped；`selectionOrder` 仅作为临时选择顺序，点击“标记为报道”后固化为 `articleOrder` 并清空 selection，不删除或隐藏选框。
 
 接下来：M4-M7 的详细任务分解见 [`plan.md`](./plan.md)。**[UI] 标记的任务需视觉评审，留给人工或 Claude；[BE] 标记的任务可由 codex 等自动代理推进。**
 

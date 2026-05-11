@@ -58,10 +58,42 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
     const currentPage = file?.currentPage ?? 1;
     const pageState = useStore((s) => s.getPageState(file?.id ?? "", currentPage));
-    const documentState = useStore((s) => s.getDocumentState(file?.id ?? ""));
     const blocks = pageState.blocks;
-    const articles = documentState.articles;
-    const selectionOrder = useStore((s) => s.getSelectionOrder(file?.id ?? "", currentPage));
+    const docState = useStore((s) =>
+      file?.id ? s.getDocumentState(file.id) : null
+    );
+    const articleNumById = useMemo(() => {
+      const map = new Map<string, number>();
+      if (docState?.articles) {
+        for (const a of docState.articles) map.set(a.id, a.num);
+      }
+      return map;
+    }, [docState]);
+    const fileSelectionOrder = useStore((s) =>
+      file?.id ? s.selectionOrders[file.id] ?? null : null
+    );
+    const selectionOrder = useMemo(
+      () =>
+        (fileSelectionOrder ?? [])
+          .filter((ref) => ref.page === currentPage)
+          .map((ref) => ref.blockId),
+      [currentPage, fileSelectionOrder]
+    );
+    const selectionIndexById = useMemo(() => {
+      const map = new Map<string, number>();
+      for (const [index, ref] of (fileSelectionOrder ?? []).entries()) {
+        if (ref.page === currentPage) map.set(ref.blockId, index + 1);
+      }
+      return map;
+    }, [currentPage, fileSelectionOrder]);
+    const highlightedArticleId = useStore((s) => s.highlightedArticleId);
+    const isHighlighted = useCallback(
+      (articleId: string | null) => {
+        if (!articleId || !highlightedArticleId) return false;
+        return articleId === highlightedArticleId;
+      },
+      [highlightedArticleId]
+    );
     const selectedSet = useMemo(
       () => new Set(selectionOrder),
       [selectionOrder]
@@ -71,11 +103,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       for (const block of blocks) map.set(block.id, block);
       return map;
     }, [blocks]);
-    const articleNumById = useMemo(() => {
-      const map = new Map<string, number>();
-      for (const a of articles) map.set(a.id, a.num);
-      return map;
-    }, [articles]);
 
     const imageSrc = useMemo(() => {
       if (!payload) return "";
@@ -122,12 +149,12 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
     const performDelete = useCallback(
       (ids: string[], clearSelection: boolean) => {
+        void clearSelection;
         const ctx = getActivePage();
         if (!ctx || ids.length === 0) return;
         const { fileId, page } = ctx;
         const s = useStore.getState();
         s.removeBlocks(fileId, page, ids);
-        if (clearSelection) s.clearSelection(fileId, page);
       },
       []
     );
@@ -197,10 +224,10 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       const onClick = () => setCtxMenu(null);
 
       container.addEventListener("contextmenu", onContextMenu);
-      window.addEventListener("click", onClick, true);
+      window.addEventListener("click", onClick);
       return () => {
         container.removeEventListener("contextmenu", onContextMenu);
-        window.removeEventListener("click", onClick, true);
+        window.removeEventListener("click", onClick);
       };
     }, [blockById, ch, cw, isReady]);
 
@@ -214,7 +241,8 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       const ctx = getActivePage();
       if (!ctx) return;
       const { fileId, page } = ctx;
-      useStore.getState().unassignBlocksFromArticles(fileId, page, contextTargetIds);
+      const s = useStore.getState();
+      s.unassignBlocksFromArticles(fileId, page, contextTargetIds);
       setCtxMenu(null);
     }, [contextTargetIds]);
 
@@ -254,7 +282,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             useStore.getState().pushSelection(fileId, page, blockId);
           }
         } else if (!already) {
-          useStore.getState().clearSelection(fileId, page);
           useStore.getState().pushSelection(fileId, page, blockId);
         }
         // Already selected, no multi-key: leave selection intact so a group drag
@@ -337,8 +364,10 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       manualDrawMode,
       onBlockCreated: ({ x, y, w, h }) => {
         if (!file) return;
-        addBlock(file.id, file.currentPage ?? 1, {
-          id: newBlockId(),
+        const page = file.currentPage ?? 1;
+        const id = newBlockId();
+        addBlock(file.id, page, {
+          id,
           x,
           y,
           w,
@@ -346,19 +375,15 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
           articleId: null,
           articleOrder: null,
         });
+        useStore.getState().pushSelection(file.id, page, id);
       },
     });
 
     const onStageMouseDown = useCallback(
       (e: KonvaEventObject<MouseEvent>) => {
         handlers.onMouseDown(e);
-        if (!manualDrawMode) return;
-        if (e.target !== e.target.getStage()) return;
-        const ctx = getActivePage();
-        if (!ctx) return;
-        useStore.getState().clearSelection(ctx.fileId, ctx.page);
       },
-      [handlers.onMouseDown, manualDrawMode]
+      [handlers.onMouseDown]
     );
 
     const rubberBand =
@@ -420,6 +445,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   articleNum={
                     block.articleId ? articleNumById.get(block.articleId) : undefined
                   }
+                  isHighlighted={isHighlighted(block.articleId)}
                   colorVersion={colorVersion}
                   registerRef={registerBlockRef}
                   onMouseDown={handleBlockMouseDown}
@@ -430,15 +456,35 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                 />
               ))}
               {manualDrawMode &&
-                selectionOrder.map((blockId, idx) => {
+                selectionOrder.map((blockId) => {
                   const block = blockById.get(blockId);
                   if (!block) return null;
+                  const order = selectionIndexById.get(blockId) ?? 0;
+                  if (order <= 0) return null;
                   return (
                     <SelectionOrderLabel
                       key={`label-${blockId}`}
                       x={block.x}
                       y={block.y}
-                      order={idx + 1}
+                      order={order}
+                      colorVersion={colorVersion}
+                    />
+                  );
+                })}
+              {highlightedArticleId &&
+                blocks.map((block) => {
+                  if (
+                    block.articleId !== highlightedArticleId ||
+                    block.articleOrder == null
+                  ) {
+                    return null;
+                  }
+                  return (
+                    <SelectionOrderLabel
+                      key={`article-label-${block.id}`}
+                      x={block.x}
+                      y={block.y}
+                      order={block.articleOrder}
                       colorVersion={colorVersion}
                     />
                   );
@@ -474,6 +520,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               top: ctxMenu.y,
               borderColor: "hsl(var(--border))",
             }}
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             {contextHasArticle && (

@@ -11,9 +11,11 @@ const MAX_ZOOM_PERCENT = 800;
 export interface UiSlice {
   statusText: string;
   queueCollapsed: boolean;
+  highlightedArticleId: string | null;
   setStatusText: (statusText: string) => void;
   toggleQueueCollapsed: () => void;
   setQueueCollapsed: (collapsed: boolean) => void;
+  setHighlightedArticleId: (articleId: string | null) => void;
 }
 
 export const clampZoomPercent = (zoomPercent: number): number =>
@@ -32,6 +34,7 @@ export const createUiSlice: StateCreator<
 > = (set) => ({
   statusText: "就绪",
   queueCollapsed: false,
+  highlightedArticleId: null,
   setStatusText: (statusText) =>
     set((state) => {
       state.statusText = statusText;
@@ -43,5 +46,9 @@ export const createUiSlice: StateCreator<
   setQueueCollapsed: (collapsed) =>
     set((state) => {
       state.queueCollapsed = collapsed;
+    }),
+  setHighlightedArticleId: (articleId) =>
+    set((state) => {
+      state.highlightedArticleId = articleId;
     }),
 });

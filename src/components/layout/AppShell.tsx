@@ -30,6 +30,8 @@ function AppShellInner() {
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
+  const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
+  const toggleDrawMode = useStore((s) => s.toggleDrawMode);
 
   usePdfPageSync();
 
@@ -50,6 +52,15 @@ function AppShellInner() {
         } else if (e.key === "-") {
           e.preventDefault();
           ctl.zoomOut();
+        } else if (e.key.toLowerCase() === "g") {
+          e.preventDefault();
+          const fileId = useStore.getState().currentFileId;
+          const file = fileId
+            ? useStore.getState().files.find((f) => f.id === fileId)
+            : null;
+          if (fileId && file) {
+            markSelectionAsArticle(fileId, file.currentPage ?? 1);
+          }
         }
         return;
       }
@@ -62,11 +73,14 @@ function AppShellInner() {
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         nextPage();
+      } else if (e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        toggleDrawMode();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [prevPage, nextPage]);
+  }, [prevPage, nextPage, markSelectionAsArticle, toggleDrawMode]);
 
   return (
     <main
@@ -76,7 +90,7 @@ function AppShellInner() {
       }}
     >
       <QueuePanel />
-      <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
+      <section className="grid min-h-0 min-w-0 grid-rows-[40px_minmax(0,1fr)] overflow-hidden">
         <div className="flex items-center justify-center px-3">
           <Toolbar />
         </div>
