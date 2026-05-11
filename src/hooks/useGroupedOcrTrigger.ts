@@ -60,6 +60,7 @@ export function useGroupedOcrTrigger() {
       // 1. Provider configured?
       const secretKey = PROVIDER_SECRET_KEY[settings.provider];
       const hasSecret = await getSecret(secretKey);
+      console.debug("[ocr-trigger] provider=%s secretKey=%s hasSecret=%s", settings.provider, secretKey, hasSecret);
       // openai_compatible also needs a base URL.
       if (
         settings.provider === "openai_compatible" &&
@@ -69,7 +70,7 @@ export function useGroupedOcrTrigger() {
         return;
       }
       if (!hasSecret) {
-        setError("当前服务商缺少 API 密钥 —— 请先在设置中配置。");
+        setError(`${settings.provider} 的 API 密钥未找到（Keychain key: ${secretKey}）—— 请在设置中重新保存。`);
         return;
       }
 

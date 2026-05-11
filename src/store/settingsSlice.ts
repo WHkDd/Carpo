@@ -61,7 +61,12 @@ export const createSettingsSlice: StateCreator<
   ocrProfile: DEFAULT_SETTINGS.ocr_profile,
   setSettings: (next) =>
     set((state) => {
-      state.settings = next;
+      // Always spread so the reference changes even when callers pass the same
+      // object back (e.g. the settings dialog saves a secret without touching
+      // any non-secret field — draft stays === committed, and without this
+      // spread immer would no-op the assignment and subscribers like the
+      // StatusBar's Keychain probe wouldn't re-fire.
+      state.settings = { ...next };
       state.settingsLoaded = true;
       state.ocrProfile = next.ocr_profile;
     }),
