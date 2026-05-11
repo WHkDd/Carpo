@@ -27,7 +27,15 @@ export interface AssemblyInput {
 }
 
 export function assembleDocument(input: AssemblyInput): string {
-  const parts: string[] = [input.newspaperName, input.newspaperDate, ""];
+  // Skip the header block entirely when both header fields are empty —
+  // otherwise the joined output starts with `\n\n\n` which scrolls the first
+  // article out of view in a small drawer. Python's tool always had non-empty
+  // newspaper name/date so the parity tests don't exercise this case.
+  const hasHeader =
+    input.newspaperName.length > 0 || input.newspaperDate.length > 0;
+  const parts: string[] = hasHeader
+    ? [input.newspaperName, input.newspaperDate, ""]
+    : [];
 
   for (const art of input.articles) {
     let title = art.title;

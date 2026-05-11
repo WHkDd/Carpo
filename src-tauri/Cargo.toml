@@ -45,7 +45,10 @@ pdfium-render = { version = "0.8", features = ["thread_safe"] }                 
 base64 = "0.22"
 
 # Secrets / paths
-keyring = "3"
+# keyring v3 ships no backend by default — without these features it falls back
+# to an in-memory mock store that loses data immediately. Enable the native
+# platform backend for each desktop OS we ship to.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 directories = "5"
 once_cell = "1"
 parking_lot = "0.12"
