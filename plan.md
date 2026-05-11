@@ -1,6 +1,6 @@
 # xcvt-tauri Implementation Plan
 
-> **Status (M0 complete · M1 backend subset in progress · 2026-05-08)**: project bootstrapped with Tauri 2 + React 18 + Vite + TypeScript + Tailwind + shadcn/ui scaffolding; design tokens + 3 mockups committed; `pnpm tauri dev` opens empty window; `pnpm typecheck` & `pnpm build` clean; `cargo check` clean. M1 non-UI foundation now includes raster image loading commands, typed IPC wrappers, and queue/ui store slices. Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
+> **Status (M0–M4 complete · M5 next · 2026-05-11)**: Tauri 2 + React 18 + Vite + TS + Tailwind + shadcn/ui chrome shipped. M1 raster image loading + canvas, M2 PDF queue + bitmap LRU + collapsed rail, M3 manual block drawing + multi-select transformer + nudge/delete keyboard shortcuts, M4 document-scoped article grouping + metadata + profile toggle + grouped-block edit-mode all landed and behind static gates (`pnpm typecheck`, `pnpm build`, `npx vitest run`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`). Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
 >
 > **Reference implementation**: `/Users/kai/superconductor/projects/xcvt/newspaper_ocr.py` (2,859 lines) — every feature, parameter, and prompt format must match unless this plan explicitly says otherwise.
 >
@@ -173,57 +173,57 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 
 **Boundary for M4**: M3 owns only block geometry and temporary selection. It must not encode final article semantics beyond the fields needed by later milestones. A block should remain visible unless the user explicitly deletes it via Delete/Backspace or the block context menu.
 
-### T3.1 [BE] · Block + Article + Selection store slices
+### ~~T3.1~~ [BE] · Block + Article + Selection store slices
 - `src/store/pageStateSlice.ts`: extend `PageState` with `blocks: Block[]`, `articles: Article[]`. `Block { id, x, y, w, h, articleId | null, articleOrder | null }`. `Article { id, num, title }`.
 - `src/store/selectionSlice.ts`: `manualDrawMode: boolean`, `selectionOrder: string[]` (block ids). Actions: `toggleDrawMode()`, `pushSelection(id)`, `popSelection()`, `clearSelection()`, `removeFromSelection(id)`.
 - All actions immer-mutate.
 - **Acceptance**: typecheck clean. Unit tests for selection-order invariants under push/pop/remove.
 
-### T3.2 [UI+BE] · Manual mode toggle in toolbar
+### ~~T3.2~~ [UI+BE] · Manual mode toggle in toolbar
 - Wire toolbar "手动模式" button (mockup lines 137-141) to `toggleDrawMode()`. Active state shows the dot indicator + `bg-primary-muted`.
 - **Acceptance**: toggle works visually; dot indicator reflects state.
 
-### T3.3 [UI+BE] · `useDrawBlock` state machine
+### ~~T3.3~~ [UI+BE] · `useDrawBlock` state machine
 - `src/components/canvas/useDrawBlock.ts`: only active when `manualDrawMode === true`. State: `idle | drawing { startX, startY, currentX, currentY }`. Stage `mousedown` (not on existing block, not on transformer) → start. `mousemove` → update with rAF throttle. `mouseup` → if `|w|, |h| >= 16` (image coords) → dispatch `addBlock`; else discard. `Escape` cancels.
 - `src/components/canvas/DrawingOverlay.tsx`: renders a dashed `<Rect/>` while drawing.
 - **Acceptance**: with manual mode on, click-drag creates rectangle; <16px discarded; ESC cancels.
 
-### T3.4 [UI+BE] · `BlockRect` rendering + hover/selected states
+### ~~T3.4~~ [UI+BE] · `BlockRect` rendering + hover/selected states
 - `src/components/canvas/BlockRect.tsx`: Konva `<Rect/>` per block. Fill/stroke colors from `articleHsl(articleId)` helper (T3.7) at 22%/85% alpha, or `--primary` at 38%/100% alpha when selected.
 - `mouseenter`/`mouseleave` toggles fill alpha to 32%.
 - Click toggles selection (push/remove from `selectionOrder`).
 - Stage click on empty area clears selection.
 - **Acceptance**: draw 5 blocks; click cycles selection state; visual matches mockup `article-fill-N` styles.
 
-### T3.5 [UI+BE] · `BlockLayer` with multi-select Transformer
+### ~~T3.5~~ [UI+BE] · `BlockLayer` with multi-select Transformer
 - `src/components/canvas/BlockLayer.tsx`: layer holding all `BlockRect`s + a singleton `<Transformer/>` whose `nodes` are the currently selected refs. Set `keepRatio={false}`, 8 anchors (TL, T, TR, R, BR, B, BL, L), `rotateEnabled={false}`, `boundBoxFunc` enforcing min size 16×16.
 - On `transformend`: read each child's resulting `x, y, scaleX*width, scaleY*height` and write back to store as new `{x, y, w, h}`. Reset `scaleX/Y` to 1 immediately.
 - Drag-move: same flow via `onDragEnd` per block (or per-group via Transformer when multi-selected).
 - **Acceptance**: multi-select 3 blocks → bounding box appears with 8 handles → drag corner scales all relative; drag body moves all together. Coords persisted to store, survive page-switch.
 
-### T3.6 [UI+BE] · Selection-order labels
+### ~~T3.6~~ [UI+BE] · Selection-order labels
 - `src/components/canvas/SelectionOrderLabel.tsx`: Konva `<Group>` containing a small filled `<Rect>` (background `--primary`) + `<Text>` showing `selectionOrder.indexOf(blockId) + 1`. Rendered only when block is in selectionOrder. Anchored at block's top-left + 4px inset.
 - The displayed number is a temporary selection order, not yet the persisted article order. M4 will persist it as `articleOrder` only when the user confirms "标记为报道".
 - **Acceptance**: select 3 blocks in order; numbers 1, 2, 3 appear; deselect middle → 1, 2 reflow correctly.
 
-### T3.7 [BE] · Article color token bridge
+### ~~T3.7~~ [BE] · Article color token bridge
 - `src/lib/article-color-token.ts`: `articleHsl(index, alpha = 1)` reads `--article-N` from `getComputedStyle(document.documentElement)` and returns `hsl(... / alpha)`. Cache result; invalidate on `MutationObserver` watching `<html>` class changes (theme switch).
 - **Acceptance**: theme switch (set `document.documentElement.classList.toggle('dark')` from devtools) → block fills update without re-mount.
 
-### T3.8 [UI+BE] · Keyboard shortcuts
+### ~~T3.8~~ [UI+BE] · Keyboard shortcuts
 - `src/components/canvas/useKeyboardShortcuts.ts`:
   - `⌘Z` (mac) / `Ctrl+Z` (win) → `popSelection()`.
   - `Del` / `Backspace` → delete all selected blocks (`removeBlock` for each id), clear selection. Show confirm only if >5 blocks selected.
   - Arrow keys nudge selected blocks 1px (image coords); `Shift+Arrow` nudges 8px.
-- Right-click on a single unassigned block → context menu (Radix `ContextMenu`) with "删除版块". Right-click on assigned block → "解除报道分组" + "删除版块".
-- **Acceptance**: all shortcuts work; arrow nudge feels smooth; context menu items respect block state.
+- Right-click on a block → in-canvas context menu with "删除版块" only. (M4 deviation: the planned "解除报道分组" item was dropped — see M4 decision log.)
+- **Acceptance**: all shortcuts work; arrow nudge feels smooth; context menu deletes the targeted block(s).
 
-### T3.9 [UI] · M3 visual polish + 200-block stress test
+### ~~T3.9~~ [UI] · M3 visual polish + 200-block stress test
 - Use a devtools snippet to populate 200 blocks; verify Konva FPS ≥ 55 during pan/zoom/select. If not: add `listening: false` on non-interactive layers; consider `cache()` on the BlockLayer.
 - Polish hover/select transitions to 120ms ease-out-quart.
 - **Acceptance**: stress test passes; visual review of all states (default, hover, selected, assigned-by-article-1..10).
 
-### T3.10 · Verify M3 end-to-end
+### ~~T3.10~~ · Verify M3 end-to-end
 - Draw 5 blocks, multi-select, resize, drag-move, undo (⌘Z) selection, delete, navigate to another page (blocks persist on page A).
 
 ---
@@ -231,6 +231,8 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 ## M4 — Article grouping + metadata UI (2 days)
 
 **Goal**: mark selected blocks as a named article; right-rail article list with rename/remove/clear-all; newspaper-name + date inputs; OCR profile toggle (standard/fast).
+
+**Status (2026-05-11)**: M4 shipped via `feat(m4): add article grouping store foundation (#5)`, `feat(m4): add article grouping UI (#6)`, and `feat(m4): protect grouped block identity via edit-mode`. Static gates green.
 
 **Design decision before implementation (2026-05-11)**:
 - Articles must be file/document-scoped, not page-scoped. Real newspaper articles can span pages, so M4 should not store final `articles[]` only inside `${fileId}::${page}` page state.
@@ -240,27 +242,32 @@ This file is for an autonomous agent (e.g. codex) to drive implementation milest
 - A future cross-page workflow should allow appending blocks from another page to the same article without creating a duplicate article. The article list is therefore scoped to the current file, while canvas highlighting only affects blocks present on the current page.
 - Metadata is also file/document-scoped for M4: `报刊名` and `日期` are stored once per imported file/document, not separately per page. A later mixed-source PDF workflow can add page-level overrides if needed.
 
-### T4.1 [UI+BE] · "Mark as article" workflow
+**Decisions captured during M4 implementation (2026-05-11)**:
+- **"解除报道分组" removed.** The originally-planned right-click item on grouped blocks ("解除报道分组" + "删除版块") was dropped; the only block context-menu action is now "删除版块". Reason: ungrouping without deleting had no real workflow — the user either wants the block gone, or wants to fix the group by deleting and redrawing. The store still exposes `unassignBlocksFromArticles` for future use, but no UI binds to it.
+- **`removeArticle` / `clearArticles` delete the underlying blocks, not just the group bond.** Earlier T4.2 text said "unassigns blocks, removes article" / "reset articleId/articleOrder to null and clear articles[]"; the shipped behavior deletes the blocks too. Reason: an article without its blocks left behind orphaned rectangles the user almost always wanted gone. Tests (`pageStateSlice.test.ts: clearArticles keeps document metadata but deletes all article blocks`) lock this in.
+- **Grouped-block edit-mode introduced (`editingBlock` state).** Clicking a grouped block enters a per-file "edit" state instead of joining the selection draft. This preserves `articleId` / `articleOrder` through resize/drag and prevents "标记为报道" from re-claiming the block into a different article. Click an ungrouped block to exit edit-mode; click the empty canvas to clear it. The editing block participates in `Delete` / arrow-nudge when no temporary selection exists.
+
+### ~~T4.1~~ [UI+BE] · "Mark as article" workflow
 - Right-rail `<BlockOpsPanel/>` (mockup lines 290-302): "标记为报道" button is enabled iff `selectionOrder.length >= 1`. On click: create or update a file-scoped `Article { id: uuid(), num: nextNum, title: \`报道${nextNum}\`, blockRefs }`, assign each selected block's `articleId = article.id` and `articleOrder = orderInSelection`, then clear selection. Do not remove blocks. Re-color blocks.
 - `nextNum` = max existing `num` + 1, scoped per file/document.
 - Hotkey `⌘G`.
 - **Acceptance**: select 3 blocks → ⌘G → blocks remain visible, turn article-1 colored, article appears in file-level list, temporary labels disappear; selecting the next article starts at label 1.
 
-### T4.2 [UI+BE] · Article list with rename/remove/clear-all
+### ~~T4.2~~ [UI+BE] · Article list with rename/remove/clear-all
 - `<ArticleList/>` (mockup lines 305-340): list of articles with badge (cycling `--article-N`), title, block count.
 - Click row → highlights that article's blocks on the current canvas page (transient ring stroke at `--accent`). Cross-page blocks remain part of the same article but become visible/highlightable when their page is opened.
-- Right-click row → context menu: "重命名" (inline text editor), "删除" (unassigns blocks, removes article), "解除分组并保留版块".
-- "全清" button: confirm dialog ("确定清除全部 N 篇报道？") → reset all `articleId/articleOrder` to null and clear `articles[]`.
+- Per-row hover actions: inline rename (pencil icon) and "删除" (trash icon — **deletes the article AND its underlying blocks**, see M4 decision log).
+- "全清" button: confirm dialog ("确定清除全部 N 篇报道？") → **deletes every article and all of its blocks** for the current file.
 - Renumbering: when deleting article #2 of 4, remaining articles re-number to 1,2,3 and re-color.
 - **Acceptance**: full CRUD on articles; visual state synced to canvas blocks.
 
-### T4.3 [UI+BE] · MetadataInline + ProfileToggle
+### ~~T4.3~~ [UI+BE] · MetadataInline + ProfileToggle
 - `<MetadataInline/>` (mockup lines 274-287): two text inputs `报刊名` + `日期`. Bound to `documentStates[currentFileId].newspaperName` / `.newspaperDate`.
 - Product decision (2026-05-11): metadata is file/document-scoped, matching the normal one-file/one-newspaper-issue OCR workflow. Do not bind these fields to `pageStates`.
 - `<ProfileToggle/>` in BlockOpsPanel: segmented toggle "标准 / 快速" bound to `settingsSlice.ocrProfile`.
 - **Acceptance**: typing persists across page navigation; toggle changes profile (verifiable via store devtools).
 
-### T4.4 · Verify M4 end-to-end
+### ~~T4.4~~ · Verify M4 end-to-end
 - Mark 5 articles in different colors. Rename, remove, clear all. Switch pages → file-level article list persists; current page only shows that page's blocks. Visual matches mockup right-rail.
 
 ---
