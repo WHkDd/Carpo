@@ -71,8 +71,14 @@ export async function startGroupedOcr(
   return invoke<JobStarted>("start_grouped_ocr", { req });
 }
 
-export async function listProviderModels(): Promise<string[]> {
-  return invoke<string[]>("list_provider_models");
+export async function listProviderModels(opts?: {
+  settings?: import("./ipc-types").NonSecretSettings;
+  secret?: string;
+}): Promise<string[]> {
+  return invoke<string[]>("list_provider_models", {
+    settings: opts?.settings,
+    secret: opts?.secret,
+  });
 }
 
 export async function cancelJob(jobId: string): Promise<boolean> {
