@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
+import { ProgressDialog } from "@/components/progress/ProgressDialog";
 import { QueuePanel } from "@/components/queue/QueuePanel";
+import { ResultDrawer } from "@/components/results/ResultDrawer";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
+import { assembleDocument } from "@/lib/format-doc";
 import { getSettings } from "@/lib/tauri";
+import { EVENTS, type JobDone, type JobError, type JobProgress } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { Toolbar } from "./Toolbar";
 import { PageNavigator } from "./PageNavigator";
@@ -35,6 +40,11 @@ function AppShellInner() {
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
   const setSettings = useStore((s) => s.setSettings);
+  const applyProgress = useStore((s) => s.applyProgress);
+  const applyJobDone = useStore((s) => s.applyJobDone);
+  const applyJobError = useStore((s) => s.applyJobError);
+  const setDocumentResult = useStore((s) => s.setDocumentResult);
+  const openResultDrawer = useStore((s) => s.openResultDrawer);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   usePdfPageSync();
@@ -55,6 +65,78 @@ function AppShellInner() {
       cancelled = true;
     };
   }, [setSettings]);
+
+  // One global subscription for job events. The slice dispatchers filter
+  // by `job_id` so stray events for unrelated jobs are no-ops.
+  useEffect(() => {
+    let unlistens: Array<() => void> = [];
+    let cancelled = false;
+    (async () => {
+      const subs = await Promise.all([
+        listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => applyProgress(e.payload)),
+        listen<JobDone>(EVENTS.JOB_DONE, (e) => {
+          const job = useStore.getState().activeJob;
+          // Take the assembly action only when the done payload matches the
+          // current activeJob and the run wasn't cancelled. Done payloads for
+          // stale or cancelled jobs are not assembled into a document, but
+          // the slice still records terminal status for the ProgressDialog.
+          if (
+            job &&
+            job.jobId === e.payload.job_id &&
+            !e.payload.cancelled
+          ) {
+            // Zip article snapshot (id → title) with backend results, then
+            // assemble. Articles that errored have no result row; we surface
+            // their failure in the document body as a marker so the file
+            // isn't silently incomplete.
+            const titleById = new Map(
+              job.requestedArticles.map((a) => [a.id, a.title])
+            );
+            const errorById = new Map(
+              e.payload.errors.map((er) => [er.article_id, er.message])
+            );
+            const ordered = job.requestedArticles.map((a) => {
+              const row = e.payload.results.find(
+                (r) => r.article_id === a.id
+              );
+              if (row) {
+                return { title: titleById.get(a.id) ?? "", text: row.text };
+              }
+              const errMsg = errorById.get(a.id) ?? "未识别";
+              return {
+                title: titleById.get(a.id) ?? "",
+                text: `[识别失败：${errMsg}]`,
+              };
+            });
+            const doc = assembleDocument({
+              newspaperName: job.newspaperName,
+              newspaperDate: job.newspaperDate,
+              articles: ordered,
+            });
+            setDocumentResult(job.fileId, doc);
+            openResultDrawer();
+          }
+          applyJobDone(e.payload);
+        }),
+        listen<JobError>(EVENTS.JOB_ERROR, (e) => applyJobError(e.payload)),
+      ]);
+      if (cancelled) {
+        subs.forEach((u) => u());
+      } else {
+        unlistens = subs;
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlistens.forEach((u) => u());
+    };
+  }, [
+    applyProgress,
+    applyJobDone,
+    applyJobError,
+    setDocumentResult,
+    openResultDrawer,
+  ]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -119,10 +201,10 @@ function AppShellInner() {
           gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
         }}
       >
-        <QueuePanel />
+        <QueuePanel onOpenSettings={() => setSettingsOpen(true)} />
         <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
           <div className="flex items-center justify-center px-3">
-            <Toolbar onOpenSettings={() => setSettingsOpen(true)} />
+            <Toolbar />
           </div>
           <div className="min-h-0 overflow-hidden p-2">
             <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
@@ -138,6 +220,8 @@ function AppShellInner() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+      <ProgressDialog />
+      <ResultDrawer />
     </>
   );
 }
