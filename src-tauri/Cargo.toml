@@ -36,7 +36,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 
 # Imaging / PDF (pulled in incrementally per milestone)
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }   # M1
