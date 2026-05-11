@@ -111,15 +111,18 @@ pub async fn recognize(
     }
 }
 
-/// Static fallback model list for PaddleOCR — the async jobs API has no
-/// `/models` endpoint, so the settings dialog shows these four documented
-/// values directly. Order matches Baidu's docs.
-pub const PADDLE_MODELS: &[&str] = &[
-    "PP-OCRv5",
-    "PP-StructureV3",
-    "PaddleOCR-VL",
-    "PaddleOCR-VL-1.5",
-];
+/// PaddleOCR models exposed by the settings dialog. Scoped to the VL family
+/// because:
+/// (a) Baidu documents a **different `optionalPayload` schema per model
+///     class** — the three flags we currently send (`useDocOrientationClassify
+///     / useDocUnwarping / useChartRecognition`) belong to PaddleOCR-VL; the
+///     PP-OCRv5 / PP-StructureV3 payloads have different fields.
+/// (b) The non-VL models are tuned for clean horizontal documents and perform
+///     poorly on near-modern Chinese newspaper layouts (vertical / mixed /
+///     irregular columns) — the only workload xcvt is built for.
+/// If a future workflow needs a non-VL model, gate it behind a per-model
+/// payload builder rather than just adding the id to this list.
+pub const PADDLE_MODELS: &[&str] = &["PaddleOCR-VL", "PaddleOCR-VL-1.5"];
 
 /// Fetches the model list for the active provider. Backs the "刷新模型" button
 /// in the settings dialog (T5.5). Paddle returns a static list because the
@@ -339,10 +342,7 @@ mod tests {
         let models = list_models(&reqwest::Client::new(), &settings, None)
             .await
             .unwrap();
-        assert_eq!(
-            models,
-            vec!["PP-OCRv5", "PP-StructureV3", "PaddleOCR-VL", "PaddleOCR-VL-1.5"]
-        );
+        assert_eq!(models, vec!["PaddleOCR-VL", "PaddleOCR-VL-1.5"]);
     }
 
     #[tokio::test]
