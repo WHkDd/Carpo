@@ -81,6 +81,47 @@ export interface ArticleRequest {
   blocks: Rect[];
 }
 
+/** Reference to a block, scoped to a specific page within a file. Mirrors
+ *  `jobs::grouped::BlockRef` in Rust. `order` is 1-based to match the labels
+ *  shown on the canvas. */
+export interface BlockRef {
+  page: number;
+  block_id: string;
+  rect: Rect;
+  order: number;
+}
+
+/** File-scoped article: cross-page block list. Mirrors
+ *  `jobs::grouped::ArticleOcrPlan` in Rust. */
+export interface ArticleOcrPlan {
+  id: string;
+  title: string;
+  num: number;
+  blocks: BlockRef[];
+}
+
+/** Payload for `invoke("start_grouped_ocr", { req })`. Mirrors
+ *  `jobs::grouped::GroupedOcrRequest` in Rust. */
+export interface GroupedOcrRequest {
+  file_id: string;
+  path: string;
+  kind: FileKind;
+  /** DPI used to render the preview the user drew on. Ignored for images. */
+  preview_dpi: number;
+  /** Target DPI for the backend's OCR-grade re-render. */
+  ocr_dpi: number;
+  articles: ArticleOcrPlan[];
+  newspaper_name: string;
+  newspaper_date: string;
+}
+
+export type JobKind = "grouped_ocr";
+
+export interface JobListEntry {
+  job_id: string;
+  kind: JobKind;
+}
+
 export interface JobStarted {
   job_id: string;
 }
@@ -114,6 +155,7 @@ export interface JobDone {
   job_id: string;
   results: Array<{ article_id: string; text: string }>;
   errors: Array<{ article_id: string; message: string }>;
+  cancelled: boolean;
 }
 
 export interface JobError {

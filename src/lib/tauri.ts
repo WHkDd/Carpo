@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  GroupedOcrRequest,
+  JobListEntry,
+  JobStarted,
   NonSecretSettings,
   PdfInfo,
   RenderPagePayload,
@@ -60,4 +63,22 @@ export async function setSecret(key: SecretKey, value: string): Promise<void> {
 
 export async function deleteSecret(key: SecretKey): Promise<void> {
   return invoke("delete_secret", { key });
+}
+
+export async function startGroupedOcr(
+  req: GroupedOcrRequest
+): Promise<JobStarted> {
+  return invoke<JobStarted>("start_grouped_ocr", { req });
+}
+
+export async function listProviderModels(): Promise<string[]> {
+  return invoke<string[]>("list_provider_models");
+}
+
+export async function cancelJob(jobId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_job", { jobId });
+}
+
+export async function listJobs(): Promise<JobListEntry[]> {
+  return invoke<JobListEntry[]>("list_jobs");
 }
