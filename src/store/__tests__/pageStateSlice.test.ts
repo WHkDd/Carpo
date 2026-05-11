@@ -148,7 +148,7 @@ describe("pageStateSlice", () => {
     expect(pageState.blocks[1]!.articleOrder).toBe(1); // b2 is first in list
   });
 
-  it("removeArticle unassigns blocks across document pages", () => {
+  it("removeArticle deletes article blocks across document pages", () => {
     const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
     store.getState().addBlock(fid, page, b1);
     store.getState().addArticle(fid, page, { id: "a1", num: 1, title: "" }, ["b1"]);
@@ -156,8 +156,7 @@ describe("pageStateSlice", () => {
 
     const state = store.getState().getPageState(fid, page);
     expect(store.getState().getDocumentState(fid).articles).toHaveLength(0);
-    expect(state.blocks[0]!.articleId).toBeNull();
-    expect(state.blocks[0]!.articleOrder).toBeNull();
+    expect(state.blocks).toEqual([]);
   });
 
   it("markSelectionAsArticle creates a document-scoped article and clears temporary selection", () => {
@@ -197,9 +196,29 @@ describe("pageStateSlice", () => {
     expect(store.getState().getPageState(fid, 2).blocks[0]!.articleOrder).toBe(2);
   });
 
-  it("clearArticles keeps document metadata but unassigns all article blocks", () => {
+  it("markSelectionAsArticle creates one article from a cross-page draft queue", () => {
+    store.getState().addBlock(fid, 1, block("p1b1"));
+    store.getState().addBlock(fid, 1, block("p1b2"));
+    store.getState().addBlock(fid, 2, block("p2b1"));
+    store.getState().pushSelection(fid, 1, "p1b1");
+    store.getState().pushSelection(fid, 1, "p1b2");
+    store.getState().pushSelection(fid, 2, "p2b1");
+
+    store.getState().markSelectionAsArticle(fid, 2);
+
+    expect(store.getState().getDocumentState(fid).articles[0]!.blockRefs).toEqual([
+      { page: 1, blockId: "p1b1", order: 1 },
+      { page: 1, blockId: "p1b2", order: 2 },
+      { page: 2, blockId: "p2b1", order: 3 },
+    ]);
+    expect(store.getState().getFileSelectionOrder(fid)).toEqual([]);
+    expect(store.getState().getPageState(fid, 2).blocks[0]!.articleOrder).toBe(3);
+  });
+
+  it("clearArticles keeps document metadata but deletes all article blocks", () => {
     store.getState().addBlock(fid, 1, block("b1"));
     store.getState().addBlock(fid, 2, block("b2"));
+    store.getState().addBlock(fid, 2, block("loose"));
     store.getState().updateDocumentMetadata(fid, {
       newspaperName: "申报",
       newspaperDate: "1923-01-01",
@@ -214,8 +233,10 @@ describe("pageStateSlice", () => {
       newspaperName: "申报",
       newspaperDate: "1923-01-01",
     });
-    expect(store.getState().getPageState(fid, 1).blocks[0]!.articleId).toBeNull();
-    expect(store.getState().getPageState(fid, 2).blocks[0]!.articleId).toBeNull();
+    expect(store.getState().getPageState(fid, 1).blocks).toEqual([]);
+    expect(store.getState().getPageState(fid, 2).blocks.map((b) => b.id)).toEqual([
+      "loose",
+    ]);
   });
 
   it("removeBlocks prunes document article refs and removes empty articles", () => {
@@ -225,6 +246,31 @@ describe("pageStateSlice", () => {
     store.getState().removeBlocks(fid, page, ["b1"]);
 
     expect(store.getState().getDocumentState(fid).articles).toEqual([]);
+  });
+
+  it("removeBlocks compacts remaining article order", () => {
+    ["b1", "b2", "b3", "b4"].forEach((id) =>
+      store.getState().addBlock(fid, page, block(id))
+    );
+    store
+      .getState()
+      .addArticle(fid, page, { id: "a1", num: 1, title: "报道1" }, [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+      ]);
+
+    store.getState().removeBlocks(fid, page, ["b1", "b2"]);
+
+    expect(store.getState().getDocumentState(fid).articles[0]!.blockRefs).toEqual([
+      { page, blockId: "b3", order: 1 },
+      { page, blockId: "b4", order: 2 },
+    ]);
+    expect(store.getState().getPageState(fid, page).blocks).toMatchObject([
+      { id: "b3", articleOrder: 1 },
+      { id: "b4", articleOrder: 2 },
+    ]);
   });
 
   it("stores newspaper metadata at document scope", () => {

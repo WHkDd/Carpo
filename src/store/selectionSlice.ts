@@ -4,13 +4,18 @@ import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SettingsSlice } from "./settingsSlice";
-import { pageKey } from "./pageStateSlice";
 
 const EMPTY_SELECTION: readonly string[] = Object.freeze([]);
+const EMPTY_SELECTION_REFS: readonly SelectionRef[] = Object.freeze([]);
+
+export interface SelectionRef {
+  page: number;
+  blockId: string;
+}
 
 export interface SelectionSlice {
   manualDrawMode: boolean;
-  selectionOrders: Record<string, string[]>;
+  selectionOrders: Record<string, SelectionRef[]>;
   toggleDrawMode: () => void;
   setDrawMode: (active: boolean) => void;
   pushSelection: (fileId: string, page: number, id: string) => void;
@@ -18,6 +23,7 @@ export interface SelectionSlice {
   clearSelection: (fileId: string, page: number) => void;
   removeFromSelection: (fileId: string, page: number, id: string) => void;
   getSelectionOrder: (fileId: string, page: number) => readonly string[];
+  getFileSelectionOrder: (fileId: string) => readonly SelectionRef[];
 }
 
 export const createSelectionSlice: StateCreator<
@@ -46,38 +52,48 @@ export const createSelectionSlice: StateCreator<
 
   pushSelection: (fileId, page, id) =>
     set((state) => {
-      const key = pageKey(fileId, page);
-      const list = state.selectionOrders[key] ?? [];
-      const next = list.filter((s) => s !== id);
-      next.push(id);
-      state.selectionOrders[key] = next;
+      const list = state.selectionOrders[fileId] ?? [];
+      const next = list.filter(
+        (ref) => !(ref.page === page && ref.blockId === id)
+      );
+      next.push({ page, blockId: id });
+      state.selectionOrders[fileId] = next;
     }),
 
   popSelection: (fileId, page) =>
     set((state) => {
-      const key = pageKey(fileId, page);
-      const list = state.selectionOrders[key];
+      void page;
+      const list = state.selectionOrders[fileId];
       if (!list || list.length === 0) return;
       list.pop();
     }),
 
   clearSelection: (fileId, page) =>
     set((state) => {
-      const key = pageKey(fileId, page);
-      if (state.selectionOrders[key]) {
-        state.selectionOrders[key] = [];
+      void page;
+      if (state.selectionOrders[fileId]) {
+        state.selectionOrders[fileId] = [];
       }
     }),
 
   removeFromSelection: (fileId, page, id) =>
     set((state) => {
-      const key = pageKey(fileId, page);
-      const list = state.selectionOrders[key];
+      const list = state.selectionOrders[fileId];
       if (!list) return;
-      state.selectionOrders[key] = list.filter((s) => s !== id);
+      state.selectionOrders[fileId] = list.filter(
+        (ref) => !(ref.page === page && ref.blockId === id)
+      );
     }),
 
   getSelectionOrder: (fileId, page) => {
-    return get().selectionOrders[pageKey(fileId, page)] ?? EMPTY_SELECTION;
+    const refs = get().selectionOrders[fileId];
+    if (!refs) return EMPTY_SELECTION;
+    return refs
+      .filter((ref) => ref.page === page)
+      .map((ref) => ref.blockId);
+  },
+
+  getFileSelectionOrder: (fileId) => {
+    return get().selectionOrders[fileId] ?? EMPTY_SELECTION_REFS;
   },
 });

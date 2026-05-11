@@ -13,12 +13,16 @@ const FILL_SELECTED_HOVER = "rgba(59,130,246,0.42)";
 const STROKE_BASE = "#3b82f6";
 const STROKE_SELECTED = "#2563eb";
 
+// Accent stroke for highlighted article blocks
+const STROKE_HIGHLIGHT = "#242424";
+
 export interface BlockRectProps {
   block: Block;
   isSelected: boolean;
   scale: number;
   interactive: boolean;
   articleNum?: number;
+  isHighlighted?: boolean;
   colorVersion: number;
   registerRef: (id: string, node: KRect | null) => void;
   onMouseDown: (e: KonvaEventObject<MouseEvent>) => void;
@@ -35,6 +39,7 @@ function BlockRectImpl(props: BlockRectProps) {
     scale,
     interactive,
     articleNum,
+    isHighlighted,
     colorVersion,
     registerRef,
     onMouseDown,
@@ -61,9 +66,9 @@ function BlockRectImpl(props: BlockRectProps) {
   }, [isSelected, articleNum, hasArticle, colorVersion]);
 
   const stroke = useMemo(() => {
-    if (hasArticle) return articleHsl(articleNum!, 1);
-    return isSelected ? STROKE_SELECTED : STROKE_BASE;
-  }, [isSelected, articleNum, hasArticle, colorVersion]);
+    if (isHighlighted) return STROKE_HIGHLIGHT;
+    return hasArticle ? articleHsl(articleNum!, 1) : isSelected ? STROKE_SELECTED : STROKE_BASE;
+  }, [isHighlighted, isSelected, articleNum, hasArticle, colorVersion]);
 
   return (
     <Rect
@@ -75,7 +80,7 @@ function BlockRectImpl(props: BlockRectProps) {
       height={block.h}
       fill={baseFill}
       stroke={stroke}
-      strokeWidth={(isSelected ? 2 : 1) / scale}
+      strokeWidth={(isHighlighted || isSelected ? 2 : 1) / scale}
       listening={interactive}
       draggable={interactive}
       onMouseDown={onMouseDown}

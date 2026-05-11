@@ -7,6 +7,7 @@ export function QueuePanel() {
   const files = useStore((s) => s.files);
   const currentFileId = useStore((s) => s.currentFileId);
   const setCurrent = useStore((s) => s.setCurrent);
+  const removeFile = useStore((s) => s.removeFile);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
   const toggleQueueCollapsed = useStore((s) => s.toggleQueueCollapsed);
   const { openFiles } = useFileImport();
@@ -105,7 +106,7 @@ export function QueuePanel() {
           <button
             type="button"
             onClick={() => void openFiles()}
-            className="mt-10 w-full rounded-md px-3 py-3 text-center text-[11px] leading-5 text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground-muted"
+            className="w-full rounded-md px-3 py-3 text-center text-[11px] leading-5 text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground-muted"
           >
             将扫描件拖入窗口
             <br />
@@ -119,6 +120,7 @@ export function QueuePanel() {
                 entry={entry}
                 active={entry.id === currentFileId}
                 onSelect={setCurrent}
+                onRemove={removeFile}
               />
             ))}
           </div>
