@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 
 pub const OFFICIAL_BASE_URL: &str = "https://api.openai.com/v1";
+pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 const MAX_TOKENS: u32 = 4096;
 

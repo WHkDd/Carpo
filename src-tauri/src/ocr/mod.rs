@@ -77,10 +77,93 @@ pub async fn recognize(
             )
             .await
         }
-        Provider::Openrouter | Provider::OpenaiCompatible => Err(AppError::Internal(format!(
-            "provider {:?} not wired in this commit (see T5.3 continuation)",
-            settings.provider
-        ))),
+        Provider::Openrouter => {
+            let key = secret.unwrap_or_default();
+            openai::recognize(
+                client,
+                openai::OPENROUTER_BASE_URL,
+                key,
+                &settings.openrouter_model,
+                req.prompt,
+                req.png_b64,
+                "openrouter",
+            )
+            .await
+        }
+        Provider::OpenaiCompatible => {
+            if settings.openai_compatible_base_url.is_empty() {
+                return Err(AppError::Config(
+                    "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。".into(),
+                ));
+            }
+            let key = secret.unwrap_or_default();
+            openai::recognize(
+                client,
+                &settings.openai_compatible_base_url,
+                key,
+                &settings.openai_compatible_model,
+                req.prompt,
+                req.png_b64,
+                "openai_compatible",
+            )
+            .await
+        }
+    }
+}
+
+/// Static fallback model list for PaddleOCR — the async jobs API has no
+/// `/models` endpoint, so the settings dialog shows these four documented
+/// values directly. Order matches Baidu's docs.
+pub const PADDLE_MODELS: &[&str] = &[
+    "PP-OCRv5",
+    "PP-StructureV3",
+    "PaddleOCR-VL",
+    "PaddleOCR-VL-1.5",
+];
+
+/// Fetches the model list for the active provider. Backs the "刷新模型" button
+/// in the settings dialog (T5.5). Paddle returns a static list because the
+/// async jobs endpoint has no model-discovery surface; the other three hit
+/// `{base_url}/models` with the user's key.
+pub async fn list_models(
+    client: &reqwest::Client,
+    settings: &NonSecretSettings,
+    secret: Option<&str>,
+) -> AppResult<Vec<String>> {
+    match settings.provider {
+        Provider::Paddleocr => Ok(PADDLE_MODELS.iter().map(|s| (*s).to_string()).collect()),
+        Provider::Openai => {
+            openai::list_models(
+                client,
+                openai::OFFICIAL_BASE_URL,
+                secret.unwrap_or_default(),
+                "openai",
+            )
+            .await
+        }
+        Provider::Openrouter => {
+            openai::list_models(
+                client,
+                openai::OPENROUTER_BASE_URL,
+                secret.unwrap_or_default(),
+                "openrouter",
+            )
+            .await
+        }
+        Provider::OpenaiCompatible => {
+            if settings.openai_compatible_base_url.is_empty() {
+                return Err(AppError::Config(
+                    "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。".into(),
+                ));
+            }
+            openai::list_models(
+                client,
+                &settings.openai_compatible_base_url,
+                secret.unwrap_or_default(),
+                "openai_compatible",
+            )
+            .await
+        }
     }
 }
 
@@ -209,8 +292,10 @@ mod tests {
 
     #[tokio::test]
     async fn unimplemented_provider_returns_internal_error() {
+        // Sanity smoke: with empty base_url, the OpenAI-Compatible arm refuses
+        // to dispatch and returns a Config error rather than panicking.
         let mut settings = paddle_settings(String::new());
-        settings.provider = Provider::Openrouter;
+        settings.provider = Provider::OpenaiCompatible;
         let png = b64(b"x");
         let req = OcrRequest {
             png_b64: &png,
@@ -219,6 +304,54 @@ mod tests {
         let err = recognize(&reqwest::Client::new(), &settings, Some("k"), req)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Internal(_)));
+        assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_routes_to_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "content": "via custom" } }]
+            })))
+            .mount(&server)
+            .await;
+
+        let mut settings = paddle_settings(String::new());
+        settings.provider = Provider::OpenaiCompatible;
+        settings.openai_compatible_base_url = server.uri();
+        settings.openai_compatible_model = "my-model".into();
+        let png = b64(b"x");
+        let req = OcrRequest {
+            png_b64: &png,
+            prompt: "p",
+        };
+        let out = recognize(&reqwest::Client::new(), &settings, Some("sk-x"), req)
+            .await
+            .unwrap();
+        assert_eq!(out, "via custom");
+    }
+
+    #[tokio::test]
+    async fn list_models_paddle_returns_static_catalogue() {
+        let settings = paddle_settings(String::new());
+        let models = list_models(&reqwest::Client::new(), &settings, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            models,
+            vec!["PP-OCRv5", "PP-StructureV3", "PaddleOCR-VL", "PaddleOCR-VL-1.5"]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_models_openai_compatible_requires_base_url() {
+        let mut settings = paddle_settings(String::new());
+        settings.provider = Provider::OpenaiCompatible;
+        let err = list_models(&reqwest::Client::new(), &settings, Some("sk"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Config(_)));
     }
 }
