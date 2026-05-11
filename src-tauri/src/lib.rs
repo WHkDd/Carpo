@@ -1,10 +1,9 @@
 mod commands;
 mod config;
 mod error;
+mod events;
 mod image;
-// Wired into commands in T5.4. Until then the public surface lives only in
-// `cfg(test)` and would otherwise trip dead_code on `cargo clippy -D warnings`.
-#[allow(dead_code)]
+mod jobs;
 mod ocr;
 mod pdf;
 mod secrets;
@@ -41,7 +40,11 @@ pub fn run() {
             commands::settings::set_secret,
             commands::settings::delete_secret,
             commands::settings::get_settings,
-            commands::settings::set_settings
+            commands::settings::set_settings,
+            commands::ocr::start_grouped_ocr,
+            commands::ocr::list_provider_models,
+            commands::ocr::cancel_job,
+            commands::ocr::list_jobs
         ])
         .setup(|app| {
             app.manage(state::AppState::new()?);
