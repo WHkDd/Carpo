@@ -8,7 +8,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
-function getActivePage() {
+// Window-level keyboard events fire in browse mode too, so this helper
+// must guard `manualDrawMode` itself — unlike the canvas-side getActivePage
+// in ImageCanvas, whose call sites are already isolated by BlockRect's
+// `listening={interactive}` / useDrawBlock's own guard.
+function getActiveDrawCtx() {
   const s = useStore.getState();
   if (!s.manualDrawMode) return null;
   const fileId = s.currentFileId;
@@ -28,7 +32,7 @@ export function useKeyboardShortcuts({
   enabled = true,
 }: UseKeyboardShortcutsArgs) {
   const handleDelete = useCallback(() => {
-    const ctx = getActivePage();
+    const ctx = getActiveDrawCtx();
     if (!ctx) return;
     const { fileId, page } = ctx;
     const s = useStore.getState();
@@ -39,21 +43,21 @@ export function useKeyboardShortcuts({
   }, [onDeleteSelected]);
 
   const handleUndoSelection = useCallback(() => {
-    const ctx = getActivePage();
+    const ctx = getActiveDrawCtx();
     if (!ctx) return;
     const { fileId, page } = ctx;
     useStore.getState().popSelection(fileId, page);
   }, []);
 
   const handleMarkSelectionAsArticle = useCallback(() => {
-    const ctx = getActivePage();
+    const ctx = getActiveDrawCtx();
     if (!ctx) return;
     const { fileId, page } = ctx;
     useStore.getState().markSelectionAsArticle(fileId, page);
   }, []);
 
   const handleNudge = useCallback((dx: number, dy: number) => {
-    const ctx = getActivePage();
+    const ctx = getActiveDrawCtx();
     if (!ctx) return;
     const { fileId, page } = ctx;
     const s = useStore.getState();
@@ -94,7 +98,7 @@ export function useKeyboardShortcuts({
 
       // Arrow keys nudge
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
-        const ctx = getActivePage();
+        const ctx = getActiveDrawCtx();
         if (!ctx) return;
         e.preventDefault();
         const step = e.shiftKey ? 8 : 1;
