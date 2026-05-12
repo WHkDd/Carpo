@@ -8,7 +8,6 @@ import type { UiSlice } from "./uiSlice";
 import type {
   JobDone,
   JobError,
-  JobKind,
   JobProgress,
 } from "@/lib/ipc-types";
 
@@ -19,53 +18,88 @@ export type JobStatus =
   | "error"
   | "cancelled";
 
-export interface ActiveJob {
+interface BaseActiveJob {
   jobId: string;
-  kind: JobKind;
   status: JobStatus;
   done: number;
   total: number;
   label: string;
   /** Set when status is "error". */
   error?: string;
-  /** Captured on `done` so the result drawer (T5.7) can consume it. */
+  /** Captured on `done`. The shape depends on `kind`. */
   result?: JobDone;
-  /** Snapshot of which file + articles were submitted. Captured at startJob
-   *  time so the document can be assembled even if the user edits the
-   *  underlying state mid-OCR. */
+  /** Snapshot of which file was submitted. Captured at startJob time so the
+   *  result handler can write back even if the user navigates away mid-OCR. */
   fileId: string;
   newspaperName: string;
   newspaperDate: string;
+}
+
+export interface GroupedActiveJob extends BaseActiveJob {
+  kind: "grouped_ocr";
   requestedArticles: Array<{ id: string; title: string }>;
 }
 
+export interface WholeFileActiveJob extends BaseActiveJob {
+  kind: "whole_file";
+  requestedPages: number[];
+}
+
+export type ActiveJob = GroupedActiveJob | WholeFileActiveJob;
+
+export type StartJobInfo =
+  | {
+      jobId: string;
+      kind: "grouped_ocr";
+      fileId: string;
+      newspaperName: string;
+      newspaperDate: string;
+      requestedArticles: Array<{ id: string; title: string }>;
+      label?: string;
+    }
+  | {
+      jobId: string;
+      kind: "whole_file";
+      fileId: string;
+      newspaperName: string;
+      newspaperDate: string;
+      requestedPages: number[];
+      label?: string;
+    };
+
 export interface JobSlice {
   activeJob: ActiveJob | null;
-  /** Map of fileId → last-assembled document. Populated on a non-cancelled
-   *  successful finish; T5.7 ResultDrawer renders against this. */
+  /** Map of fileId → last-assembled document. Re-built on every grouped-OCR
+   *  finish from the merged per-article texts, so partial OCR runs keep the
+   *  assembled output coherent with the current article order. */
   documentResults: Record<string, string>;
-  resultDrawerOpen: boolean;
-  /** Called immediately after `startGroupedOcr` returns the job id. The first
-   *  `JobProgress` event will fill in `total`; until then we show 0/0. */
-  startJob: (info: {
-    jobId: string;
-    kind: JobKind;
-    fileId: string;
-    newspaperName: string;
-    newspaperDate: string;
-    requestedArticles: Array<{ id: string; title: string }>;
-    label?: string;
-  }) => void;
+  /** fileId → articleId → raw OCR text. Merged across runs so a partial
+   *  re-OCR doesn't wipe results for articles outside the new selection.
+   *  Cleared when the file is removed from the queue. */
+  articleOcrTexts: Record<string, Record<string, string>>;
+  /** fileId → page → raw OCR text. Populated by whole-file OCR runs and
+   *  rendered in the "按页" tab of the OCR text panel. Merged across runs so
+   *  re-running a subrange doesn't wipe the previous pages' results.
+   *  Cleared when the file is removed from the queue. */
+  pageOcrTexts: Record<string, Record<number, string>>;
+  /** Called immediately after `startGroupedOcr` / `startWholeFileOcr` returns
+   *  the job id. The first `JobProgress` event will fill in `total`; until
+   *  then we show 0/0. */
+  startJob: (info: StartJobInfo) => void;
   applyProgress: (p: JobProgress) => void;
   markCancelling: () => void;
   applyJobDone: (d: JobDone) => void;
   applyJobError: (e: JobError) => void;
-  /** Dismiss the dialog. Only allowed in a terminal status — guards against
-   *  closing a still-running job. */
+  /** Dismiss the inline progress widget. Only allowed in a terminal status —
+   *  guards against closing a still-running job. */
   clearActiveJob: () => void;
   setDocumentResult: (fileId: string, document: string) => void;
-  openResultDrawer: () => void;
-  closeResultDrawer: () => void;
+  setArticleOcrTexts: (fileId: string, texts: Record<string, string>) => void;
+  /** Merge per-page OCR text into the file-scoped map. Callers pass only the
+   *  pages they have new data for; pages outside the patch are preserved. An
+   *  explicit empty string is a valid value (e.g. an error sentinel) so the
+   *  slot exists. */
+  setPageOcrTexts: (fileId: string, texts: Record<number, string>) => void;
 }
 
 export const createJobSlice: StateCreator<
@@ -82,29 +116,32 @@ export const createJobSlice: StateCreator<
 > = (set) => ({
   activeJob: null,
   documentResults: {},
-  resultDrawerOpen: false,
-  startJob: ({
-    jobId,
-    kind,
-    fileId,
-    newspaperName,
-    newspaperDate,
-    requestedArticles,
-    label,
-  }) =>
+  articleOcrTexts: {},
+  pageOcrTexts: {},
+  startJob: (info) =>
     set((state) => {
-      state.activeJob = {
-        jobId,
-        kind,
+      const base: BaseActiveJob = {
+        jobId: info.jobId,
         status: "running",
         done: 0,
         total: 0,
-        label: label ?? "准备中…",
-        fileId,
-        newspaperName,
-        newspaperDate,
-        requestedArticles: requestedArticles.map((a) => ({ ...a })),
+        label: info.label ?? "准备中…",
+        fileId: info.fileId,
+        newspaperName: info.newspaperName,
+        newspaperDate: info.newspaperDate,
       };
+      state.activeJob =
+        info.kind === "grouped_ocr"
+          ? {
+              ...base,
+              kind: "grouped_ocr",
+              requestedArticles: info.requestedArticles.map((a) => ({ ...a })),
+            }
+          : {
+              ...base,
+              kind: "whole_file",
+              requestedPages: [...info.requestedPages],
+            };
     }),
   applyProgress: (p) =>
     set((state) => {
@@ -148,12 +185,17 @@ export const createJobSlice: StateCreator<
     set((state) => {
       state.documentResults[fileId] = document;
     }),
-  openResultDrawer: () =>
+  setArticleOcrTexts: (fileId, texts) =>
     set((state) => {
-      state.resultDrawerOpen = true;
+      const prev = state.articleOcrTexts[fileId] ?? {};
+      state.articleOcrTexts[fileId] = { ...prev, ...texts };
     }),
-  closeResultDrawer: () =>
+  setPageOcrTexts: (fileId, texts) =>
     set((state) => {
-      state.resultDrawerOpen = false;
+      const prev = state.pageOcrTexts[fileId] ?? {};
+      state.pageOcrTexts[fileId] = { ...prev, ...texts };
     }),
 });
+
+// Re-export so legacy types referenced by tests / callers still resolve.
+export type { JobKind } from "@/lib/ipc-types";

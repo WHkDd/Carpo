@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
-import { ProgressDialog } from "@/components/progress/ProgressDialog";
 import { QueuePanel } from "@/components/queue/QueuePanel";
-import { ResultDrawer } from "@/components/results/ResultDrawer";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { assembleDocument } from "@/lib/format-doc";
 import { getSettings } from "@/lib/tauri";
-import { EVENTS, type JobDone, type JobError, type JobProgress } from "@/lib/ipc-types";
+import {
+  EVENTS,
+  type GroupedJobDone,
+  type JobDone,
+  type JobError,
+  type JobProgress,
+  type WholeFileJobDone,
+} from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { Toolbar } from "./Toolbar";
-import { PageNavigator } from "./PageNavigator";
+import { ProgressPill } from "./ProgressPill";
 import { StatusBar } from "./StatusBar";
 import { StructureRail } from "./StructureRail";
 
@@ -37,6 +42,7 @@ function AppShellInner() {
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
+  const recognitionMode = useStore((s) => s.recognitionMode);
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
   const setSettings = useStore((s) => s.setSettings);
@@ -44,7 +50,8 @@ function AppShellInner() {
   const applyJobDone = useStore((s) => s.applyJobDone);
   const applyJobError = useStore((s) => s.applyJobError);
   const setDocumentResult = useStore((s) => s.setDocumentResult);
-  const openResultDrawer = useStore((s) => s.openResultDrawer);
+  const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
+  const setPageOcrTexts = useStore((s) => s.setPageOcrTexts);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   usePdfPageSync();
@@ -78,43 +85,70 @@ function AppShellInner() {
           const job = useStore.getState().activeJob;
           // Take the assembly action only when the done payload matches the
           // current activeJob and the run wasn't cancelled. Done payloads for
-          // stale or cancelled jobs are not assembled into a document, but
-          // the slice still records terminal status for the ProgressDialog.
-          if (
-            job &&
-            job.jobId === e.payload.job_id &&
-            !e.payload.cancelled
-          ) {
-            // Zip article snapshot (id → title) with backend results, then
-            // assemble. Articles that errored have no result row; we surface
-            // their failure in the document body as a marker so the file
-            // isn't silently incomplete.
-            const titleById = new Map(
-              job.requestedArticles.map((a) => [a.id, a.title])
-            );
-            const errorById = new Map(
-              e.payload.errors.map((er) => [er.article_id, er.message])
-            );
-            const ordered = job.requestedArticles.map((a) => {
-              const row = e.payload.results.find(
-                (r) => r.article_id === a.id
+          // stale or cancelled jobs are not assembled, but the slice still
+          // records terminal status for the progress pill.
+          if (job && job.jobId === e.payload.job_id && !e.payload.cancelled) {
+            if (job.kind === "grouped_ocr") {
+              const payload = e.payload as GroupedJobDone;
+              // Build a per-article text map for the articles that were part
+              // of *this* run. Errored articles get a sentinel so the slot
+              // exists and the user sees an explicit failure marker.
+              const errorById = new Map(
+                payload.errors.map((er) => [er.article_id, er.message])
               );
-              if (row) {
-                return { title: titleById.get(a.id) ?? "", text: row.text };
+              const perArticle: Record<string, string> = {};
+              for (const a of job.requestedArticles) {
+                const row = payload.results.find((r) => r.article_id === a.id);
+                const errMsg = errorById.get(a.id);
+                perArticle[a.id] = row
+                  ? row.text
+                  : errMsg
+                    ? `[识别失败：${errMsg}]`
+                    : "[未识别]";
               }
-              const errMsg = errorById.get(a.id) ?? "未识别";
-              return {
-                title: titleById.get(a.id) ?? "",
-                text: `[识别失败：${errMsg}]`,
-              };
-            });
-            const doc = assembleDocument({
-              newspaperName: job.newspaperName,
-              newspaperDate: job.newspaperDate,
-              articles: ordered,
-            });
-            setDocumentResult(job.fileId, doc);
-            openResultDrawer();
+              // Merge into the per-file map first, then re-assemble the full
+              // document from *every* article that has text — including ones
+              // OCR'd in prior partial runs. The article order follows the
+              // current document state so re-ordering after OCR is honored.
+              setArticleOcrTexts(job.fileId, perArticle);
+              const doc = useStore.getState().getDocumentState(job.fileId);
+              const merged =
+                useStore.getState().articleOcrTexts[job.fileId] ?? {};
+              const ordered = doc.articles
+                .map((a) => ({
+                  id: a.id,
+                  title: a.title,
+                  text: merged[a.id] ?? "",
+                }))
+                .filter((a) => a.text.length > 0);
+              const assembled = assembleDocument({
+                newspaperName: job.newspaperName,
+                newspaperDate: job.newspaperDate,
+                articles: ordered,
+              });
+              setDocumentResult(job.fileId, assembled);
+            } else {
+              // whole_file: zip requestedPages with results/errors, write the
+              // page-keyed map. Whole-file mode reads this page map directly.
+              const payload = e.payload as WholeFileJobDone;
+              const errorByPage = new Map(
+                payload.errors.map((er) => [er.page, er.message])
+              );
+              const resultByPage = new Map(
+                payload.results.map((r) => [r.page, r.text])
+              );
+              const perPage: Record<number, string> = {};
+              for (const page of job.requestedPages) {
+                const row = resultByPage.get(page);
+                const errMsg = errorByPage.get(page);
+                perPage[page] = row !== undefined
+                  ? row
+                  : errMsg !== undefined
+                    ? `[识别失败：${errMsg}]`
+                    : "[未识别]";
+              }
+              setPageOcrTexts(job.fileId, perPage);
+            }
           }
           applyJobDone(e.payload);
         }),
@@ -135,7 +169,8 @@ function AppShellInner() {
     applyJobDone,
     applyJobError,
     setDocumentResult,
-    openResultDrawer,
+    setArticleOcrTexts,
+    setPageOcrTexts,
   ]);
 
   useEffect(() => {
@@ -164,6 +199,7 @@ function AppShellInner() {
           e.preventDefault();
           ctl.zoomOut();
         } else if (e.key.toLowerCase() === "g") {
+          if (recognitionMode !== "grouped") return;
           e.preventDefault();
           const fileId = useStore.getState().currentFileId;
           const file = fileId
@@ -185,13 +221,14 @@ function AppShellInner() {
         e.preventDefault();
         nextPage();
       } else if (e.key.toLowerCase() === "v") {
+        if (recognitionMode !== "grouped") return;
         e.preventDefault();
         toggleDrawMode();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [prevPage, nextPage, markSelectionAsArticle, toggleDrawMode]);
+  }, [prevPage, nextPage, recognitionMode, markSelectionAsArticle, toggleDrawMode]);
 
   return (
     <>
@@ -203,13 +240,13 @@ function AppShellInner() {
       >
         <QueuePanel onOpenSettings={() => setSettingsOpen(true)} />
         <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
-          <div className="flex items-center justify-center px-3">
+          <div className="relative z-20 flex items-center justify-center px-3">
             <Toolbar />
           </div>
-          <div className="min-h-0 overflow-hidden p-2">
+          <div className="relative z-0 min-h-0 overflow-hidden p-2">
             <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
               <ImageCanvas ref={canvasRef} />
-              <PageNavigator />
+              <ProgressPill />
               <StatusBar canvasRef={canvasRef} />
             </div>
           </div>
@@ -220,8 +257,6 @@ function AppShellInner() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
-      <ProgressDialog />
-      <ResultDrawer />
     </>
   );
 }

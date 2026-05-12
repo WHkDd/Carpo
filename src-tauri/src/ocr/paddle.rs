@@ -163,7 +163,13 @@ async fn submit(
         .multipart(form)
         .send()
         .await
-        .map_err(|e| ocr_err("submit", format!("network: {e}"), e.is_timeout() || e.is_connect()))?;
+        .map_err(|e| {
+            ocr_err(
+                "submit",
+                format!("network: {e}"),
+                e.is_timeout() || e.is_connect(),
+            )
+        })?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -202,18 +208,20 @@ async fn poll(
     let auth = format!("Bearer {token}");
     loop {
         if start.elapsed() > overall_timeout {
-            return Err(ocr_err(
-                "poll",
-                "timeout waiting for job to finish",
-                false,
-            ));
+            return Err(ocr_err("poll", "timeout waiting for job to finish", false));
         }
         let resp = client
             .get(&url)
             .header("Authorization", &auth)
             .send()
             .await
-            .map_err(|e| ocr_err("poll", format!("network: {e}"), e.is_timeout() || e.is_connect()))?;
+            .map_err(|e| {
+                ocr_err(
+                    "poll",
+                    format!("network: {e}"),
+                    e.is_timeout() || e.is_connect(),
+                )
+            })?;
         let status = resp.status();
         if !status.is_success() {
             return Err(ocr_err(
@@ -239,7 +247,9 @@ async fn poll(
                     .data
                     .result_url
                     .and_then(|r| r.json_url)
-                    .ok_or_else(|| ocr_err("poll", "done state missing resultUrl.jsonUrl", false))?;
+                    .ok_or_else(|| {
+                        ocr_err("poll", "done state missing resultUrl.jsonUrl", false)
+                    })?;
                 return Ok(json_url);
             }
             "failed" => {
@@ -255,11 +265,13 @@ async fn poll(
 }
 
 async fn fetch_result(client: &reqwest::Client, json_url: &str) -> AppResult<String> {
-    let resp = client
-        .get(json_url)
-        .send()
-        .await
-        .map_err(|e| ocr_err("result", format!("network: {e}"), e.is_timeout() || e.is_connect()))?;
+    let resp = client.get(json_url).send().await.map_err(|e| {
+        ocr_err(
+            "result",
+            format!("network: {e}"),
+            e.is_timeout() || e.is_connect(),
+        )
+    })?;
     let status = resp.status();
     if !status.is_success() {
         return Err(ocr_err(
@@ -608,7 +620,9 @@ mod tests {
         .await
         .unwrap_err();
         match err {
-            AppError::Ocr { message, retryable, .. } => {
+            AppError::Ocr {
+                message, retryable, ..
+            } => {
                 assert!(message.contains("timeout"));
                 assert!(!retryable);
             }

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    jobs::{grouped::GroupedOcrRequest, JobKind},
+    jobs::{grouped::GroupedOcrRequest, whole_file::WholeFileOcrRequest, JobKind},
     state::AppState,
 };
 
@@ -22,6 +22,20 @@ pub async fn start_grouped_ocr(
     crate::jobs::grouped::validate(&req)?;
     let (id, token) = state.jobs.register(JobKind::GroupedOcr);
     crate::jobs::grouped::spawn(app, req, id, token);
+    Ok(JobStarted {
+        job_id: id.to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn start_whole_file_ocr(
+    app: AppHandle,
+    req: WholeFileOcrRequest,
+    state: State<'_, AppState>,
+) -> AppResult<JobStarted> {
+    crate::jobs::whole_file::validate(&req)?;
+    let (id, token) = state.jobs.register(JobKind::WholeFile);
+    crate::jobs::whole_file::spawn(app, req, id, token);
     Ok(JobStarted {
         job_id: id.to_string(),
     })

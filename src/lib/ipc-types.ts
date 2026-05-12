@@ -115,7 +115,7 @@ export interface GroupedOcrRequest {
   newspaper_date: string;
 }
 
-export type JobKind = "grouped_ocr";
+export type JobKind = "grouped_ocr" | "whole_file";
 
 export interface JobListEntry {
   job_id: string;
@@ -151,16 +151,59 @@ export interface JobItemError {
   error: string;
 }
 
-export interface JobDone {
+export interface GroupedOcrResultEntry {
+  article_id: string;
+  text: string;
+}
+export interface GroupedOcrErrorEntry {
+  article_id: string;
+  message: string;
+}
+export interface WholeFileOcrResultEntry {
+  page: number;
+  text: string;
+}
+export interface WholeFileOcrErrorEntry {
+  page: number;
+  message: string;
+}
+
+/** Grouped-OCR job result. Used by `start_grouped_ocr`. */
+export interface GroupedJobDone {
   job_id: string;
-  results: Array<{ article_id: string; text: string }>;
-  errors: Array<{ article_id: string; message: string }>;
+  results: GroupedOcrResultEntry[];
+  errors: GroupedOcrErrorEntry[];
   cancelled: boolean;
 }
+
+/** Whole-file-OCR job result. Used by `start_whole_file_ocr`. */
+export interface WholeFileJobDone {
+  job_id: string;
+  results: WholeFileOcrResultEntry[];
+  errors: WholeFileOcrErrorEntry[];
+  cancelled: boolean;
+}
+
+/** Wire payload for `JOB_DONE`. The two shapes are disambiguated by the
+ *  active job's `kind` snapshot — the wire payload itself does not carry a
+ *  discriminator field, so callers must narrow via `activeJob.kind` before
+ *  reading per-arm fields. */
+export type JobDone = GroupedJobDone | WholeFileJobDone;
 
 export interface JobError {
   job_id: string;
   error: string;
+}
+
+/** Payload for `invoke("start_whole_file_ocr", { req })`. */
+export interface WholeFileOcrRequest {
+  file_id: string;
+  path: string;
+  kind: FileKind;
+  pages: number[];
+  ocr_dpi: number;
+  newspaper_name: string;
+  newspaper_date: string;
 }
 
 export const EVENTS = {

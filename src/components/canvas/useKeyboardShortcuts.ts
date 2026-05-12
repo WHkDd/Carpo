@@ -14,6 +14,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 // `listening={interactive}` / useDrawBlock's own guard.
 function getActiveDrawCtx() {
   const s = useStore.getState();
+  if (s.recognitionMode !== "grouped") return null;
   if (!s.manualDrawMode) return null;
   const fileId = s.currentFileId;
   if (!fileId) return null;

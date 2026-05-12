@@ -42,6 +42,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::set_settings,
             commands::ocr::start_grouped_ocr,
+            commands::ocr::start_whole_file_ocr,
             commands::ocr::list_provider_models,
             commands::ocr::cancel_job,
             commands::ocr::list_jobs
