@@ -115,6 +115,27 @@ describe("selectionSlice", () => {
     expect(store.getState().manualDrawMode).toBe(false);
   });
 
+  it("whole_file mode forces browse state and clears draw toggle", () => {
+    store.getState().pushSelection(fid, page, "a");
+    store.getState().setSelectedArticleIds(["art1"]);
+    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
+    store.getState().setDrawMode(true);
+
+    store.getState().setRecognitionMode("whole_file");
+
+    expect(store.getState().recognitionMode).toBe("whole_file");
+    expect(store.getState().manualDrawMode).toBe(false);
+    expect(store.getState().getSelectionOrder(fid, page)).toEqual([]);
+    expect(store.getState().selectedArticleIds).toEqual([]);
+    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
+  });
+
+  it("toggleDrawMode is ignored in whole_file mode", () => {
+    store.getState().setRecognitionMode("whole_file");
+    store.getState().toggleDrawMode();
+    expect(store.getState().manualDrawMode).toBe(false);
+  });
+
   it("setEditingBlock stores and clears a single edit target per file", () => {
     expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
     store.getState().setEditingBlock(fid, { page, blockId: "b1" });

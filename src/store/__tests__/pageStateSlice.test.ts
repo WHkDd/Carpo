@@ -162,6 +162,24 @@ describe("pageStateSlice", () => {
     expect(state.blocks).toEqual([]);
   });
 
+  it("removeArticle clears its OCR text and rebuilds assembled document", () => {
+    store.getState().addBlock(fid, page, block("b1"));
+    store.getState().addBlock(fid, page, block("b2"));
+    store.getState().addArticle(fid, page, { id: "a1", num: 1, title: "报道1" }, ["b1"]);
+    store.getState().addArticle(fid, page, { id: "a2", num: 2, title: "报道2" }, ["b2"]);
+    store.getState().setArticleOcrTexts(fid, {
+      a1: "deleted text",
+      a2: "kept text",
+    });
+    store.getState().setDocumentResult(fid, "stale deleted text kept text");
+
+    store.getState().removeArticle(fid, "a1");
+
+    expect(store.getState().articleOcrTexts[fid]).toEqual({ a2: "kept text" });
+    expect(store.getState().documentResults[fid]).toContain("kept text");
+    expect(store.getState().documentResults[fid]).not.toContain("deleted text");
+  });
+
   it("markSelectionAsArticle creates a document-scoped article and clears temporary selection", () => {
     store.getState().addBlock(fid, page, block("b1"));
     store.getState().addBlock(fid, page, block("b2"));

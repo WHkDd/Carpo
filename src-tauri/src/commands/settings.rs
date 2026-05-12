@@ -29,10 +29,6 @@ pub async fn get_settings<R: Runtime>(app: AppHandle<R>) -> AppResult<NonSecretS
 }
 
 #[tauri::command]
-pub async fn set_settings<R: Runtime>(
-    app: AppHandle<R>,
-    s: NonSecretSettings,
-) -> AppResult<()> {
+pub async fn set_settings<R: Runtime>(app: AppHandle<R>, s: NonSecretSettings) -> AppResult<()> {
     config::save(&app, &s)
 }
-

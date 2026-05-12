@@ -1,6 +1,6 @@
 # xcvt-tauri Implementation Plan
 
-> **Status (M0–M4 complete · M5 next · 2026-05-11)**: Tauri 2 + React 18 + Vite + TS + Tailwind + shadcn/ui chrome shipped. M1 raster image loading + canvas, M2 PDF queue + bitmap LRU + collapsed rail, M3 manual block drawing + multi-select transformer + nudge/delete keyboard shortcuts, M4 document-scoped article grouping + metadata + profile toggle + grouped-block edit-mode all landed and behind static gates (`pnpm typecheck`, `pnpm build`, `npx vitest run`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`). Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
+> **Status (M0–M5 complete · M6 implementation mostly landed, verification pending · 2026-05-13)**: Tauri 2 + React 18 + Vite + TS + Tailwind + shadcn/ui chrome shipped. M1 raster image loading + canvas, M2 PDF queue + bitmap LRU + collapsed rail, M3 manual block drawing + multi-select transformer + nudge/delete keyboard shortcuts, M4 document-scoped article grouping + metadata + profile toggle + grouped-block edit-mode, and M5 provider-backed grouped OCR all landed. M6 whole-file OCR now has backend job wiring, page-range submission, separate whole-file/grouped recognition modes, right-rail page text display, and single/bulk copy-export actions; remaining work is T6.4 static gates plus manual end-to-end UI verification. Authoritative design rationale in [`PRODUCT.md`](./PRODUCT.md) + [`DESIGN.md`](./DESIGN.md); implementation map in [`docs/DESIGN.md`](./docs/DESIGN.md); high-fidelity mockups in [`docs/mockups/*.html`](./docs/mockups/).
 >
 > **Reference implementation**: `/Users/kai/superconductor/projects/xcvt/newspaper_ocr.py` (2,859 lines) — every feature, parameter, and prompt format must match unless this plan explicitly says otherwise.
 >
@@ -355,44 +355,60 @@ Cargo tests pass (24 across 3 suites — paddle 8 + openai 6 + mod 5 + image 1 +
 
 ---
 
-## M6 — Full-page + batch OCR + folder import (4-5 days)
+## M6 — Whole-file OCR (3-4 days)
 
-**Goal**: single-image full-page OCR; batch full-page across queue; batch grouped doc generation; folder recursive import with review modal; pause/resume; failed-item retry.
+**Goal**: zero-config OCR over an entire file. Image or single-page PDF → switch into "全文识别" mode → click the right-rail footer action "开始全文识别" → text lands in the right rail's `OcrTextPanel` as page-level text. Multi-page PDF → optionally pick a page range → per-page run; the page navigator stays bi-directionally synced with the canvas. The M5 grouped flow ("框选识别" / "识别选中报道") coexists as a separate recognition mode, not as a tab inside the same panel.
 
-### T6.1 [BE] · `start_full_page_ocr` job
-- `src-tauri/src/jobs/full_page.rs`: render full page → call provider → emit done. Single-task job, simpler than grouped.
-- Command: `start_full_page_ocr(req: FullPageRequest) -> JobStarted`.
-- **Acceptance**: image + PDF page both work; result lands in pageStates.resultText.
+**Scope decision (2026-05-12, revised from original M6)**: original M6 covered multi-file batch (batch full-page across queue, batch grouped doc, folder recursive import, pause/resume token, retry-failed). Dropped *for now* — the product reality is one file per session (one newspaper issue at a time), and the batch features added significant complexity (crash recovery, dual progress bar, pause atomic, concurrency-limited workers) for a workflow Kai isn't asking for. Removed sub-tasks: T6.2 batch full-page · T6.3 batch grouped doc · T6.4 pause/resume · T6.5 folder import · T6.6 dual-progress + retry · T6.7 batch buttons in queue panel. The original M6 plan is preserved in git history at the pre-revision commit (and in `docs/mockups/batch-import.html` if it ever needs reviving). Batch features may be re-introduced in a later milestone if the single-file workflow proves insufficient.
 
-### T6.2 [BE] · `start_batch_full_page_ocr` job
-- `src-tauri/src/jobs/batch_full_page.rs`: iterate `items: [{file_id, path, is_pdf, pdf_total}]`. For PDFs: each page is its own item. Concurrency limit 2 (configurable in settings — default `concurrent_provider_calls: 2`). Per-item events: `xcvt://job/item-done`, `xcvt://job/item-error`.
-- **Crash recovery**: on each `item-done`, also write `${AppData}/sessions/<job_id>/<file_id>__<page>.md`. On app start, scan for stray sessions and offer "恢复" toast in status bar.
-- **Acceptance**: 5-file batch (mix of PDFs + images) runs to completion; crash recovery test (kill mid-run, restart, see toast).
+**Naming + UX decisions (2026-05-12, second revision)**:
+- Button label "整页识别" rejected as misleading — it suggests one-page-at-a-time, whereas the actual semantic is "input a whole file, OCR everything". Settled on "全文识别". Internally the job remains per-page (each PDF page → one OCR call), but the user-facing intent is whole-file.
+- `ResultDrawer` from T5.7 has been deleted in the M5 UI iteration loop; whole-file results land inline in `OcrTextPanel`, not a slide-up drawer.
+- Product revision (2026-05-13): the canvas-top `Toolbar` "全文识别" control is a mode switch only. It does not start OCR. In whole-file mode, the primary OCR trigger lives in the StructureRail footer as "开始全文识别", matching the grouped-mode footer action "识别选中报道".
+- Product revision (2026-05-13): grouped OCR and whole-file OCR are separate recognition modes, not tabs. Grouped mode keeps article marking UI and article-level text. Whole-file mode is browse-only, hides marking UI, shows page-level text, and disables draw/browse toggling.
+- Page sync in whole-file mode is bi-directional: the panel navigator and canvas both read/write the same `file.currentPage` in store, so no extra state is needed.
 
-### T6.3 [BE] · `start_batch_grouped_doc` job
-- `src-tauri/src/jobs/batch_grouped.rs`: per file with ≥1 article, run the grouped flow. Files with no articles: skip with `item-error { reason: "no articles marked" }`.
-- **Acceptance**: 3-file batch with varying article counts produces 3 result texts in their respective tabs.
+**Dependencies added**: none.
 
-### T6.4 [BE] · Pause/resume token
-- Replace `CancellationToken` with a custom `JobControl { paused: AtomicBool, cancelled: CancellationToken }`. Loop in jobs awaits `pause_check().await` between items, which idles until `paused == false` or cancelled.
-- `pause_job(job_id)` / `resume_job(job_id)` commands.
-- **Acceptance**: pause mid-batch → progress holds; resume → continues; total time = run time minus pause time (within 500ms).
+### T6.1 [BE] · `start_whole_file_ocr` job
+- `src-tauri/src/jobs/whole_file.rs`: request shape `WholeFileOcrRequest { file_id, path, kind: "image" | "pdf", pages: Vec<u32>, ocr_dpi, newspaper_name, newspaper_date }`. Image / single-page PDF: caller passes `pages = [1]`. Multi-page PDF: caller fills the explicit page list (full range or custom subrange).
+- Two-phase worker mirroring `grouped.rs` post-M5-rewrite: phase 1 sync prerenders requested pages into Send-safe `DynamicImage`s (PDFium not Send, can't be held across `.await`); phase 2 async OCR loop with bounded parallelism via `futures::stream::buffer_unordered`, reusing `OCR_CONCURRENCY = 3`. Holds only Send data — page_cache (Arc<DynamicImage>), settings, reqwest::Client, cancellation token.
+- Progress events match the M5 shape: `JOB_PROGRESS` after prerender ("页面已就绪 · 共 N 页待识别"), one before each page submit ("识别中 · 第N/M页"), one after each page done ("完成 · 第N/M页"). Final `JOB_DONE { results: Vec<{page, text}>, errors: Vec<{page, error}>, cancelled }`. Per-page `done` count atomic via `Arc<AtomicU32>` so concurrent tasks tick safely.
+- New variant `JobKind::WholeFile` in `jobs/mod.rs`. Reuses `JobRegistry` + `CancellationToken`. OCR call races against `token.cancelled()` via `tokio::select!`. Same `recognize_with_retry` caveat — cancel mid-backoff can take up to ~7s.
+- Command: `start_whole_file_ocr(req) -> JobStarted` registered in `commands/ocr.rs`. Frontend wrapper in `src/lib/tauri.ts`; DTO in `src/lib/ipc-types.ts`.
+- Tests in `jobs/whole_file.rs` (wiremock): single-image happy path, 3-page PDF happy path, partial failure (one page errors), mid-job cancel.
+- **Acceptance**: `cargo test` green; `cargo clippy --all-targets -- -D warnings` clean.
 
-### T6.5 [UI+BE] · Folder recursive import
-- "添加文件夹" button → `dialog.open({ directory: true, multiple: false, recursive: false })` → backend command `scan_folder(path, max_depth: u32) -> Vec<ScanEntry>`. Filter to supported extensions; skip dot-directories and `Thumbs.db`/`.DS_Store`.
-- If result count ≤ 20: add directly. If > 20: open `<BatchImportDialog/>` (mockup `docs/mockups/batch-import.html`).
-- **Acceptance**: drop a 60-file folder → review dialog appears; uncheck-all/check-all/per-row toggle works; "导入 N 项" adds to queue with dedup.
+### T6.2 [UI+BE] · "全文识别" mode switch + right-rail trigger + PDF page range
+- Add a "全文识别" button to `src/components/layout/Toolbar.tsx`, to the right of the existing draw-mode toggle. It switches `recognitionMode` from `"grouped"` to `"whole_file"`; in whole-file mode it becomes "返回框选" and switches back to grouped mode.
+- Whole-file mode is browse-only: manual draw mode is forced off, `toggleDrawMode` is ignored, and grouped hotkeys/selection affordances do not apply.
+- The actual OCR start button lives in the StructureRail footer as "开始全文识别". Disabled rules: enabled when `currentFile != null` AND the active provider is configured (Keychain key present; `openai_compatible_base_url` non-empty for that provider) AND no other OCR job is running. Mirror the probe pattern from `useGroupedOcrTrigger`.
+- PDF page range UI: when `currentFile.kind === "pdf"` and `pdfTotal > 1`, a compact chip "第 1–N 页 · 全部" sits next to the top mode switch while in whole-file mode. Click opens a small inline popover: `从 [_] 到 [_]` number inputs clamped `[1, pdfTotal]` with `from ≤ to` validation; a "重置为全部" link clears the custom range. Persist the confirmed range in `pageStateSlice.wholeFileRange: Record<fileId, { from: number, to: number } | null>` (null → full range default). Persisted per file so switching files preserves a custom range.
+- Image / single-page PDF: no range chip; the footer trigger submits `pages = [1]`.
+- Click handler (`src/hooks/useWholeFileOcrTrigger.ts`): validate → build pages array (image / 1-page PDF `[1]`, multi-page `Array.from({length: to-from+1}, (_,i) => from+i)`) → call `startWholeFileOcr({ file_id, path, kind, pages, ocr_dpi: profile.ocrDpi, newspaper_name, newspaper_date })` → seed `jobSlice.activeJob` with `{ kind: "whole_file", fileId, newspaperName, newspaperDate, requestedPages: pages, label: "准备中… 共 N 页" }`. Existing `ProgressPill` takes over from there.
+- **Acceptance**: image immediately usable on import; PDF range defaults to full, accepts custom range, persists across page navigation and file switch; submission honours the chosen range; ProgressPill shows whole-file progress.
 
-### T6.6 [UI] · ProgressDialog dual-progress + retry-failed
-- Extend ProgressDialog to two progress bars (total + current-file-pages) for batch jobs. Show last error inline. "重试失败项" button enabled when batch finishes with errors.
-- **Acceptance**: simulate 1 of 5 files failing → "重试" reruns just that one.
+### T6.3 [UI+BE] · Whole-file result assembly + mode-specific `OcrTextPanel`
+- `jobSlice` gains `pageOcrTexts: Record<fileId, Record<number, string>>` (page-keyed text from whole-file runs) and a merging setter `setPageOcrTexts(fileId, perPage)`. Cleared when the file is removed from the queue (mirror existing `articleOcrTexts` cleanup in `queueSlice.removeFile`).
+- `AppShell.tsx` `JOB_DONE` listener branches on `job.kind`: `"whole_file"` → zip `requestedPages` (id = `page`) with `results`/`errors`, missing rows get `[识别失败：{error}]` so failed pages still appear under their page number. No document-level assembly happens — per-page texts are addressed page-by-page in the panel.
+- In grouped mode, `StructureRail` shows metadata + block/article management UI + article-level `OcrTextPanel`. Article selection → article text; no selection → assembled grouped document. Deleting an article removes its OCR text and rebuilds the assembled document so stale text does not remain.
+- In whole-file mode, `StructureRail` hides block/article management UI, keeps metadata visible, and expands `OcrTextPanel` for page-level text. The panel header uses page navigation `⟨ 第 N / M 页 ⟩` when `pdfTotal > 1`; char count + markdown/source toggle + single-item copy/save sit alongside as today. Body renders `pageOcrTexts[fileId][currentPage]`; if empty, it is a blank text area placeholder without instructional copy.
+- Bulk actions live in the right-rail title row in both modes: grouped mode copies/exports all article OCR text; whole-file mode copies/exports all page OCR text. Single-item copy/save remain inside `OcrTextPanel`.
+- Bi-directional sync: the panel's prev/next buttons call the existing `prevPage()` / `nextPage()` store actions — same source of truth as the canvas, so canvas auto-syncs when the panel navigates. Canvas page changes already update `file.currentPage`, so the panel auto-syncs on canvas navigation. No new sync glue required.
+- Single-image / single-page PDF in whole-file mode: page navigator hidden; just the page-1 text.
+- **Acceptance**: image populates whole-file mode page text; PDF run shows per-page texts that the user can flip through; flipping in the panel moves the canvas and vice-versa; switching recognition modes preserves each mode's data; single-item and bulk copy/save/export round-trip works.
 
-### T6.7 [UI] · Batch buttons in queue panel
-- Wire "批量整页 OCR" and "批量分组生成" footer buttons to `start_batch_full_page_ocr` and `start_batch_grouped_doc`.
-- **Acceptance**: visual parity with mockup; only enabled when queue ≥ 1 file.
+### T6.4 · Verify M6 end-to-end
+- Image OCR: import a JPG → switch to "全文识别" mode → click footer "开始全文识别" → right rail shows OCR text matching what the active provider produces on the same image.
+- PDF full range: 3-page PDF → range "全部" → click → flipping pages on canvas updates panel; flipping pages on panel updates canvas.
+- PDF custom range: 10-page PDF → set 3–5 → click footer "开始全文识别" → only pages 3–5 OCR'd; pages 1–2 / 6–10 remain blank in whole-file mode.
+- Range persistence: set 3–5 on file A, switch to file B, switch back → range still 3–5.
+- Provider-not-configured: clear the active provider's key → footer "开始全文识别" disabled or surfaces the provider-key error.
+- Cancel mid-job: `ProgressPill` cancel halts within ~7s (same backoff caveat as M5).
+- Static gates: `pnpm typecheck`, `pnpm build`, `pnpm test --run`, `cargo check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
+- Manual UI loop on `pnpm tauri dev`.
 
-### T6.8 · Verify M6 end-to-end
-- 5-file batch with mid-run pause-resume-cancel-retry. Crash recovery test. Folder import with 60 files including hidden subdirs.
+**Status (2026-05-13)**: M6 implementation is complete behind automated gates. Passed: `pnpm build` (includes `tsc --noEmit`), `pnpm test --run` (63 tests), `cargo check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` (44 tests). `pnpm tauri dev` compiled and launched `target/debug/xcvt`, Vite served `http://localhost:1420/` with HTTP 200, and pdfium loaded successfully. Full desktop-window smoke could not be completed automatically because an older PySide app at `/Users/kai/Desktop/Alma/Others/Xcvt.app` is already running with the same bundle identifier `local.kai.xcvt`; macOS accessibility resolves `Xcvt` to that old window. Do not close or modify that old app without Kai's approval. Remaining real-provider checks require local sample files plus configured provider credentials.
 
 ---
 

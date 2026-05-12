@@ -128,7 +128,10 @@ pub async fn recognize(
         let body = resp.text().await.unwrap_or_default();
         return Err(AppError::Ocr {
             provider: provider_label.into(),
-            message: format!("HTTP {status}: {}", body.chars().take(200).collect::<String>()),
+            message: format!(
+                "HTTP {status}: {}",
+                body.chars().take(200).collect::<String>()
+            ),
             retryable,
         });
     }
@@ -203,7 +206,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(header("Authorization", "Bearer sk-test"))
-            .and(body_partial_json(json!({ "model": "gpt-4o", "max_tokens": 4096 })))
+            .and(body_partial_json(
+                json!({ "model": "gpt-4o", "max_tokens": 4096 }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "choices": [{ "message": { "content": "  hello\n" } }]
             })))
@@ -327,7 +332,13 @@ mod tests {
 
     #[test]
     fn join_trims_trailing_slash() {
-        assert_eq!(join("https://x.com/v1/", "/models"), "https://x.com/v1/models");
-        assert_eq!(join("https://x.com/v1", "/models"), "https://x.com/v1/models");
+        assert_eq!(
+            join("https://x.com/v1/", "/models"),
+            "https://x.com/v1/models"
+        );
+        assert_eq!(
+            join("https://x.com/v1", "/models"),
+            "https://x.com/v1/models"
+        );
     }
 }

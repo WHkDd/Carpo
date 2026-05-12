@@ -1,4 +1,4 @@
-import { FileText, FileImage, Trash2 } from "lucide-react";
+import { FileText, FileImage, Trash2, X } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
 
@@ -70,7 +70,7 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
   );
 }
 
-export function QueueItemCompact({ entry, active, onSelect }: QueueItemProps) {
+export function QueueItemCompact({ entry, active, onSelect, onRemove }: QueueItemProps) {
   const Icon = entry.kind === "pdf" ? FileText : FileImage;
   const tooltip =
     entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
@@ -78,26 +78,41 @@ export function QueueItemCompact({ entry, active, onSelect }: QueueItemProps) {
       : entry.name;
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(entry.id)}
-      title={tooltip}
-      aria-label={tooltip}
-      aria-current={active ? "true" : undefined}
-      className={cn(
-        "relative grid h-10 w-14 place-items-center rounded-lg transition-colors duration-100",
-        active
-          ? "bg-surface-2 text-foreground"
-          : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={() => onSelect(entry.id)}
+        title={tooltip}
+        aria-label={tooltip}
+        aria-current={active ? "true" : undefined}
+        className={cn(
+          "relative grid h-10 w-14 place-items-center rounded-lg transition-colors duration-100",
+          active
+            ? "bg-surface-2 text-foreground"
+            : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+        )}
+      >
+        {active && (
+          <span
+            aria-hidden
+            className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
+          />
+        )}
+        <Icon className="h-4 w-4" strokeWidth={1.5} />
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(entry.id);
+          }}
+          aria-label={`从队列移除 ${entry.name}`}
+          className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full border border-border bg-background text-foreground-subtle opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+        >
+          <X className="h-2.5 w-2.5" strokeWidth={2} />
+        </button>
       )}
-    >
-      {active && (
-        <span
-          aria-hidden
-          className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
-        />
-      )}
-      <Icon className="h-4 w-4" strokeWidth={1.5} />
-    </button>
+    </div>
   );
 }

@@ -104,7 +104,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
   if (!hasFile) return null;
 
   return (
-    <footer className="absolute bottom-[6.5px] left-2 z-10 flex h-7 items-center gap-1 rounded-lg border border-border/60 bg-background/75 px-1 text-[12px] text-foreground-muted">
+    <footer className="absolute bottom-[2.5px] left-2 z-10 flex h-7 items-center gap-1 rounded-lg border border-border/60 bg-background/75 px-1 text-[12px] text-foreground-muted">
       <DropMenu
         ariaLabel="OCR 服务商"
         triggerLabel={PROVIDER_LABEL[provider]}
@@ -118,7 +118,6 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         }))}
         onSelect={(p) => setProvider(p)}
       />
-      <span className="text-foreground-subtle">·</span>
       <DropMenu
         ariaLabel="OCR 模式"
         triggerLabel={PROFILE_LABEL[ocrProfile]}

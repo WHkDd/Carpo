@@ -62,7 +62,13 @@ export const createQueueSlice: StateCreator<
       delete state.documentStates[id];
       delete state.fileViews[id];
       delete state.selectionOrders[id];
-      state.highlightedArticleId = null;
+      delete state.documentResults[id];
+      delete state.articleOcrTexts[id];
+      delete state.pageOcrTexts[id];
+      delete state.wholeFileRange[id];
+      // If we were viewing this file's drawer, drop the article scope so the
+      // drawer (now empty) doesn't keep dangling articleId state.
+      state.selectedArticleIds = [];
       const pagePrefix = `${id}::`;
       Object.keys(state.pageStates).forEach((key) => {
         if (key.startsWith(pagePrefix)) {

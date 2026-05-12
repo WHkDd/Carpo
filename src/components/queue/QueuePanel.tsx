@@ -57,18 +57,19 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
                   entry={entry}
                   active={entry.id === currentFileId}
                   onSelect={setCurrent}
+                  onRemove={removeFile}
                 />
               ))}
             </div>
           )}
         </div>
 
-        <div className="grid place-items-center border-t border-border/50 p-2">
+        <div className="grid place-items-center border-t border-border/50 px-2 pt-1.5">
           <button
             type="button"
             onClick={onOpenSettings}
             aria-label="设置"
-            className="grid h-7 w-7 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="grid h-8 w-14 place-items-center rounded-lg text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <SettingsIcon className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -142,7 +143,7 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
         )}
       </div>
 
-      <div className="border-t border-border/50 p-1.5">
+      <div className="border-t border-border/50 px-1.5 pt-1.5">
         <button
           type="button"
           onClick={onOpenSettings}

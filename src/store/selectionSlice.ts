@@ -53,12 +53,18 @@ export const createSelectionSlice: StateCreator<
 
   toggleDrawMode: () =>
     set((state) => {
+      if (state.recognitionMode === "whole_file") {
+        state.manualDrawMode = false;
+        return;
+      }
       state.manualDrawMode = !state.manualDrawMode;
     }),
 
   setDrawMode: (active) =>
     set((state) => {
-      state.manualDrawMode = active;
+      state.manualDrawMode = state.recognitionMode === "whole_file"
+        ? false
+        : active;
     }),
 
   pushSelection: (fileId, page, id) =>

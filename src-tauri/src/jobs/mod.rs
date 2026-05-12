@@ -8,6 +8,7 @@
 //! work units and breaks out cleanly.
 
 pub mod grouped;
+pub mod whole_file;
 
 use std::collections::HashMap;
 
@@ -20,6 +21,7 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
     GroupedOcr,
+    WholeFile,
 }
 
 #[derive(Debug)]

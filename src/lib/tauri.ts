@@ -8,6 +8,7 @@ import type {
   RenderPagePayload,
   RenderedPagePayload,
   SecretKey,
+  WholeFileOcrRequest,
 } from "./ipc-types";
 
 /**
@@ -69,6 +70,12 @@ export async function startGroupedOcr(
   req: GroupedOcrRequest
 ): Promise<JobStarted> {
   return invoke<JobStarted>("start_grouped_ocr", { req });
+}
+
+export async function startWholeFileOcr(
+  req: WholeFileOcrRequest
+): Promise<JobStarted> {
+  return invoke<JobStarted>("start_whole_file_ocr", { req });
 }
 
 export async function listProviderModels(opts?: {

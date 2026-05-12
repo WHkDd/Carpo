@@ -89,13 +89,18 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     const editingBlockId = useStore((s) =>
       file?.id ? s.getEditingBlockId(file.id, currentPage) : null
     );
-    const highlightedArticleId = useStore((s) => s.highlightedArticleId);
+    const selectedArticleIds = useStore((s) => s.selectedArticleIds);
+    const recognitionMode = useStore((s) => s.recognitionMode);
+    const highlightedArticleSet = useMemo(
+      () => new Set(recognitionMode === "grouped" ? selectedArticleIds : []),
+      [recognitionMode, selectedArticleIds]
+    );
     const isHighlighted = useCallback(
       (articleId: string | null) => {
-        if (!articleId || !highlightedArticleId) return false;
-        return articleId === highlightedArticleId;
+        if (!articleId || highlightedArticleSet.size === 0) return false;
+        return highlightedArticleSet.has(articleId);
       },
-      [highlightedArticleId]
+      [highlightedArticleSet]
     );
     const selectedSet = useMemo(
       () => new Set(selectionOrder),
@@ -523,10 +528,11 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                     />
                   );
                 })}
-              {highlightedArticleId &&
+              {highlightedArticleSet.size > 0 &&
                 blocks.map((block) => {
                   if (
-                    block.articleId !== highlightedArticleId ||
+                    !block.articleId ||
+                    !highlightedArticleSet.has(block.articleId) ||
                     block.articleOrder == null
                   ) {
                     return null;

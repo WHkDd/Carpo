@@ -5,6 +5,7 @@ import type { FileViewSlice } from "./fileViewSlice";
 import type { SelectionRef, SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { JobSlice } from "./jobSlice";
+import { assembleDocument } from "@/lib/format-doc";
 
 export interface Block {
   id: string;
@@ -42,6 +43,14 @@ export interface DocumentState {
   newspaperDate: string;
 }
 
+/** Page range used by the M6 whole-file OCR trigger. `null` means "use the
+ *  full page range of the current file" — equivalent to "全部". Stored per
+ *  file so switching files (and switching back) preserves a custom range. */
+export interface WholeFileRange {
+  from: number;
+  to: number;
+}
+
 export const EMPTY_PAGE_STATE: PageState = Object.freeze({
   blocks: Object.freeze([]) as unknown as Block[],
 }) as PageState;
@@ -63,6 +72,9 @@ function makeDocumentState(): DocumentState {
 export interface PageStateSlice {
   pageStates: Record<string, PageState>;
   documentStates: Record<string, DocumentState>;
+  /** fileId → user-chosen subrange for the whole-file OCR trigger. `null`
+   *  means full range (default). Cleared in `queueSlice.removeFile`. */
+  wholeFileRange: Record<string, WholeFileRange | null>;
   addBlock: (fileId: string, page: number, block: Block) => void;
   updateBlock: (
     fileId: string,
@@ -104,6 +116,10 @@ export interface PageStateSlice {
     fileId: string,
     patch: Partial<Pick<DocumentState, "newspaperName" | "newspaperDate">>
   ) => void;
+  /** Set a custom page range for whole-file OCR. Pass `null` to reset to
+   *  "full range". The caller is responsible for clamping/validating against
+   *  the current file's `pdfTotal` — this is a raw setter. */
+  setWholeFileRange: (fileId: string, range: WholeFileRange | null) => void;
   getPageState: (fileId: string, page: number) => PageState;
   getDocumentState: (fileId: string) => DocumentState;
 }
@@ -151,6 +167,7 @@ function removeEmptyArticles(doc: DocumentState): void {
 }
 
 type PageSelectionState = PageStateSlice & SelectionSlice;
+type PageJobState = PageStateSlice & JobSlice;
 
 function refMatches(ref: ArticleBlockRef | SelectionRef, target: ArticleBlockRef): boolean {
   return ref.page === target.page && ref.blockId === target.blockId;
@@ -225,6 +242,31 @@ function unassignBlockRefs(
   }
 }
 
+function rebuildDocumentResult(
+  state: PageJobState,
+  fileId: string,
+  doc: DocumentState
+): void {
+  const texts = state.articleOcrTexts[fileId] ?? {};
+  const ordered = doc.articles
+    .map((article) => ({
+      title: article.title,
+      text: texts[article.id] ?? "",
+    }))
+    .filter((article) => article.text.length > 0);
+
+  if (ordered.length === 0) {
+    delete state.documentResults[fileId];
+    return;
+  }
+
+  state.documentResults[fileId] = assembleDocument({
+    newspaperName: doc.newspaperName,
+    newspaperDate: doc.newspaperDate,
+    articles: ordered,
+  });
+}
+
 export const createPageStateSlice: StateCreator<
   QueueSlice &
     UiSlice &
@@ -239,6 +281,7 @@ export const createPageStateSlice: StateCreator<
 > = (set, get) => ({
   pageStates: {},
   documentStates: {},
+  wholeFileRange: {},
 
   addBlock: (fileId, page, block) =>
     set((state) => {
@@ -384,6 +427,13 @@ export const createPageStateSlice: StateCreator<
       doc.articles = doc.articles.filter((candidate) => candidate.id !== articleId);
       renumberArticles(doc);
       syncArticleBlocks(state, fileId, doc);
+      if (state.articleOcrTexts[fileId]) {
+        delete state.articleOcrTexts[fileId]![articleId];
+        if (Object.keys(state.articleOcrTexts[fileId]!).length === 0) {
+          delete state.articleOcrTexts[fileId];
+        }
+      }
+      rebuildDocumentResult(state, fileId, doc);
     }),
 
   updateArticle: (fileId, articleId, patch) =>
@@ -415,6 +465,8 @@ export const createPageStateSlice: StateCreator<
       doc.articles = [];
       state.documentStates[fileId] = doc;
       syncArticleBlocks(state, fileId, doc);
+      delete state.articleOcrTexts[fileId];
+      delete state.documentResults[fileId];
     }),
 
   unassignBlocksFromArticles: (fileId, page, blockIds) =>
@@ -433,6 +485,15 @@ export const createPageStateSlice: StateCreator<
     set((state) => {
       const doc = state.documentStates[fileId] ?? makeDocumentState();
       state.documentStates[fileId] = { ...doc, ...patch };
+    }),
+
+  setWholeFileRange: (fileId, range) =>
+    set((state) => {
+      if (range === null) {
+        delete state.wholeFileRange[fileId];
+      } else {
+        state.wholeFileRange[fileId] = { from: range.from, to: range.to };
+      }
     }),
 
   getPageState: (fileId, page) => {
