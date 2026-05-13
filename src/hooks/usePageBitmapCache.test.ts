@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPageBitmapCache,
   pageBitmapCacheKey,
-  pngBase64ToBlob,
   usePageBitmapCache,
 } from "./usePageBitmapCache";
 
@@ -90,14 +89,5 @@ describe("usePageBitmapCache", () => {
 
     expect(revokeObjectURL).toHaveBeenCalledWith(first.url);
     expect(revokeObjectURL).toHaveBeenCalledWith(second.url);
-  });
-
-  it("converts png base64 payloads to png blobs", async () => {
-    const blob = pngBase64ToBlob("iVBORw0KGgo=");
-
-    expect(blob.type).toBe("image/png");
-    expect(new Uint8Array(await new Response(blob).arrayBuffer()).slice(0, 4)).toEqual(
-      Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
-    );
   });
 });

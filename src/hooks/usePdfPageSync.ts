@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
+import { error as logError } from "@tauri-apps/plugin-log";
 import { renderPage } from "@/lib/tauri";
+import { appErrorMessage } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
-import { pngBase64ToBlob } from "./usePageBitmapCache";
 
 const PDF_PREVIEW_DPI = 150;
 
@@ -42,9 +43,6 @@ export function usePdfPageSync(): void {
     }
 
     if (cached) {
-      // Bump the token so any in-flight IPC for this file is invalidated by the
-      // synchronous cache hit — keeps stale responses from clobbering the page
-      // the user just snapped to.
       requestTokens.current.set(
         fileId,
         (requestTokens.current.get(fileId) ?? 0) + 1
@@ -54,7 +52,6 @@ export function usePdfPageSync(): void {
         {
           width: cached.width,
           height: cached.height,
-          png_base64: "",
           objectUrl: cached.url,
         },
         targetPage
@@ -68,7 +65,7 @@ export function usePdfPageSync(): void {
     let cancelled = false;
     void (async () => {
       try {
-        const payload = await renderPage({
+        const fetched = await renderPage({
           path,
           page: targetPage,
           dpi: PDF_PREVIEW_DPI,
@@ -77,19 +74,17 @@ export function usePdfPageSync(): void {
         if (cancelled) return;
         if (requestTokens.current.get(fileId) !== token) return;
 
-        const blob = pngBase64ToBlob(payload.png_base64);
         const entry = cache.set(fileId, targetPage, PDF_PREVIEW_DPI, {
-          blob,
-          width: payload.width,
-          height: payload.height,
+          blob: fetched.blob,
+          width: fetched.width,
+          height: fetched.height,
         });
 
         setFilePayload(
           fileId,
           {
-            width: payload.width,
-            height: payload.height,
-            png_base64: "",
+            width: fetched.width,
+            height: fetched.height,
             objectUrl: entry.url,
           },
           targetPage
@@ -97,7 +92,10 @@ export function usePdfPageSync(): void {
       } catch (err) {
         if (cancelled) return;
         if (requestTokens.current.get(fileId) !== token) return;
-        console.error("renderPage failed", { path, page: targetPage }, err);
+        const message = appErrorMessage(err);
+        void logError(
+          `renderPage failed: ${path} page=${targetPage}: ${message}`
+        ).catch(() => {});
         setStatusText(`渲染失败 · 第 ${targetPage} 页`);
       }
     })();

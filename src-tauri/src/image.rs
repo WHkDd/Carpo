@@ -1,7 +1,6 @@
-use std::{io::Cursor, path::Path};
+use std::path::Path;
 
-use ::image::{DynamicImage, ImageFormat};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use ::image::DynamicImage;
 
 use crate::error::{AppError, AppResult};
 
@@ -28,14 +27,6 @@ pub fn load_from_disk(path: &Path) -> AppResult<DynamicImage> {
     }
 
     ::image::open(path).map_err(|e| AppError::Image(format!("{}: {e}", path.display())))
-}
-
-pub fn to_png_base64(img: &DynamicImage) -> AppResult<String> {
-    let mut png = Cursor::new(Vec::new());
-    img.write_to(&mut png, ImageFormat::Png)
-        .map_err(|e| AppError::Image(format!("png encode failed: {e}")))?;
-
-    Ok(STANDARD.encode(png.into_inner()))
 }
 
 fn is_supported_extension(path: &Path) -> bool {

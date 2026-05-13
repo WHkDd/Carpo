@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { error as logError } from "@tauri-apps/plugin-log";
 import type { FileEntry, FileKind } from "@/lib/ipc-types";
+import { appErrorMessage } from "@/lib/ipc-types";
 import {
   getPdfInfo,
   listSupportedExtensions,
@@ -10,7 +12,6 @@ import {
 } from "@/lib/tauri";
 import { useStore } from "@/store";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
-import { pngBase64ToBlob } from "./usePageBitmapCache";
 
 const PDF_PREVIEW_DPI = 150;
 
@@ -75,7 +76,10 @@ export function useFileImport() {
           addFile(entry);
           okCount += 1;
         } catch (err) {
-          console.error(`${kind} import failed`, path, err);
+          const message = appErrorMessage(err);
+          void logError(`${kind} import failed: ${path}: ${message}`).catch(
+            () => {}
+          );
           setStatusText(`加载失败 · ${name}`);
         }
       }
@@ -85,14 +89,24 @@ export function useFileImport() {
         name: string,
         ext: string
       ): Promise<FileEntry> {
-        const payload = await loadRasterImage(path);
+        const fetched = await loadRasterImage(path);
+        const id = makeId();
+        const entry = cache.set(id, 1, PDF_PREVIEW_DPI, {
+          blob: fetched.blob,
+          width: fetched.width,
+          height: fetched.height,
+        });
         return {
-          id: makeId(),
+          id,
           path,
           name,
           ext,
           kind: "image",
-          payload,
+          payload: {
+            width: fetched.width,
+            height: fetched.height,
+            objectUrl: entry.url,
+          },
         };
       }
 
@@ -103,7 +117,7 @@ export function useFileImport() {
       ): Promise<FileEntry> {
         const info = await getPdfInfo(path);
         const pdfTotal = Math.max(1, info.page_count);
-        const ipc = await renderPage({
+        const fetched = await renderPage({
           path,
           page: 1,
           dpi: PDF_PREVIEW_DPI,
@@ -111,11 +125,10 @@ export function useFileImport() {
         });
 
         const id = makeId();
-        const blob = pngBase64ToBlob(ipc.png_base64);
         const entry = cache.set(id, 1, PDF_PREVIEW_DPI, {
-          blob,
-          width: ipc.width,
-          height: ipc.height,
+          blob: fetched.blob,
+          width: fetched.width,
+          height: fetched.height,
         });
 
         return {
@@ -125,9 +138,8 @@ export function useFileImport() {
           ext,
           kind: "pdf",
           payload: {
-            width: ipc.width,
-            height: ipc.height,
-            png_base64: "",
+            width: fetched.width,
+            height: fetched.height,
             objectUrl: entry.url,
           },
           pdfTotal,

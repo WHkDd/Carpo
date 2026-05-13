@@ -19,15 +19,19 @@ async fn ping() -> Result<&'static str, error::AppError> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("app".to_string()),
+                    }),
+                ])
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
@@ -45,7 +49,8 @@ pub fn run() {
             commands::ocr::start_whole_file_ocr,
             commands::ocr::list_provider_models,
             commands::ocr::cancel_job,
-            commands::ocr::list_jobs
+            commands::ocr::list_jobs,
+            commands::system::open_log_dir
         ])
         .setup(|app| {
             app.manage(state::AppState::new()?);

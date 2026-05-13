@@ -1,15 +1,9 @@
 use std::path::PathBuf;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{ipc::Response, State};
 
-use crate::{
-    commands::files::RenderedPagePayload,
-    error::AppResult,
-    pdf::{pdf_info_with, render_page_with},
-    state::AppState,
-};
+use crate::{error::AppResult, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct PdfInfo {
@@ -26,14 +20,18 @@ pub enum RenderPurpose {
 
 #[tauri::command]
 pub async fn get_pdf_info(path: String, state: State<'_, AppState>) -> AppResult<PdfInfo> {
-    let info = pdf_info_with(state.inner().pdfium(), &PathBuf::from(path))?;
-
+    let info = state.pdf.info(PathBuf::from(path)).await?;
     Ok(PdfInfo {
         page_count: info.page_count,
         title: info.title,
     })
 }
 
+/// Returns the page bitmap as raw binary: 4 bytes width (LE u32) + 4 bytes
+/// height (LE u32) + PNG bytes. The frontend wraps the PNG slice in a Blob and
+/// hands the resulting object URL to Konva. This avoids the ~33% base64
+/// overhead and the JSON serialization of multi-MB strings that used to wedge
+/// the IPC bridge on large pages.
 #[tauri::command]
 pub async fn render_page(
     path: String,
@@ -41,14 +39,15 @@ pub async fn render_page(
     dpi: u32,
     purpose: RenderPurpose,
     state: State<'_, AppState>,
-) -> AppResult<RenderedPagePayload> {
+) -> AppResult<Response> {
     log::info!("rendering PDF page {page} at {dpi} dpi for {purpose:?}");
-
-    let rendered = render_page_with(state.inner().pdfium(), &PathBuf::from(path), page, dpi)?;
-
-    Ok(RenderedPagePayload {
-        width: rendered.width,
-        height: rendered.height,
-        png_base64: STANDARD.encode(rendered.png_bytes),
-    })
+    let rendered = state
+        .pdf
+        .render_png(PathBuf::from(path), page, dpi)
+        .await?;
+    let mut out = Vec::with_capacity(8 + rendered.png_bytes.len());
+    out.extend_from_slice(&rendered.width.to_le_bytes());
+    out.extend_from_slice(&rendered.height.to_le_bytes());
+    out.extend_from_slice(&rendered.png_bytes);
+    Ok(Response::new(out))
 }

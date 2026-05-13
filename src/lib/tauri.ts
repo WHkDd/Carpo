@@ -6,7 +6,6 @@ import type {
   NonSecretSettings,
   PdfInfo,
   RenderPagePayload,
-  RenderedPagePayload,
   SecretKey,
   WholeFileOcrRequest,
 } from "./ipc-types";
@@ -21,10 +20,33 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
-export async function loadRasterImage(
-  path: string
-): Promise<RenderedPagePayload> {
-  return invoke<RenderedPagePayload>("load_raster_image", { path });
+export interface FetchedBitmap {
+  width: number;
+  height: number;
+  blob: Blob;
+}
+
+/** Decodes the binary wire format used by `render_page` and
+ *  `load_raster_image`: 4 bytes width (LE u32) + 4 bytes height (LE u32) +
+ *  PNG bytes. Returns a Blob the caller can pass to `URL.createObjectURL`. */
+function unpackPageBytes(buffer: ArrayBuffer): FetchedBitmap {
+  if (buffer.byteLength < 8) {
+    throw new Error("renderPage response too short");
+  }
+  const view = new DataView(buffer);
+  const width = view.getUint32(0, true);
+  const height = view.getUint32(4, true);
+  const pngBytes = new Uint8Array(buffer, 8);
+  return {
+    width,
+    height,
+    blob: new Blob([pngBytes], { type: "image/png" }),
+  };
+}
+
+export async function loadRasterImage(path: string): Promise<FetchedBitmap> {
+  const buffer = await invoke<ArrayBuffer>("load_raster_image", { path });
+  return unpackPageBytes(buffer);
 }
 
 export async function listSupportedExtensions(): Promise<string[]> {
@@ -37,13 +59,14 @@ export async function getPdfInfo(path: string): Promise<PdfInfo> {
 
 export async function renderPage(
   payload: RenderPagePayload
-): Promise<RenderedPagePayload> {
-  return invoke<RenderedPagePayload>("render_page", {
+): Promise<FetchedBitmap> {
+  const buffer = await invoke<ArrayBuffer>("render_page", {
     path: payload.path,
     page: payload.page,
     dpi: payload.dpi,
     purpose: payload.purpose,
   });
+  return unpackPageBytes(buffer);
 }
 
 export async function getSettings(): Promise<NonSecretSettings> {
@@ -79,7 +102,7 @@ export async function startWholeFileOcr(
 }
 
 export async function listProviderModels(opts?: {
-  settings?: import("./ipc-types").NonSecretSettings;
+  settings?: NonSecretSettings;
   secret?: string;
 }): Promise<string[]> {
   return invoke<string[]>("list_provider_models", {
@@ -94,4 +117,8 @@ export async function cancelJob(jobId: string): Promise<boolean> {
 
 export async function listJobs(): Promise<JobListEntry[]> {
   return invoke<JobListEntry[]>("list_jobs");
+}
+
+export async function openLogDir(): Promise<string> {
+  return invoke<string>("open_log_dir");
 }
