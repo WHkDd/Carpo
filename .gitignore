@@ -22,6 +22,7 @@ src-tauri/pdfium/windows-x64/
 .vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
+.sc/
 *.swp
 
 # Test / coverage

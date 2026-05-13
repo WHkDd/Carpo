@@ -27,5 +27,23 @@ export default defineConfig({
         : "safari13",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Konva + react-konva is ~150 KB and only matters once the canvas
+          // mounts; keep it out of the entry chunk so the toolbar paints fast.
+          "vendor-konva": ["konva", "react-konva", "use-image"],
+          // ReactMarkdown + remark/rehype + KaTeX is ~250 KB and only renders
+          // once the right-rail OCR text view is open.
+          "vendor-markdown": [
+            "react-markdown",
+            "remark-gfm",
+            "remark-math",
+            "rehype-katex",
+            "katex",
+          ],
+        },
+      },
+    },
   },
 });
