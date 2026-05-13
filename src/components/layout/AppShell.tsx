@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
@@ -8,6 +9,7 @@ import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { assembleDocument } from "@/lib/format-doc";
 import { getSettings } from "@/lib/tauri";
 import {
+  appErrorMessage,
   EVENTS,
   type GroupedJobDone,
   type JobDone,
@@ -65,7 +67,8 @@ function AppShellInner() {
         const s = await getSettings();
         if (!cancelled) setSettings(s);
       } catch (e) {
-        console.warn("settings hydrate failed", e);
+        const message = appErrorMessage(e);
+        void logWarn(`settings hydrate failed: ${message}`).catch(() => {});
       }
     })();
     return () => {
@@ -233,22 +236,30 @@ function AppShellInner() {
   return (
     <>
       <main
-        className="grid h-screen min-w-[1100px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background text-foreground"
+        className="grid h-screen min-w-[1100px] overflow-hidden bg-background text-foreground"
         style={{
           gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
+          gridTemplateRows: "44px minmax(0,1fr)",
         }}
       >
+        {/* Row 1: title bar — traffic lights (system default) on the left,
+            toolbar centered above the canvas */}
+        <div className="bg-surface" data-tauri-drag-region aria-hidden />
+        <div
+          className="relative z-20 flex items-center justify-center bg-surface px-3"
+          data-tauri-drag-region
+        >
+          <Toolbar />
+        </div>
+        <div className="bg-surface" data-tauri-drag-region aria-hidden />
+
+        {/* Row 2: body */}
         <QueuePanel onOpenSettings={() => setSettingsOpen(true)} />
-        <section className="grid min-h-0 min-w-0 grid-rows-[28px_minmax(0,1fr)] overflow-hidden">
-          <div className="relative z-20 flex items-center justify-center px-3">
-            <Toolbar />
-          </div>
-          <div className="relative z-0 min-h-0 overflow-hidden p-2">
-            <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
-              <ImageCanvas ref={canvasRef} />
-              <ProgressPill />
-              <StatusBar canvasRef={canvasRef} />
-            </div>
+        <section className="min-h-0 min-w-0 overflow-hidden px-2 pt-2 pb-2">
+          <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
+            <ImageCanvas ref={canvasRef} />
+            <ProgressPill />
+            <StatusBar canvasRef={canvasRef} />
           </div>
         </section>
         <StructureRail />

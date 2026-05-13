@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useStore } from "@/store";
 import { cancelJob as ipcCancelJob } from "@/lib/tauri";
+import { appErrorMessage } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
-import type { ActiveJob, JobStatus } from "@/store/jobSlice";
+import type { JobKind } from "@/lib/ipc-types";
+import type { JobStatus } from "@/store/jobSlice";
 
 /** Top-left canvas pill that fuses the page navigator and the OCR progress
  *  indicator into a single capsule:
@@ -30,8 +32,8 @@ function deriveHeadline(status: JobStatus, label: string): string {
   return "完成";
 }
 
-function deriveDetail(job: ActiveJob): string {
-  const raw = job.label.trim();
+function deriveDetail(kind: JobKind, label: string): string {
+  const raw = label.trim();
 
   if (raw.startsWith("准备中")) {
     const match = raw.match(/共\s+(\d+)\s+(篇|页)/);
@@ -39,7 +41,7 @@ function deriveDetail(job: ActiveJob): string {
   }
 
   if (raw.startsWith("页面已就绪")) {
-    if (job.kind === "grouped_ocr") {
+    if (kind === "grouped_ocr") {
       const match = raw.match(/共\s+(\d+)\s+块待识别/);
       return match ? `共 ${match[1]} 块` : "";
     }
@@ -49,7 +51,7 @@ function deriveDetail(job: ActiveJob): string {
 
   const stripped = raw.replace(/^(识别中|完成)\s*·\s*/, "").trim();
 
-  if (job.kind === "grouped_ocr") {
+  if (kind === "grouped_ocr") {
     const articleMatch = stripped.match(/^(报道\d+)\s+第\d+\/\d+块$/);
     if (articleMatch) return articleMatch[1] ?? "";
   } else {
@@ -61,54 +63,70 @@ function deriveDetail(job: ActiveJob): string {
 }
 
 export function ProgressPill() {
-  const file = useStore((s) =>
-    s.currentFileId ? s.files.find((f) => f.id === s.currentFileId) ?? null : null
-  );
+  // Page-nav slot: subscribe only to the navigation fields of the current file.
+  const isPdf = useStore((s) => {
+    if (!s.currentFileId) return false;
+    const f = s.files.find((entry) => entry.id === s.currentFileId);
+    return f?.kind === "pdf";
+  });
+  const totalPages = useStore((s) => {
+    if (!s.currentFileId) return 1;
+    return (
+      s.files.find((f) => f.id === s.currentFileId)?.pdfTotal ?? 1
+    );
+  });
+  const currentPage = useStore((s) => {
+    if (!s.currentFileId) return 1;
+    return (
+      s.files.find((f) => f.id === s.currentFileId)?.currentPage ?? 1
+    );
+  });
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
-  const activeJob = useStore((s) => s.activeJob);
+
+  // OCR slot: subscribe to each primitive field separately so React only
+  // re-renders on actual value changes. The progress dispatcher rebuilds the
+  // `activeJob` object on every event (~1/s), but `done` / `label` etc are
+  // primitives — a re-subscribe per field collapses no-op rerenders.
+  const jobId = useStore((s) => s.activeJob?.jobId ?? null);
+  const status = useStore((s) => s.activeJob?.status ?? null);
+  const kind = useStore((s) => s.activeJob?.kind ?? null);
+  const total = useStore((s) => s.activeJob?.total ?? 0);
+  const done = useStore((s) => s.activeJob?.done ?? 0);
+  const label = useStore((s) => s.activeJob?.label ?? "");
+  const errorMessage = useStore((s) => s.activeJob?.error ?? null);
   const markCancelling = useStore((s) => s.markCancelling);
   const clearActiveJob = useStore((s) => s.clearActiveJob);
 
   const [cancelError, setCancelError] = useState<string | null>(null);
 
-  // Reset transient cancel-error banner whenever the job slot turns over.
   useEffect(() => {
-    if (!activeJob) setCancelError(null);
-  }, [activeJob?.jobId]);
+    if (!jobId) setCancelError(null);
+  }, [jobId]);
 
-  // Auto-dismiss a successfully finished job after a short read window.
-  // Cancelled / errored jobs persist so the user can read the message.
   useEffect(() => {
-    if (activeJob?.status !== "done") return;
+    if (status !== "done") return;
     const id = window.setTimeout(() => clearActiveJob(), 3000);
     return () => window.clearTimeout(id);
-  }, [activeJob?.jobId, activeJob?.status, clearActiveJob]);
+  }, [jobId, status, clearActiveJob]);
 
-  const isPdf = file?.kind === "pdf";
-  const totalPages = file?.pdfTotal ?? 1;
-  const currentPage = file?.currentPage ?? 1;
-  const showPageNav = !!file && isPdf && totalPages > 1;
-
-  const showOcr = activeJob !== null;
+  const showPageNav = isPdf && totalPages > 1;
+  const showOcr = jobId !== null;
   if (!showPageNav && !showOcr) return null;
 
-  const status = activeJob?.status;
   const inFlight = status === "running" || status === "cancelling";
-  const total = activeJob?.total ?? 0;
-  const done = activeJob?.done ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
-  const headline = activeJob ? deriveHeadline(activeJob.status, activeJob.label) : "";
-  const detail = activeJob ? deriveDetail(activeJob) : "";
+  const headline = status ? deriveHeadline(status, label) : "";
+  const detail = kind ? deriveDetail(kind, label) : "";
 
   async function onCancel() {
-    if (!activeJob || activeJob.status !== "running") return;
+    if (!jobId || status !== "running") return;
     markCancelling();
     try {
-      await ipcCancelJob(activeJob.jobId);
+      await ipcCancelJob(jobId);
     } catch (e) {
-      setCancelError(e instanceof Error ? e.message : String(e));
+      setCancelError(appErrorMessage(e));
     }
   }
 
@@ -162,7 +180,7 @@ export function ProgressPill() {
           <div className="my-1.5 w-px self-stretch bg-border/60" aria-hidden />
         )}
 
-        {showOcr && activeJob && (
+        {showOcr && (
           <div className="flex min-w-0 max-w-[420px] items-center gap-2 px-2">
             <span
               className={cn(
@@ -179,7 +197,7 @@ export function ProgressPill() {
             {detail && (
               <span
                 className="min-w-0 flex-1 truncate text-foreground-muted"
-                title={activeJob.label}
+                title={label}
               >
                 {detail}
               </span>
@@ -236,9 +254,9 @@ export function ProgressPill() {
         </div>
       )}
 
-      {(activeJob?.status === "error" && activeJob.error) || cancelError ? (
+      {(status === "error" && errorMessage) || cancelError ? (
         <p className="px-2 pb-1 text-[10px] text-destructive" role="alert">
-          {cancelError ? `取消失败：${cancelError}` : activeJob?.error}
+          {cancelError ? `取消失败：${cancelError}` : errorMessage}
         </p>
       ) : null}
     </div>

@@ -14,13 +14,17 @@ function easeOutQuart(t: number, _b: number, c: number, d: number): number {
   return -c * (t * t * t * t - 1);
 }
 
+function setFill(node: Node, target: string): void {
+  (node as unknown as { fill: (c: string) => void }).fill(target);
+}
+
 /** Animate node.fill to target as a 120 ms ease-out-quart tween. */
 export function tweenFill(node: Node, target: string): void {
   const old = activeTweens.get(node);
   if (old) old.destroy();
 
-  if (prefersReducedMotion()) {
-    (node as unknown as { fill: (c: string) => void }).fill(target);
+  if (prefersReducedMotion() || target.startsWith("hsl(")) {
+    setFill(node, target);
     return;
   }
 

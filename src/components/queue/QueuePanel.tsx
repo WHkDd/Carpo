@@ -18,16 +18,8 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
 
   if (queueCollapsed) {
     return (
-      <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface pb-2">
-        <div className="flex items-center px-3.5" aria-hidden>
-          <div className="flex gap-2">
-            <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ff5f57]" />
-            <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ffbd2e]" />
-            <span className="h-3 w-3 rounded-full border border-black/10 bg-[#28c840]" />
-          </div>
-        </div>
-
-        <div className="min-h-0 overflow-hidden p-2">
+      <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-surface pb-2">
+        <div className="min-h-0 overflow-hidden px-2 pb-2">
           <div className="mb-2 flex h-7 items-center justify-center gap-1">
             <button
               type="button"
@@ -79,15 +71,7 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
   }
 
   return (
-    <aside className="grid min-h-0 grid-rows-[28px_minmax(0,1fr)_auto] bg-surface pb-2">
-      <div className="flex items-center px-3.5">
-        <div className="flex gap-2" aria-hidden>
-          <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ff5f57]" />
-          <span className="h-3 w-3 rounded-full border border-black/10 bg-[#ffbd2e]" />
-          <span className="h-3 w-3 rounded-full border border-black/10 bg-[#28c840]" />
-        </div>
-      </div>
-
+    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-surface pb-2">
       <div className="min-h-0 overflow-hidden px-2 pb-2">
         <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5 text-[11px] font-semibold text-foreground-subtle">
           <div className="flex min-w-0 items-center gap-2">

@@ -83,6 +83,9 @@ function BlockRectImpl(props: BlockRectProps) {
       fill={baseFill}
       stroke={stroke}
       strokeWidth={(isHighlighted || isSelected || isEditing ? 2 : 1) / scale}
+      perfectDrawEnabled={false}
+      shadowForStrokeEnabled={false}
+      hitStrokeWidth={Math.max(1, 12 / scale)}
       listening={interactive}
       draggable={interactive}
       onMouseDown={onMouseDown}

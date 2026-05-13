@@ -112,12 +112,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       return map;
     }, [blocks]);
 
-    const imageSrc = useMemo(() => {
-      if (!payload) return "";
-      if (payload.objectUrl) return payload.objectUrl;
-      if (payload.png_base64) return `data:image/png;base64,${payload.png_base64}`;
-      return "";
-    }, [payload]);
+    const imageSrc = payload?.objectUrl ?? "";
     const [image, status] = useImage(imageSrc);
 
     const { pan, scale, onWheel, onDragEnd, controller } = usePanZoom({
@@ -478,19 +473,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               {isReady && <KImage image={image} />}
             </Layer>
             <Layer>
-              {rubberBand && (
-                <Rect
-                  x={rubberBand.x}
-                  y={rubberBand.y}
-                  width={rubberBand.w}
-                  height={rubberBand.h}
-                  stroke="#3b82f6"
-                  strokeWidth={1 / scale}
-                  dash={[6 / scale, 4 / scale]}
-                  fill="rgba(59,130,246,0.08)"
-                  listening={false}
-                />
-              )}
               {blocks.map((block) => (
                 <BlockRect
                   key={block.id}
@@ -512,6 +494,40 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   onDragEnd={handleBlockDragEnd}
                 />
               ))}
+              {manualDrawMode && (
+                <Transformer
+                  ref={transformerRef}
+                  rotateEnabled={false}
+                  keepRatio={false}
+                  flipEnabled={false}
+                  borderStroke="#2563eb"
+                  anchorFill="#2563eb"
+                  anchorStroke="#ffffff"
+                  anchorSize={8}
+                  boundBoxFunc={(oldBox, newBox) => {
+                    const MIN = 16;
+                    if (Math.abs(newBox.width) < MIN || Math.abs(newBox.height) < MIN) {
+                      return oldBox;
+                    }
+                    return newBox;
+                  }}
+                />
+              )}
+            </Layer>
+            <Layer listening={false}>
+              {rubberBand && (
+                <Rect
+                  x={rubberBand.x}
+                  y={rubberBand.y}
+                  width={rubberBand.w}
+                  height={rubberBand.h}
+                  stroke="#3b82f6"
+                  strokeWidth={1 / scale}
+                  dash={[6 / scale, 4 / scale]}
+                  fill="rgba(59,130,246,0.08)"
+                  listening={false}
+                />
+              )}
               {manualDrawMode &&
                 selectionOrder.map((blockId) => {
                   const block = blockById.get(blockId);
@@ -547,25 +563,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                     />
                   );
                 })}
-              {manualDrawMode && (
-                <Transformer
-                  ref={transformerRef}
-                  rotateEnabled={false}
-                  keepRatio={false}
-                  flipEnabled={false}
-                  borderStroke="#2563eb"
-                  anchorFill="#2563eb"
-                  anchorStroke="#ffffff"
-                  anchorSize={8}
-                  boundBoxFunc={(oldBox, newBox) => {
-                    const MIN = 16;
-                    if (Math.abs(newBox.width) < MIN || Math.abs(newBox.height) < MIN) {
-                      return oldBox;
-                    }
-                    return newBox;
-                  }}
-                />
-              )}
             </Layer>
           </Stage>
         )}
