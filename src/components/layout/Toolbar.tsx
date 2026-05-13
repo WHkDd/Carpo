@@ -20,18 +20,21 @@ export function Toolbar() {
   const groupedActive = recognitionMode === "grouped";
 
   return (
-    <div className="flex h-6 items-center gap-2 rounded-md border border-border/60 bg-background/80 px-2.5 shadow-sm backdrop-blur-sm">
-      <h1 className="max-w-[240px] truncate text-[12px] font-semibold leading-none text-foreground">
+    <div className="flex min-w-0 items-center gap-2" data-tauri-drag-region>
+      <h1
+        className="max-w-[360px] truncate py-0.5 text-[13px] font-semibold leading-tight text-foreground"
+        data-tauri-drag-region
+      >
         {currentFile.name}
       </h1>
 
-      <div className="h-3 w-px bg-border" />
+      <div className="h-3 w-px bg-border" aria-hidden />
 
       {groupedActive && (
         <button
           type="button"
           onClick={toggleDrawMode}
-          className={`flex h-5 items-center gap-1 rounded px-1.5 text-[11px] font-medium leading-none transition-colors ${
+          className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
             manualDrawMode
               ? "bg-primary-muted text-foreground"
               : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
@@ -54,7 +57,7 @@ export function Toolbar() {
           }
         }}
         title={groupedActive ? "进入全文识别模式" : "返回框选模式"}
-        className={`flex h-5 items-center gap-1 rounded px-1.5 text-[11px] font-medium leading-none transition-colors ${
+        className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
           groupedActive
             ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
             : "bg-primary-muted text-foreground"
@@ -66,7 +69,7 @@ export function Toolbar() {
 
       {recognitionMode === "whole_file" && triggerState.showRange && (
         <>
-          <div className="h-3 w-px bg-border" />
+          <div className="h-3 w-px bg-border" aria-hidden />
           <PageRangeChip
             totalPages={triggerState.totalPages}
             range={triggerState.range}
@@ -149,7 +152,7 @@ function PageRangeChip({
         type="button"
         onClick={() => setOpen((v) => !v)}
         title="点击修改页码范围"
-        className={`flex h-5 items-center gap-1 rounded px-1.5 text-[11px] font-mono leading-none tabular-nums transition-colors ${
+        className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-mono leading-none tabular-nums transition-colors ${
           isFull
             ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
             : "bg-primary-muted text-foreground"

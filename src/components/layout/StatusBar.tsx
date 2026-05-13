@@ -108,6 +108,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       <DropMenu
         ariaLabel="OCR 服务商"
         triggerLabel={PROVIDER_LABEL[provider]}
+        triggerHint={!secretPresent[provider] ? "未配置" : undefined}
         triggerClassName="font-semibold text-foreground"
         items={PROVIDER_ORDER.map((p) => ({
           key: p,
@@ -190,6 +191,7 @@ interface DropMenuItem<T extends string> {
 interface DropMenuProps<T extends string> {
   ariaLabel: string;
   triggerLabel: string;
+  triggerHint?: string;
   triggerClassName?: string;
   items: DropMenuItem<T>[];
   onSelect: (key: T) => void;
@@ -198,6 +200,7 @@ interface DropMenuProps<T extends string> {
 function DropMenu<T extends string>({
   ariaLabel,
   triggerLabel,
+  triggerHint,
   triggerClassName = "",
   items,
   onSelect,
@@ -234,6 +237,11 @@ function DropMenu<T extends string>({
         className={`flex h-6 items-center gap-0.5 rounded px-1 transition-colors hover:bg-surface-2 ${triggerClassName}`}
       >
         <span>{triggerLabel}</span>
+        {triggerHint && (
+          <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px] font-normal text-destructive">
+            {triggerHint}
+          </span>
+        )}
         <ChevronDown
           className="h-3 w-3 text-foreground-subtle"
           strokeWidth={1.8}

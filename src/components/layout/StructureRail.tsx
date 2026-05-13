@@ -78,8 +78,6 @@ function GroupedRail() {
 
   return (
     <aside ref={asideRef} className="flex min-h-0 flex-col bg-surface">
-      <div className="h-7" aria-hidden />
-
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-px pb-2">
         <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5">
           <span className="text-[13px] font-semibold text-foreground">
@@ -165,8 +163,6 @@ function WholeFileRail() {
 
   return (
     <aside className="flex min-h-0 flex-col bg-surface">
-      <div className="h-7" aria-hidden />
-
       <div className="flex h-8 shrink-0 items-center justify-between gap-2 px-3">
         <span className="text-[13px] font-semibold text-foreground">
           全文识别

@@ -19,7 +19,13 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
 import { assembleDocument } from "@/lib/format-doc";
+import { appErrorMessage } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
+
+const SAVE_FILTERS = [
+  { name: "Markdown", extensions: ["md"] },
+  { name: "Text", extensions: ["txt"] },
+];
 
 function buildAllPagesText(pageTexts: Record<number, string>): string {
   return Object.entries(pageTexts)
@@ -76,28 +82,44 @@ function useBulkOcrText() {
     docState.newspaperDate,
   ]);
 
+  // Count *units* (articles in grouped mode, pages in whole-file mode) that
+  // contributed non-empty OCR text. Drives the "已复制 N 篇 / N 页" flash so
+  // the user has a quantitative confirmation that everything was captured.
+  const bulkCount = useMemo(() => {
+    if (!fileId) return 0;
+    if (recognitionMode === "whole_file") {
+      const pages = pageOcrTexts[fileId] ?? {};
+      return Object.values(pages).filter((t) => t && t.length > 0).length;
+    }
+    const texts = articleOcrTexts[fileId] ?? {};
+    return articles.filter((a) => (texts[a.id] ?? "").length > 0).length;
+  }, [fileId, recognitionMode, pageOcrTexts, articleOcrTexts, articles]);
+
   return {
     allText,
     fileLabel: fileEntry?.name ?? "(未命名)",
     hasFile: fileId !== null,
     recognitionMode,
+    bulkCount,
   };
 }
 
 export function OcrBulkActions() {
-  const { allText, fileLabel, hasFile, recognitionMode } = useBulkOcrText();
+  const { allText, fileLabel, hasFile, recognitionMode, bulkCount } =
+    useBulkOcrText();
   const [copied, setCopied] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const hasAllText = allText.length > 0;
+  const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
 
   const onCopyAll = useCallback(async () => {
     if (!allText) return;
     try {
       await writeText(allText);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), 2000);
     } catch (e) {
-      setSaveError(`复制失败：${e instanceof Error ? e.message : String(e)}`);
+      setSaveError(`复制失败：${appErrorMessage(e)}`);
     }
   }, [allText]);
 
@@ -108,29 +130,31 @@ export function OcrBulkActions() {
       const stem = fileLabel.replace(/\.[^.]+$/, "");
       const defaultName =
         recognitionMode === "whole_file"
-          ? `${stem}_全文按页.txt`
-          : `${stem}_全部报道.txt`;
+          ? `${stem}_全文按页.md`
+          : `${stem}_全部报道.md`;
       const target = await save({
         defaultPath: defaultName,
-        filters: [{ name: "文本", extensions: ["txt", "md"] }],
+        filters: SAVE_FILTERS,
       });
       if (!target) return;
       await writeTextFile(target, allText);
     } catch (e) {
-      setSaveError(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
   }, [allText, fileLabel, recognitionMode]);
 
   if (!hasFile) return null;
 
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="flex shrink-0 items-center gap-1.5">
       {copied && (
-        <Check
-          className="h-3 w-3 text-foreground-muted"
-          strokeWidth={1.9}
-          aria-label="已复制"
-        />
+        <span
+          className="flex items-center gap-1 text-[10px] text-foreground-muted"
+          role="status"
+        >
+          <Check className="h-3 w-3" strokeWidth={1.9} aria-hidden />
+          已复制 {bulkCount} {unitLabel}
+        </span>
       )}
       {saveError && (
         <span className="max-w-24 truncate text-[10px] text-destructive">
@@ -211,13 +235,29 @@ export function OcrTextPanel() {
   const [draft, setDraft] = useState(text);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Tracks whether the user has typed since the last logical-position reset.
+  // Without this, an OCR write-back to articleOcrTexts would overwrite the
+  // user's in-flight edits in the textarea below.
+  const dirtyRef = useRef(false);
   const [copied, setCopied] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
 
+  // Reset draft whenever the *logical* position changes (file / mode / pinned
+  // article / page). Text-content changes do NOT reset — see the next effect.
   useEffect(() => {
     setDraft(text);
-  }, [text, fileId, recognitionMode, pinnedArticle?.article.id, currentPage]);
+    dirtyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileId, recognitionMode, pinnedArticle?.article.id, currentPage]);
+
+  // OCR write-back: if the user hasn't edited since the last reset, follow the
+  // new text. If they're mid-edit, keep their draft.
+  useEffect(() => {
+    if (!dirtyRef.current) {
+      setDraft(text);
+    }
+  }, [text]);
 
   const onCopy = useCallback(async () => {
     try {
@@ -225,7 +265,7 @@ export function OcrTextPanel() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
-      setSaveError(`复制失败：${e instanceof Error ? e.message : String(e)}`);
+      setSaveError(`复制失败：${appErrorMessage(e)}`);
     }
   }, []);
 
@@ -236,19 +276,19 @@ export function OcrTextPanel() {
       const defaultName =
         recognitionMode === "whole_file"
           ? hasMultiplePages
-            ? `${stem}_第${currentPage}页.txt`
-            : `${stem}.txt`
+            ? `${stem}_第${currentPage}页.md`
+            : `${stem}.md`
           : pinnedArticle
-            ? `${stem}_${pinnedArticle.article.title || `报道${pinnedArticle.article.num}`}.txt`
-            : `${stem}.txt`;
+            ? `${stem}_${pinnedArticle.article.title || `报道${pinnedArticle.article.num}`}.md`
+            : `${stem}.md`;
       const target = await save({
         defaultPath: defaultName,
-        filters: [{ name: "文本", extensions: ["txt", "md"] }],
+        filters: SAVE_FILTERS,
       });
       if (!target) return;
       await writeTextFile(target, draftRef.current);
     } catch (e) {
-      setSaveError(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
   }, [fileLabel, recognitionMode, pinnedArticle, hasMultiplePages, currentPage]);
 
@@ -361,7 +401,10 @@ export function OcrTextPanel() {
         editMode ? (
           <textarea
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              dirtyRef.current = true;
+              setDraft(e.target.value);
+            }}
             spellCheck={false}
             className="min-h-0 flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-foreground outline-none focus:border-border-strong"
           />
@@ -376,7 +419,10 @@ export function OcrTextPanel() {
           </div>
         )
       ) : (
-        <div className="min-h-0 flex-1 rounded-md border border-dashed border-border/50" />
+        <div
+          className="min-h-0 flex-1 rounded-md border border-dashed border-border/50 bg-background/35"
+          aria-hidden
+        />
       )}
     </div>
   );
