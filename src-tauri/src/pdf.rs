@@ -1,15 +1,25 @@
+//! PDFium integration.
+//!
+//! `Pdfium` is not `Send` even with the `thread_safe` feature, so we don't try
+//! to share it across async tasks. Instead, [`PdfWorker`] owns the `Pdfium`
+//! handle in a dedicated OS thread and exposes async methods that send tasks
+//! to it via a tokio mpsc channel. Callers (`#[tauri::command]` functions and
+//! the OCR job runners) get fully async-friendly behaviour without blocking
+//! tokio worker threads on PDF rendering.
+
 use std::{
     env,
     io::Cursor,
     path::{Path, PathBuf},
 };
 
-use ::image::{GenericImageView, ImageFormat};
+use ::image::{DynamicImage, GenericImageView, ImageFormat};
 use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PdfInfoData {
     pub page_count: u32,
     pub title: Option<String>,
@@ -23,8 +33,6 @@ pub struct RenderedPage {
 }
 
 pub fn init_pdfium() -> AppResult<Pdfium> {
-    // QUESTION(m2): bblanchon latest is chromium/7825 as of 2026-05-08,
-    // but pdfium-render 0.8.37 only exposes non-future bindings through 7543.
     let candidates = pdfium_library_candidates()?;
     let mut errors = Vec::new();
 
@@ -52,12 +60,6 @@ pub fn init_pdfium() -> AppResult<Pdfium> {
     )))
 }
 
-#[allow(dead_code)]
-pub fn page_count(path: &Path) -> AppResult<u32> {
-    let pdfium = init_pdfium()?;
-    page_count_with(&pdfium, path)
-}
-
 pub fn pdf_info_with(pdfium: &Pdfium, path: &Path) -> AppResult<PdfInfoData> {
     let document = load_document(pdfium, path)?;
     let title = document
@@ -72,23 +74,37 @@ pub fn pdf_info_with(pdfium: &Pdfium, path: &Path) -> AppResult<PdfInfoData> {
     })
 }
 
-#[allow(dead_code)]
-pub fn page_count_with(pdfium: &Pdfium, path: &Path) -> AppResult<u32> {
-    Ok(pdf_info_with(pdfium, path)?.page_count)
-}
-
-#[allow(dead_code)]
-pub fn render_page(path: &Path, page: u32, dpi: u32) -> AppResult<RenderedPage> {
-    let pdfium = init_pdfium()?;
-    render_page_with(&pdfium, path, page, dpi)
-}
-
 pub fn render_page_with(
     pdfium: &Pdfium,
     path: &Path,
     page: u32,
     dpi: u32,
 ) -> AppResult<RenderedPage> {
+    let image = render_page_image_with(pdfium, path, page, dpi)?;
+    let (width, height) = image.dimensions();
+
+    let mut png = Cursor::new(Vec::new());
+    image
+        .write_to(&mut png, ImageFormat::Png)
+        .map_err(|err| AppError::Image(format!("png encode failed: {err}")))?;
+
+    Ok(RenderedPage {
+        width,
+        height,
+        png_bytes: png.into_inner(),
+    })
+}
+
+/// Renders a page into an in-memory `DynamicImage` without the PNG
+/// encode/decode round-trip. Used by the OCR job runners — they crop and
+/// re-encode inside their own concurrency loop, so handing them a decoded
+/// bitmap saves one full PNG round-trip per page.
+pub fn render_page_image_with(
+    pdfium: &Pdfium,
+    path: &Path,
+    page: u32,
+    dpi: u32,
+) -> AppResult<DynamicImage> {
     if dpi == 0 {
         return Err(AppError::Pdf("dpi must be greater than 0".to_string()));
     }
@@ -108,19 +124,7 @@ pub fn render_page_with(
     let bitmap = page
         .render_with_config(&PdfRenderConfig::new().scale_page_by_factor(dpi as f32 / 72.0))
         .map_err(map_pdfium_error)?;
-    let image = bitmap.as_image();
-    let (width, height) = image.dimensions();
-
-    let mut png = Cursor::new(Vec::new());
-    image
-        .write_to(&mut png, ImageFormat::Png)
-        .map_err(|err| AppError::Image(format!("png encode failed: {err}")))?;
-
-    Ok(RenderedPage {
-        width,
-        height,
-        png_bytes: png.into_inner(),
-    })
+    Ok(bitmap.as_image())
 }
 
 fn load_document<'a>(
@@ -156,6 +160,7 @@ fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
                 }
                 candidates.push(exe_dir.join("libpdfium.dylib"));
             } else if cfg!(target_os = "windows") {
+                candidates.push(exe_dir.join("resources").join("pdfium.dll"));
                 candidates.push(exe_dir.join("pdfium.dll"));
             }
         }
@@ -193,6 +198,150 @@ fn map_pdfium_error(err: PdfiumError) -> AppError {
     AppError::Pdf(err.to_string())
 }
 
+// --- PdfWorker --------------------------------------------------------------
+
+/// Tasks the PdfWorker thread can perform. Each variant carries a oneshot
+/// channel back to the caller so any error path reaches the original
+/// async caller without unwinding through the worker thread.
+enum PdfTask {
+    Info {
+        path: PathBuf,
+        resp: oneshot::Sender<AppResult<PdfInfoData>>,
+    },
+    RenderPng {
+        path: PathBuf,
+        page: u32,
+        dpi: u32,
+        resp: oneshot::Sender<AppResult<RenderedPage>>,
+    },
+    RenderImage {
+        path: PathBuf,
+        page: u32,
+        dpi: u32,
+        resp: oneshot::Sender<AppResult<DynamicImage>>,
+    },
+}
+
+/// Owns the `Pdfium` handle on a dedicated OS thread. All public methods are
+/// async and dispatch into that thread via a tokio mpsc channel.
+///
+/// Why a dedicated thread, not `tokio::task::spawn_blocking`: `Pdfium` is not
+/// `Send`, so it cannot be moved between threads. Pinning it to one thread
+/// avoids the `unsafe impl Send` pattern entirely while still letting every
+/// async caller stay non-blocking.
+pub struct PdfWorker {
+    tx: mpsc::Sender<PdfTask>,
+}
+
+impl PdfWorker {
+    pub fn spawn() -> AppResult<Self> {
+        let (tx, mut rx) = mpsc::channel::<PdfTask>(32);
+        // `Pdfium` is not `Send`, so we cannot move it between threads. Init
+        // it inside the worker thread and signal the outcome back over a
+        // oneshot channel so PdfWorker::spawn surfaces init failures.
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<AppResult<()>>();
+        std::thread::Builder::new()
+            .name("xcvt-pdfium".into())
+            .spawn(move || {
+                let pdfium = match init_pdfium() {
+                    Ok(p) => {
+                        let _ = init_tx.send(Ok(()));
+                        p
+                    }
+                    Err(e) => {
+                        let _ = init_tx.send(Err(e));
+                        return;
+                    }
+                };
+                while let Some(task) = rx.blocking_recv() {
+                    match task {
+                        PdfTask::Info { path, resp } => {
+                            let _ = resp.send(pdf_info_with(&pdfium, &path));
+                        }
+                        PdfTask::RenderPng {
+                            path,
+                            page,
+                            dpi,
+                            resp,
+                        } => {
+                            let _ = resp.send(render_page_with(&pdfium, &path, page, dpi));
+                        }
+                        PdfTask::RenderImage {
+                            path,
+                            page,
+                            dpi,
+                            resp,
+                        } => {
+                            let _ = resp.send(render_page_image_with(&pdfium, &path, page, dpi));
+                        }
+                    }
+                }
+            })
+            .map_err(|e| AppError::Internal(format!("spawn pdf worker thread: {e}")))?;
+
+        init_rx
+            .recv()
+            .map_err(|_| AppError::Internal("pdf worker init channel closed".into()))??;
+        Ok(Self { tx })
+    }
+
+    async fn dispatch<T>(
+        &self,
+        task: PdfTask,
+        rrx: oneshot::Receiver<AppResult<T>>,
+    ) -> AppResult<T> {
+        self.tx
+            .send(task)
+            .await
+            .map_err(|_| AppError::Internal("pdf worker channel closed".into()))?;
+        rrx.await
+            .map_err(|_| AppError::Internal("pdf worker dropped response".into()))?
+    }
+
+    pub async fn info(&self, path: PathBuf) -> AppResult<PdfInfoData> {
+        let (rtx, rrx) = oneshot::channel();
+        self.dispatch(PdfTask::Info { path, resp: rtx }, rrx).await
+    }
+
+    pub async fn render_png(
+        &self,
+        path: PathBuf,
+        page: u32,
+        dpi: u32,
+    ) -> AppResult<RenderedPage> {
+        let (rtx, rrx) = oneshot::channel();
+        self.dispatch(
+            PdfTask::RenderPng {
+                path,
+                page,
+                dpi,
+                resp: rtx,
+            },
+            rrx,
+        )
+        .await
+    }
+
+    pub async fn render_image(
+        &self,
+        path: PathBuf,
+        page: u32,
+        dpi: u32,
+    ) -> AppResult<DynamicImage> {
+        let (rtx, rrx) = oneshot::channel();
+        self.dispatch(
+            PdfTask::RenderImage {
+                path,
+                page,
+                dpi,
+                resp: rtx,
+            },
+            rrx,
+        )
+        .await
+    }
+}
+
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::*;
@@ -208,12 +357,15 @@ mod tests {
     fn reads_fixture_page_count_and_renders_first_page() {
         let pdfium = init_pdfium().unwrap();
 
-        assert_eq!(page_count_with(&pdfium, sample_pdf()).unwrap(), 2);
+        let info = pdf_info_with(&pdfium, sample_pdf()).unwrap();
+        assert_eq!(info.page_count, 2);
 
         let rendered = render_page_with(&pdfium, sample_pdf(), 1, 150).unwrap();
-
         assert!(rendered.width > 0);
         assert!(rendered.height > 0);
         assert!(rendered.png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+        let image = render_page_image_with(&pdfium, sample_pdf(), 1, 150).unwrap();
+        assert!(image.width() > 0 && image.height() > 0);
     }
 }

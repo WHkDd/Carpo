@@ -1,48 +1,37 @@
-use std::path::PathBuf;
+use std::{io::Cursor, path::PathBuf};
 
-use serde::Serialize;
+use ::image::ImageFormat;
+use tauri::ipc::Response;
 
 use crate::{
-    error::AppResult,
-    image::{load_from_disk, supported_extensions, to_png_base64},
+    error::{AppError, AppResult},
+    image::{load_from_disk, supported_extensions},
 };
 
-#[derive(Debug, Serialize)]
-pub struct RenderedPagePayload {
-    pub width: u32,
-    pub height: u32,
-    pub png_base64: String,
-}
-
 #[tauri::command]
-pub async fn load_raster_image(path: String) -> AppResult<RenderedPagePayload> {
-    let path = PathBuf::from(path);
-    let img = load_from_disk(&path)?;
-
-    Ok(RenderedPagePayload {
-        width: img.width(),
-        height: img.height(),
-        png_base64: to_png_base64(&img)?,
+pub async fn load_raster_image(path: String) -> AppResult<Response> {
+    let img = tokio::task::spawn_blocking(move || load_from_disk(&PathBuf::from(path)))
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
+    let width = img.width();
+    let height = img.height();
+    let png_bytes = tokio::task::spawn_blocking(move || -> AppResult<Vec<u8>> {
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, ImageFormat::Png)
+            .map_err(|e| AppError::Image(format!("png encode: {e}")))?;
+        Ok(buf.into_inner())
     })
+    .await
+    .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
+
+    let mut out = Vec::with_capacity(8 + png_bytes.len());
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.extend_from_slice(&png_bytes);
+    Ok(Response::new(out))
 }
 
 #[tauri::command]
 pub async fn list_supported_extensions() -> Vec<&'static str> {
     supported_extensions().to_vec()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn loads_fixture_png_as_payload() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.png");
-
-        let payload = load_raster_image(path.to_string()).await.unwrap();
-
-        assert_eq!(payload.width, 64);
-        assert_eq!(payload.height, 64);
-        assert!(payload.png_base64.starts_with("iVBORw0KGgo"));
-    }
 }

@@ -43,13 +43,14 @@ export interface RenderPagePayload {
   purpose: RenderPurpose;
 }
 
+/** Bitmap displayed by the canvas. The backend returns raw PNG bytes via
+ *  `tauri::ipc::Response`; the frontend wraps them in a Blob and registers
+ *  the object URL with the bitmap cache. `objectUrl` is always set — there
+ *  is no base64 fallback. */
 export interface RenderedPagePayload {
   width: number;
   height: number;
-  png_base64: string;
-  // Set by the frontend after decoding `png_base64` into a Blob and registering
-  // it with the bitmap cache. Backend never sets this.
-  objectUrl?: string;
+  objectUrl: string;
 }
 
 export type FileKind = "image" | "pdf";
@@ -135,22 +136,6 @@ export interface JobProgress {
   article_total?: number;
 }
 
-export interface JobItemDone {
-  job_id: string;
-  file_id: string;
-  page: number;
-  label: string;
-  text: string;
-}
-
-export interface JobItemError {
-  job_id: string;
-  file_id: string;
-  page: number;
-  label: string;
-  error: string;
-}
-
 export interface GroupedOcrResultEntry {
   article_id: string;
   text: string;
@@ -207,10 +192,74 @@ export interface WholeFileOcrRequest {
 }
 
 export const EVENTS = {
-  JOB_STARTED: "xcvt://job/started",
   JOB_PROGRESS: "xcvt://job/progress",
-  JOB_ITEM_DONE: "xcvt://job/item-done",
-  JOB_ITEM_ERROR: "xcvt://job/item-error",
   JOB_DONE: "xcvt://job/done",
   JOB_ERROR: "xcvt://job/error",
 } as const;
+
+// --- AppError ---------------------------------------------------------------
+
+export type AppErrorKind =
+  | "Config"
+  | "FileNotFound"
+  | "Pdf"
+  | "Image"
+  | "Ocr"
+  | "Network"
+  | "Cancelled"
+  | "Internal";
+
+/** Wire shape mirroring Rust `AppError` (`#[serde(tag = "kind", content =
+ *  "data")]`). `data` is a string for every variant except `Ocr`, which
+ *  carries structured fields. */
+export type AppErrorPayload =
+  | { kind: Exclude<AppErrorKind, "Ocr">; data: string }
+  | {
+      kind: "Ocr";
+      data: { provider: string; message: string; retryable: boolean };
+    };
+
+export interface ParsedAppError {
+  kind: AppErrorKind;
+  message: string;
+  retryable: boolean;
+  provider?: string;
+}
+
+/** Normalises whatever an `invoke()` rejection (or generic JS error) handed us
+ *  back into a single, ergonomic shape. The Tauri 2 IPC bridge delivers
+ *  AppError as a structured `{kind, data}` object; older code paths may pass
+ *  a string or an `Error`. */
+export function parseAppError(value: unknown): ParsedAppError {
+  if (value && typeof value === "object" && "kind" in value) {
+    const p = value as AppErrorPayload;
+    if (p.kind === "Ocr" && typeof p.data === "object" && p.data !== null) {
+      return {
+        kind: "Ocr",
+        message: p.data.message,
+        retryable: !!p.data.retryable,
+        provider: p.data.provider,
+      };
+    }
+    if (typeof (p as { data?: unknown }).data === "string") {
+      return {
+        kind: p.kind,
+        message: (p as { data: string }).data,
+        retryable: p.kind === "Network",
+      };
+    }
+  }
+  if (value instanceof Error) {
+    return { kind: "Internal", message: value.message, retryable: false };
+  }
+  if (typeof value === "string") {
+    return { kind: "Internal", message: value, retryable: false };
+  }
+  return { kind: "Internal", message: String(value), retryable: false };
+}
+
+/** Convenience wrapper for `setError(parseAppError(e).message)` style call
+ *  sites. */
+export function appErrorMessage(value: unknown): string {
+  return parseAppError(value).message;
+}

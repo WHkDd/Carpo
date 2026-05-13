@@ -39,14 +39,6 @@ export function pageBitmapCacheKey(
   )}`;
 }
 
-export function pngBase64ToBlob(pngBase64: string): Blob {
-  const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0));
-  return new Blob(
-    [bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)],
-    { type: "image/png" }
-  );
-}
-
 export function createPageBitmapCache(
   capacity = DEFAULT_PAGE_BITMAP_CACHE_CAPACITY
 ): PageBitmapCache {

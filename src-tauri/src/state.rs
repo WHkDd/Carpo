@@ -1,32 +1,32 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use pdfium_render::prelude::Pdfium;
+use crate::{
+    error::{AppError, AppResult},
+    jobs::JobRegistry,
+    pdf::PdfWorker,
+};
 
-use crate::{error::AppResult, jobs::JobRegistry, pdf::init_pdfium};
-
+/// Application-wide shared state. All fields are `Send + Sync` by their own
+/// types, so `AppState` is naturally `Send + Sync` — no `unsafe impl` is
+/// needed (or correct).
 pub struct AppState {
-    pub pdfium: Arc<Pdfium>,
+    pub pdf: PdfWorker,
     pub http: reqwest::Client,
     pub jobs: Arc<JobRegistry>,
 }
 
-// SAFETY: pdfium-render's `thread_safe` feature wraps dynamic bindings in a
-// mutex, but the public `Pdfium` trait object does not carry Send/Sync
-// auto-traits in 0.8.
-unsafe impl Send for AppState {}
-unsafe impl Sync for AppState {}
-
 impl AppState {
     pub fn new() -> AppResult<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .connect_timeout(Duration::from_secs(15))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+            .map_err(|e| AppError::Internal(format!("http client: {e}")))?;
         Ok(Self {
-            #[allow(clippy::arc_with_non_send_sync)]
-            pdfium: Arc::new(init_pdfium()?),
-            http: reqwest::Client::new(),
+            pdf: PdfWorker::spawn()?,
+            http,
             jobs: Arc::new(JobRegistry::new()),
         })
-    }
-
-    pub fn pdfium(&self) -> &Pdfium {
-        self.pdfium.as_ref()
     }
 }
