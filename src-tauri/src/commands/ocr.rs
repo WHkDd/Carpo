@@ -70,7 +70,7 @@ pub async fn list_provider_models(
                 crate::secrets::SecretKey::OpenaiCompatibleKey
             }
         };
-        crate::secrets::get(secret_key)?
+        crate::secrets::get(secret_key).await?
     };
     crate::ocr::list_models(&state.http, &settings, secret.as_deref()).await
 }

@@ -3,13 +3,9 @@
 //! One call per requested page — no block cropping, no article grouping.
 //! Progress events: one after prerender, one before/after each page's OCR.
 //! Final `JOB_DONE` carries `{page, text}` pairs.
-//!
-//! Phase 1 (sync): pre-render every requested page into Send-safe `DynamicImage`s.
-//! Phase 2 (async): OCR loop with bounded concurrency (`OCR_CONCURRENCY`),
-//! each page -> encode PNG -> `ocr::recognize_with_retry`.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -20,12 +16,11 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::grouped::{encode_png_b64, secret_key_for_provider, FileKind};
+use super::grouped::{encode_png_bytes, secret_key_for_provider, FileKind};
 use crate::config;
 use crate::error::{AppError, AppResult};
 use crate::events;
 use crate::ocr::{self, OcrRequest};
-use crate::pdf;
 use crate::secrets;
 use crate::state::AppState;
 
@@ -106,16 +101,11 @@ async fn run(
 ) -> AppResult<()> {
     let settings = config::load(app)?;
     let secret_key = secret_key_for_provider(settings.provider);
-    let secret = secrets::get(secret_key)?;
+    let secret = secrets::get(secret_key).await?;
     let total = req.pages.len() as u32;
     let job_id_str = job_id.to_string();
 
-    let page_cache = {
-        let state = app.state::<AppState>();
-        let pdfium = state.pdfium.clone();
-        prerender_pages(&pdfium, &req)?
-    };
-
+    let page_cache = prerender_pages(app, &req, &token).await?;
     let client = app.state::<AppState>().http.clone();
 
     let _ = app.emit(
@@ -214,7 +204,7 @@ async fn run_one_page(
         };
     };
 
-    let b64 = match encode_png_b64(bitmap) {
+    let png_bytes = match encode_png_bytes(bitmap) {
         Ok(b) => b,
         Err(e) => {
             return PageOutcome::Failed {
@@ -231,9 +221,10 @@ async fn run_one_page(
         &settings,
         secret_ref,
         OcrRequest {
-            png_b64: &b64,
+            png_bytes: &png_bytes,
             prompt: &prompt,
         },
+        &token,
     );
     let recognized = tokio::select! {
         r = ocr_call => r,
@@ -256,6 +247,7 @@ async fn run_one_page(
             );
             PageOutcome::Done { page, text }
         }
+        Err(AppError::Cancelled(_)) => PageOutcome::Cancelled,
         Err(e) => PageOutcome::Failed {
             page,
             message: format!("page {} OCR 失败: {e}", page),
@@ -269,21 +261,37 @@ enum PageOutcome {
     Cancelled,
 }
 
-fn prerender_pages(
-    pdfium: &Arc<pdfium_render::prelude::Pdfium>,
+async fn prerender_pages(
+    app: &AppHandle,
     req: &WholeFileOcrRequest,
+    token: &CancellationToken,
 ) -> AppResult<HashMap<u32, Arc<DynamicImage>>> {
+    if matches!(req.kind, FileKind::Image) {
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled("whole-file prerender".into()));
+        }
+        let path = PathBuf::from(&req.path);
+        let bitmap = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
+            .await
+            .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
+        let bitmap = Arc::new(bitmap);
+        let mut cache = HashMap::new();
+        for page in &req.pages {
+            cache.insert(*page, Arc::clone(&bitmap));
+        }
+        return Ok(cache);
+    }
+
     let mut cache = HashMap::new();
     for page in &req.pages {
-        let bitmap = match req.kind {
-            FileKind::Image => crate::image::load_from_disk(Path::new(&req.path))?,
-            FileKind::Pdf => {
-                let rendered =
-                    pdf::render_page_with(pdfium, Path::new(&req.path), *page, req.ocr_dpi)?;
-                image::load_from_memory(&rendered.png_bytes)
-                    .map_err(|e| AppError::Image(format!("decode rendered page: {e}")))?
-            }
-        };
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled("whole-file prerender".into()));
+        }
+        let bitmap = app
+            .state::<AppState>()
+            .pdf
+            .render_image(PathBuf::from(&req.path), *page, req.ocr_dpi)
+            .await?;
         cache.insert(*page, Arc::new(bitmap));
     }
     Ok(cache)
@@ -299,7 +307,6 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
     if req.ocr_dpi == 0 {
         return Err(AppError::Config("ocr_dpi 必须大于 0".into()));
     }
-    // Prevent accidental huge ranges.
     if req.pages.len() > 1000 {
         return Err(AppError::Config("单次最多识别 1000 页".into()));
     }

@@ -10,17 +10,17 @@ use crate::{
 /// value — the frontend only needs to know whether the field is configured.
 #[tauri::command]
 pub async fn get_secret(key: SecretKey) -> AppResult<bool> {
-    Ok(secrets::get(key)?.is_some())
+    Ok(secrets::get(key).await?.is_some())
 }
 
 #[tauri::command]
 pub async fn set_secret(key: SecretKey, value: String) -> AppResult<()> {
-    secrets::set(key, &value)
+    secrets::set(key, value).await
 }
 
 #[tauri::command]
 pub async fn delete_secret(key: SecretKey) -> AppResult<()> {
-    secrets::delete(key)
+    secrets::delete(key).await
 }
 
 #[tauri::command]

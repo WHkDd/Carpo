@@ -3,12 +3,13 @@ import { useStore } from "@/store";
 import { pageKey } from "@/store/pageStateSlice";
 import { getSecret, startGroupedOcr } from "@/lib/tauri";
 import { ACTIVE_PREVIEW_DPI, PROFILE_DPI } from "@/lib/ocr-profile";
-import type {
-  ArticleOcrPlan,
-  BlockRef,
-  GroupedOcrRequest,
-  Provider,
-  SecretKey,
+import {
+  appErrorMessage,
+  type ArticleOcrPlan,
+  type BlockRef,
+  type GroupedOcrRequest,
+  type Provider,
+  type SecretKey,
 } from "@/lib/ipc-types";
 
 const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
@@ -85,7 +86,6 @@ export function useGroupedOcrTrigger() {
     try {
       const secretKey = PROVIDER_SECRET_KEY[settings.provider];
       const hasSecret = await getSecret(secretKey);
-      console.debug("[ocr-trigger] provider=%s secretKey=%s hasSecret=%s", settings.provider, secretKey, hasSecret);
       if (
         settings.provider === "openai_compatible" &&
         !settings.openai_compatible_base_url
@@ -160,7 +160,7 @@ export function useGroupedOcrTrigger() {
         label: `准备中… 共 ${articles.length} 篇`,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
     } finally {
       setStarting(false);
     }

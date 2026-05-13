@@ -2,10 +2,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { getSecret, startWholeFileOcr } from "@/lib/tauri";
 import { PROFILE_DPI } from "@/lib/ocr-profile";
-import type {
-  Provider,
-  SecretKey,
-  WholeFileOcrRequest,
+import {
+  appErrorMessage,
+  type Provider,
+  type SecretKey,
+  type WholeFileOcrRequest,
 } from "@/lib/ipc-types";
 import type { WholeFileRange } from "@/store/pageStateSlice";
 
@@ -156,7 +157,7 @@ export function useWholeFileOcrTrigger() {
         label: `准备中… 共 ${pages.length} 页`,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
     } finally {
       setStarting(false);
     }
