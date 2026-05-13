@@ -19,6 +19,9 @@
         "minHeight": 600,
         "dragDropEnabled": true,
         "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 14, "y": 28 },
         "resizable": true
       }
     ],
@@ -40,6 +43,7 @@
     "macOS": {
       "minimumSystemVersion": "12.0",
       "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
       "frameworks": ["pdfium/macos-arm64/libpdfium.dylib"]
     },
     "windows": {

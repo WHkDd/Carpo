@@ -1,57 +1,88 @@
-# Xcvt — 报刊版面 OCR (Tauri)
+# Xcvt — 报刊版面 OCR
 
-桌面 OCR 工具：导入报刊扫描图像或 PDF → 框选识别或全文识别 → 多供应商 OCR → 复制/导出结构化文本。
+桌面 OCR 工具，专门处理近代中文报刊扫描件。导入图像或 PDF，框选报道版块或整页识别，多家
+provider 任选，结果导出为 Markdown / 纯文本。
 
-这是从 [PySide6 旧版](../xcvt) 迁移而来的 Tauri 重写版本。覆盖 macOS（Apple Silicon + Intel）与 Windows，以现代化前端、紧凑桌面体验、单文件报刊识别工作流为目标。
+跨平台桌面应用，覆盖 macOS（Apple Silicon + Intel）与 Windows。
 
-## 状态
+## 特性
 
-✅ **M0 完成** — 项目脚手架就位，设计系统 + 高保真稿就绪，`pnpm tauri dev` 出空壳窗口，CI 雏形就位。
+- **两种识别模式**：框选报道（一篇报道可跨多块、跨多页拼成完整文本）/ 全文按页识别。
+- **多 provider 路由**：PaddleOCR（百度异步 jobs API）、OpenAI Vision、OpenRouter、任意
+  OpenAI-compatible 自建端点；任意切换不丢失先前识别结果。
+- **结构化导出**：识别后的报道按选择顺序组装成单篇 Markdown，支持复制 / 单篇导出 / 整文档导出。
+- **本地凭据**：API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）保管，
+  不会写入项目文件，也不会跨设备同步。
+- **细粒度取消**：识别进行中点取消会立刻打断长 poll 与回退退避，不会再继续烧 OCR 配额。
+- **大画布顺滑**：PDFium 渲染走专用线程；图像以二进制 IPC 传给前端，单页 50MB+ 的 A3 报纸也能流畅切页。
 
-✅ **M1 完成** — 基础 UI shell、Toolbar、StatusBar、Konva Canvas、导入交互、raster image 后端命令、Tauri IPC wrapper、queue/ui store slices 已落地。
+## 安装
 
-✅ **M2 完成** — PDF 队列、PDF 页导航、preview bitmap cache、per-file/page view state、collapsed queue rail 已落地。
+正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
 
-✅ **M3 完成** — 手动画块、多选、Transformer resize/drag、选择顺序标签、Delete/Backspace 删除、方向键微调、右键菜单、article color token bridge 已落地。M3 只负责 block geometry 与临时 selection；最终报道建模进入 M4。
+- macOS Apple Silicon：`Xcvt_*_aarch64.dmg`
+- macOS Intel：`Xcvt_*_x64.dmg`
+- Windows：`Xcvt_*_x64-setup.exe` 或 `Xcvt_*_x64_en-US.msi`
 
-✅ **M4 完成** — 报道分组、右栏报道列表、inline rename/delete/clear-all、报刊名/日期元数据、标准/快速 OCR profile toggle 已落地。Article 与 metadata 保持 file/document-scoped；blocks 保持 page-scoped；`selectionOrder` 仅作为临时选择顺序，点击“标记为报道”后固化为 `articleOrder` 并清空 selection，不删除或隐藏选框。
+### macOS 首次启动
 
-✅ **M5 完成** — Provider-backed 框选报道 OCR 已落地：PaddleOCR、OpenAI、OpenRouter、OpenAI-compatible 自定义端点，Keychain 密钥、设置面板、Provider/Profile 状态栏、分组 OCR job、进度与取消、报道文本组装与复制/保存。
+当前包使用 ad-hoc 签名（未购买 Apple 开发者账号），首次双击会触发 Gatekeeper 拦截。两种解法
+选一种：
 
-✅ **M6 完成（静态 gates 通过，真实 OCR smoke 待本机凭据/样例确认）** — 全文识别模式已落地：顶部 `全文识别` 作为模式切换，右栏底部 `开始全文识别` 启动 OCR；PDF 支持页码范围；结果按页进入右栏文本面板；全文模式隐藏框选报道 UI 并保持浏览模式；框选模式与全文模式的数据和界面分离；单项复制/保存与全部复制/导出均可用。
+1. **右键 → 打开**：在弹出的警告框点「打开」即可，之后不再提示。
+2. **终端命令**：把 dmg 里的 `Xcvt.app` 拖到 `/Applications`，然后运行
 
-接下来：M7 的详细任务分解见 [`plan.md`](./plan.md)。**[UI] 标记的任务需视觉评审，留给人工或 Claude；[BE] 标记的任务可由 codex 等自动代理推进。**
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Xcvt.app
+   ```
 
-设计依据：
-- [`PRODUCT.md`](./PRODUCT.md) — 用户、口吻、反例、战略原则
-- [`DESIGN.md`](./DESIGN.md) — 设计系统：颜色 token、字号、间距、动效
-- [`docs/DESIGN.md`](./docs/DESIGN.md) — 实现地图：组件 ↔ shadcn ↔ 文件路径
-- [`docs/mockups/*.html`](./docs/mockups/) — 浏览器可直接打开的高保真稿
+### Windows 首次启动
 
-## 技术栈
-
-- **框架**: Tauri 2.x
-- **前端**: React 18 · Vite · TypeScript · Zustand · Konva · Tailwind · shadcn/ui
-- **后端**: Rust · `pdfium-render` · `reqwest` · `tokio` · `keyring`
-- **OCR**: PaddleOCR · OpenAI Vision · OpenRouter · OpenAI-compatible endpoint
-- **分发**: macOS DMG（arm64 + x64）· Windows MSI/NSIS
+未购买 EV 代码签名证书时，SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即可。
 
 ## 本地开发
 
 ```bash
 pnpm install
+pnpm prepare:pdfium   # 下载对应平台的 PDFium 动态库到 src-tauri/pdfium/
 pnpm tauri dev
 ```
 
-要求：Node 20+、pnpm 10、Rust stable、平台对应的 webview 依赖。
+要求：Node 20+、pnpm 10、Rust stable（推荐 1.78+）、平台对应的 webview 依赖
+（macOS：Xcode CLI；Windows：WebView2 Runtime）。
+
+### 常用命令
+
+```bash
+pnpm typecheck                       # tsc --noEmit
+pnpm test                            # vitest
+pnpm lint                            # eslint
+pnpm tauri build                     # 出发布包到 src-tauri/target/release/bundle/
+( cd src-tauri && cargo test )       # Rust 单测 + 集成测试
+```
+
+## 技术栈
+
+- **框架**：Tauri 2.x
+- **前端**：React 18 · Vite · TypeScript · Zustand · Konva · Tailwind · shadcn/ui
+- **后端**：Rust · `pdfium-render` · `reqwest` · `tokio` · `keyring`
+- **OCR**：PaddleOCR（异步 jobs）· OpenAI Vision · OpenRouter · OpenAI-compatible
 
 ## 目录结构
 
 ```
-src/                  # React 前端
-src-tauri/            # Rust 后端
-docs/                 # 设计与签名说明
-.github/workflows/    # CI / 发布
+src/                  React 前端
+  components/         画布、版块、报道列表、设置等组件
+  hooks/              文件导入、PDF 翻页、bitmap LRU 缓存、OCR 触发等
+  store/              Zustand slices
+  lib/                IPC 类型契约 / 工具函数
+src-tauri/            Rust 后端
+  src/
+    commands/         #[tauri::command] handlers
+    jobs/             grouped / whole-file OCR runner
+    ocr/              provider 实现（paddle / openai）
+    pdf.rs            PDFium worker（专用线程 + tokio mpsc）
+.github/workflows/    CI / release
 ```
 
 ## License
