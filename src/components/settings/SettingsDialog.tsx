@@ -4,7 +4,6 @@ import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useStore } from "@/store";
 import { DEFAULT_SETTINGS } from "@/store/settingsSlice";
 import {
-  appErrorMessage,
   deleteSecret as ipcDeleteSecret,
   getSecret as ipcGetSecret,
   listProviderModels as ipcListProviderModels,
@@ -17,6 +16,7 @@ import type {
   Provider,
   SecretKey,
 } from "@/lib/ipc-types";
+import { appErrorMessage } from "@/lib/ipc-types";
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   paddleocr: "PaddleOCR",
