@@ -6,6 +6,7 @@
 //! powers OpenAI proper, OpenRouter, and any OpenAI-compatible endpoint —
 //! the only thing that differs is `base_url`.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
@@ -79,7 +80,7 @@ pub async fn recognize(
     key: &str,
     model: &str,
     prompt: &str,
-    png_b64: &str,
+    png_bytes: &[u8],
     provider_label: &str,
 ) -> AppResult<String> {
     if key.is_empty() {
@@ -93,7 +94,7 @@ pub async fn recognize(
         )));
     }
 
-    let data_url = format!("data:image/png;base64,{png_b64}");
+    let data_url = format!("data:image/png;base64,{}", STANDARD.encode(png_bytes));
     let body = ChatRequest {
         model,
         messages: [Message {
@@ -171,7 +172,16 @@ pub async fn list_models(
     }
 
     let url = join(base_url, "/models");
-    let resp = client.get(&url).bearer_auth(key).send().await?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| AppError::Ocr {
+            provider: provider_label.into(),
+            message: format!("network: {e}"),
+            retryable: e.is_timeout() || e.is_connect(),
+        })?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -221,7 +231,7 @@ mod tests {
             "sk-test",
             "gpt-4o",
             "prompt",
-            "PNGB64==",
+            b"PNGBYTES",
             "openai",
         )
         .await
@@ -232,12 +242,17 @@ mod tests {
     #[tokio::test]
     async fn image_payload_uses_data_url() {
         let server = MockServer::start().await;
+        // base64 of "ABC" is "QUJD"
+        let expected_url = format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode(b"ABC")
+        );
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(body_partial_json(json!({
                 "messages": [{
                     "content": [
-                        { "type": "image_url", "image_url": { "url": "data:image/png;base64,ABC=" } },
+                        { "type": "image_url", "image_url": { "url": expected_url } },
                         { "type": "text", "text": "扫一扫" }
                     ]
                 }]
@@ -254,7 +269,7 @@ mod tests {
             "sk-test",
             "gpt-4o",
             "扫一扫",
-            "ABC=",
+            b"ABC",
             "openai",
         )
         .await
@@ -277,7 +292,7 @@ mod tests {
             "sk",
             "gpt-4o",
             "p",
-            "x",
+            b"x",
             "openai",
         )
         .await
@@ -300,7 +315,7 @@ mod tests {
             "sk",
             "gpt-4o",
             "p",
-            "x",
+            b"x",
             "openai",
         )
         .await

@@ -3,18 +3,18 @@
 //! Drives the user-marked articles → ordered block refs → cropped page bitmap
 //! → `ocr::recognize_with_retry` pipeline. Runs blocks concurrently (bounded
 //! by `OCR_CONCURRENCY`) and emits fine-grained progress events: one after
-//! the synchronous prerender, one when each block starts, and one when each
-//! block finishes. Cancels mid-job by checking the shared `CancellationToken`
-//! both at task entry and inside the OCR call via `tokio::select!`.
+//! prerender, one when each block starts, and one when each block finishes.
+//! The shared `CancellationToken` threads through every level — the OCR
+//! retry-backoff, the Paddle poll loop, and the per-block tokio::select! —
+//! so a user cancel reaches the network call within milliseconds rather than
+//! waiting for the next polling cycle.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use futures::stream::{self, StreamExt};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,6 @@ use crate::config::{self, NonSecretSettings, Provider};
 use crate::error::{AppError, AppResult};
 use crate::events;
 use crate::ocr::{self, OcrRequest};
-use crate::pdf;
 use crate::secrets::{self, SecretKey};
 use crate::state::AppState;
 
@@ -68,9 +67,6 @@ pub struct ArticleOcrPlan {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GroupedOcrRequest {
-    // Echoed into the eventual done payload at T5.7 for document assembly,
-    // but the worker itself never reads them. Silenced individually so the
-    // rest of the struct still benefits from dead-code analysis.
     #[allow(dead_code)]
     pub file_id: String,
     pub path: String,
@@ -157,26 +153,16 @@ async fn run(
 ) -> AppResult<()> {
     let settings = config::load(app)?;
     let secret_key = secret_key_for_provider(settings.provider);
-    let secret = secrets::get(secret_key)?;
-
-    // Phase 1 (sync, blocking): pre-render every referenced page into Send-safe
-    // DynamicImages. `Arc<Pdfium>` is not `Send`, so we cannot hold it across
-    // any later `.await`. Doing all rendering in one pass also amortises pdfium
-    // setup across articles that share a page.
+    let secret = secrets::get(secret_key).await?;
     let scale = page_scale(&req);
-    let page_cache = {
-        let state = app.state::<AppState>();
-        let pdfium = state.pdfium.clone();
-        prerender_pages(&pdfium, &req)?
-    };
 
-    // Phase 2 (async): OCR loop. Holds only `Send` data — page_cache (Arc<
-    // DynamicImage>), settings, reqwest::Client, cancellation token.
+    // Pre-render every referenced page into Send-safe `DynamicImage`s. PDF
+    // rendering runs on the dedicated PdfWorker thread; image files are read
+    // via spawn_blocking. The cache is shared across all blocks that point at
+    // the same page, amortising the render cost.
+    let page_cache = prerender_pages(app, &req, &token).await?;
     let client = app.state::<AppState>().http.clone();
 
-    // Flatten the per-article block lists into one work queue. Each item
-    // carries enough context to build a "报道N · 第k/M块" progress label
-    // without re-looking-up the article afterwards.
     let mut items: Vec<WorkItem> = Vec::new();
     for article in &req.articles {
         let mut blocks = article.blocks.clone();
@@ -195,8 +181,6 @@ async fn run(
     let total: u32 = items.len() as u32;
     let job_id_str = job_id.to_string();
 
-    // Emit immediately after prerender so the UI swaps "准备中…" for a real
-    // status before any (much slower) OCR round-trip starts.
     let _ = app.emit(
         events::JOB_PROGRESS,
         ProgressEvent {
@@ -248,10 +232,6 @@ async fn run(
     Ok(())
 }
 
-/// One block's lifetime. Emits a "starting" progress event on entry, runs the
-/// crop + encode + OCR pipeline, emits a "completed" event on success, and
-/// returns a `BlockOutcome` for the aggregator. Always returns — never panics
-/// — so the parent stream never short-circuits.
 #[allow(clippy::too_many_arguments)]
 async fn run_one_block(
     app: AppHandle,
@@ -304,7 +284,7 @@ async fn run_one_block(
             }
         }
     };
-    let b64 = match encode_png_b64(&cropped) {
+    let png_bytes = match encode_png_bytes(&cropped) {
         Ok(b) => b,
         Err(e) => {
             return BlockOutcome::Failed {
@@ -321,9 +301,10 @@ async fn run_one_block(
         &settings,
         secret_ref,
         OcrRequest {
-            png_b64: &b64,
+            png_bytes: &png_bytes,
             prompt: &prompt,
         },
+        &token,
     );
     let recognized = tokio::select! {
         r = ocr_call => r,
@@ -355,6 +336,9 @@ async fn run_one_block(
                 text,
             }
         }
+        Err(AppError::Cancelled(_)) => BlockOutcome::Cancelled {
+            article_id: item.article_id,
+        },
         Err(e) => BlockOutcome::Failed {
             article_id: item.article_id,
             message: format!("block {} OCR 失败: {e}", item.block.block_id),
@@ -366,12 +350,9 @@ async fn run_one_block(
 /// frontend's JOB_DONE handler expects.
 ///
 /// Semantics mirror the previous sequential implementation:
-/// - An article with any cancelled block is dropped entirely (neither in
-///   `results` nor `errors`). The frontend treats absent articles as
-///   "untouched by this run" via the merge in `setArticleOcrTexts`.
-/// - An article with any failed block goes to `errors` with the first failure
-///   message — we don't aggregate multiple failures because the user only
-///   acts on the article as a whole.
+/// - An article with any cancelled block is dropped entirely.
+/// - An article with any failed block goes to `errors` with the first
+///   failure message.
 /// - An article with all blocks completed goes to `results` with the per-
 ///   block texts joined by `\n` in `block.order` ascending.
 fn aggregate_outcomes(
@@ -436,8 +417,6 @@ fn aggregate_outcomes(
     (results, errors, cancelled)
 }
 
-/// One block's worth of work — small enough to copy cheaply between the
-/// flatten step and the spawned task.
 struct WorkItem {
     article_id: String,
     article_num: u32,
@@ -461,9 +440,10 @@ enum BlockOutcome {
     },
 }
 
-fn prerender_pages(
-    pdfium: &Arc<pdfium_render::prelude::Pdfium>,
+async fn prerender_pages(
+    app: &AppHandle,
     req: &GroupedOcrRequest,
+    token: &CancellationToken,
 ) -> AppResult<HashMap<u32, Arc<DynamicImage>>> {
     let mut unique_pages: BTreeSet<u32> = BTreeSet::new();
     for article in &req.articles {
@@ -471,17 +451,35 @@ fn prerender_pages(
             unique_pages.insert(block.page);
         }
     }
+
+    // Image files have one native bitmap; load it once and clone the Arc for
+    // every referenced "page". PDFs go through the dedicated PdfWorker thread.
+    if matches!(req.kind, FileKind::Image) {
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled("grouped prerender".into()));
+        }
+        let path = PathBuf::from(&req.path);
+        let bitmap = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
+            .await
+            .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
+        let bitmap = Arc::new(bitmap);
+        let mut cache = HashMap::new();
+        for page in unique_pages {
+            cache.insert(page, Arc::clone(&bitmap));
+        }
+        return Ok(cache);
+    }
+
     let mut cache = HashMap::new();
     for page in unique_pages {
-        let bitmap = match req.kind {
-            FileKind::Image => crate::image::load_from_disk(Path::new(&req.path))?,
-            FileKind::Pdf => {
-                let rendered =
-                    pdf::render_page_with(pdfium, Path::new(&req.path), page, req.ocr_dpi)?;
-                image::load_from_memory(&rendered.png_bytes)
-                    .map_err(|e| AppError::Image(format!("decode rendered page: {e}")))?
-            }
-        };
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled("grouped prerender".into()));
+        }
+        let bitmap = app
+            .state::<AppState>()
+            .pdf
+            .render_image(PathBuf::from(&req.path), page, req.ocr_dpi)
+            .await?;
         cache.insert(page, Arc::new(bitmap));
     }
     Ok(cache)
@@ -530,11 +528,11 @@ pub fn crop_block(bitmap: &DynamicImage, rect: &Rect, scale: f32) -> AppResult<D
     Ok(bitmap.crop_imm(raw_x, raw_y, cw, ch))
 }
 
-pub(super) fn encode_png_b64(img: &DynamicImage) -> AppResult<String> {
+pub(super) fn encode_png_bytes(img: &DynamicImage) -> AppResult<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     img.write_to(&mut buf, ImageFormat::Png)
         .map_err(|e| AppError::Image(format!("crop png encode: {e}")))?;
-    Ok(STANDARD.encode(buf.into_inner()))
+    Ok(buf.into_inner())
 }
 
 /// Pre-flight validation called by the `start_grouped_ocr` command before
@@ -628,7 +626,6 @@ mod tests {
             width: 20.0,
             height: 30.0,
         };
-        // scale = 2 → expected crop is (20, 20, 40, 60)
         let out = crop_block(&img, &rect, 2.0).unwrap();
         assert_eq!(out.dimensions(), (40, 60));
     }
@@ -643,7 +640,6 @@ mod tests {
             height: 100.0,
         };
         let out = crop_block(&img, &rect, 1.0).unwrap();
-        // 50-40 = 10 in both dims; bitmap[40..50, 40..50]
         assert_eq!(out.dimensions(), (10, 10));
     }
 
@@ -661,11 +657,10 @@ mod tests {
     }
 
     #[test]
-    fn encode_png_b64_returns_valid_data() {
+    fn encode_png_bytes_returns_valid_data() {
         let img = flat_image(2, 2);
-        let b64 = encode_png_b64(&img).unwrap();
-        let raw = STANDARD.decode(b64).unwrap();
-        assert!(raw.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let bytes = encode_png_bytes(&img).unwrap();
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 
     #[test]

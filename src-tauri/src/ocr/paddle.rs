@@ -14,13 +14,11 @@
 //!
 //! Default endpoint: `https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`.
 //! Default model: `PaddleOCR-VL-1.5`.
-//! Auth header: `Authorization: Bearer {token}` (per documented spec; the
-//! lowercase `bearer` form in the published sample also works because the
-//! HTTP scheme name is case-insensitive).
 
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
 
@@ -104,6 +102,7 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn recognize(
     client: &reqwest::Client,
     job_url: &str,
@@ -112,6 +111,7 @@ pub async fn recognize(
     png_bytes: Vec<u8>,
     poll_interval: Duration,
     poll_timeout: Duration,
+    cancel: &CancellationToken,
 ) -> AppResult<String> {
     if token.is_empty() {
         return Err(AppError::Config(
@@ -130,7 +130,16 @@ pub async fn recognize(
     };
 
     let job_id = submit(client, job_url, token, model, png_bytes).await?;
-    let json_url = poll(client, job_url, token, &job_id, poll_interval, poll_timeout).await?;
+    let json_url = poll(
+        client,
+        job_url,
+        token,
+        &job_id,
+        poll_interval,
+        poll_timeout,
+        cancel,
+    )
+    .await?;
     fetch_result(client, &json_url).await
 }
 
@@ -195,6 +204,7 @@ async fn submit(
     Ok(env.data.job_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn poll(
     client: &reqwest::Client,
     job_url: &str,
@@ -202,11 +212,15 @@ async fn poll(
     job_id: &str,
     interval: Duration,
     overall_timeout: Duration,
+    cancel: &CancellationToken,
 ) -> AppResult<String> {
     let url = format!("{job_url}/{job_id}");
     let start = Instant::now();
     let auth = format!("Bearer {token}");
     loop {
+        if cancel.is_cancelled() {
+            return Err(AppError::Cancelled("paddle poll".into()));
+        }
         if start.elapsed() > overall_timeout {
             return Err(ocr_err("poll", "timeout waiting for job to finish", false));
         }
@@ -257,8 +271,15 @@ async fn poll(
                 return Err(ocr_err("job", format!("job failed: {msg}"), false));
             }
             _ => {
-                // pending / running / anything else: keep polling.
-                tokio::time::sleep(interval).await;
+                // pending / running / anything else: keep polling. Race the
+                // sleep against cancellation so a user-driven cancel doesn't
+                // wait out the full interval (or, worse, poll_timeout).
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    _ = cancel.cancelled() => {
+                        return Err(AppError::Cancelled("paddle poll".into()));
+                    }
+                }
             }
         }
     }
@@ -313,8 +334,11 @@ mod tests {
     const FAST_POLL: Duration = Duration::from_millis(5);
     const POLL_CAP: Duration = Duration::from_secs(10);
 
+    fn never_cancelled() -> CancellationToken {
+        CancellationToken::new()
+    }
+
     fn jsonl_body() -> String {
-        // Two pages of layout-parsing results, second page has two blocks.
         let line1 = json!({
             "result": {
                 "layoutParsingResults": [
@@ -364,6 +388,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let out = recognize(
             &reqwest::Client::new(),
             &format!("{base}/api/v2/ocr/jobs"),
@@ -372,6 +397,7 @@ mod tests {
             b"PNGBYTES".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap();
@@ -391,8 +417,6 @@ mod tests {
             })))
             .mount(&server)
             .await;
-
-        // First poll returns pending, second returns running, third returns done.
         Mock::given(method("GET"))
             .and(path("/api/v2/ocr/jobs/j1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -426,6 +450,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let out = recognize(
             &reqwest::Client::new(),
             &format!("{base}/api/v2/ocr/jobs"),
@@ -434,6 +459,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap();
@@ -459,6 +485,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -467,6 +494,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -486,6 +514,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -494,6 +523,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -509,6 +539,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -517,6 +548,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -534,6 +566,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -542,6 +575,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -559,6 +593,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -567,6 +602,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -575,6 +611,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_token_returns_config_error() {
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             DEFAULT_JOB_URL,
@@ -583,6 +620,7 @@ mod tests {
             b"x".to_vec(),
             FAST_POLL,
             POLL_CAP,
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -599,7 +637,6 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        // All polls return pending — never resolves.
         Mock::given(method("GET"))
             .and(path("/api/v2/ocr/jobs/stuck"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -608,6 +645,7 @@ mod tests {
             .mount(&server)
             .await;
 
+        let cancel = never_cancelled();
         let err = recognize(
             &reqwest::Client::new(),
             &format!("{}/api/v2/ocr/jobs", server.uri()),
@@ -616,6 +654,7 @@ mod tests {
             b"x".to_vec(),
             Duration::from_millis(5),
             Duration::from_millis(20),
+            &cancel,
         )
         .await
         .unwrap_err();
@@ -628,5 +667,48 @@ mod tests {
             }
             other => panic!("expected Ocr, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn cancel_during_poll_returns_cancelled() {
+        // poll_interval is large; cancel after 20ms must short-circuit the
+        // sleep rather than waiting it out.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/ocr/jobs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0, "data": { "jobId": "stuck" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/ocr/jobs/stuck"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0, "data": { "state": "pending" }
+            })))
+            .mount(&server)
+            .await;
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancel_clone.cancel();
+        });
+        let started = Instant::now();
+        let err = recognize(
+            &reqwest::Client::new(),
+            &format!("{}/api/v2/ocr/jobs", server.uri()),
+            "tk",
+            "",
+            b"x".to_vec(),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::Cancelled(_)));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

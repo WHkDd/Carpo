@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { FolderOpen, RefreshCw, X } from "lucide-react";
+import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useStore } from "@/store";
 import { DEFAULT_SETTINGS } from "@/store/settingsSlice";
 import {
+  appErrorMessage,
   deleteSecret as ipcDeleteSecret,
   getSecret as ipcGetSecret,
   listProviderModels as ipcListProviderModels,
+  openLogDir as ipcOpenLogDir,
   setSecret as ipcSetSecret,
   setSettings as ipcSetSettings,
 } from "@/lib/tauri";
@@ -131,7 +134,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setCommitted(draft);
       onClose();
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      setSaveError(appErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -176,7 +179,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       } catch (e) {
         setRefreshError((prev) => ({
           ...prev,
-          [provider]: e instanceof Error ? e.message : String(e),
+          [provider]: appErrorMessage(e),
         }));
       } finally {
         setRefreshing(null);
@@ -272,15 +275,33 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         </div>
 
         <footer className="flex items-center justify-between gap-4 border-t border-border bg-surface-2 pl-6 pr-7 py-3">
-          <div className="text-[11px] text-foreground-muted">
+          <div className="flex min-w-0 items-center gap-3 text-[11px] text-foreground-muted">
             {saveError ? (
               <span className="text-destructive">保存失败：{saveError}</span>
             ) : (
               <>
-                Keychain 存 API Key · 其余写入{" "}
-                <span className="font-mono text-foreground-subtle">
-                  {"${AppConfig}/settings.json"}
+                <span className="truncate">
+                  Keychain 存 API Key · 其余写入{" "}
+                  <span className="font-mono text-foreground-subtle">
+                    {"${AppConfig}/settings.json"}
+                  </span>
                 </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void ipcOpenLogDir().catch((e) => {
+                      const message = appErrorMessage(e);
+                      void logWarn(`open_log_dir failed: ${message}`).catch(
+                        () => {}
+                      );
+                    });
+                  }}
+                  title="在文件管理器中打开日志目录"
+                  className="flex shrink-0 items-center gap-1 rounded text-foreground-subtle transition-colors hover:text-foreground"
+                >
+                  <FolderOpen className="h-3 w-3" strokeWidth={1.75} />
+                  <span>日志</span>
+                </button>
               </>
             )}
           </div>
