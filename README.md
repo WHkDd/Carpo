@@ -25,11 +25,9 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 ### macOS 首次启动
 
-当前首次双击会触发 Gatekeeper 拦截。两种解法
-选一种：
+当前首次双击会触发 Gatekeeper 拦截。
 
-1. **右键 → 打开**：在弹出的警告框点「打开」即可，之后不再提示。
-2. **终端命令**：把 dmg 里的 `Xcvt.app` 拖到 `/Applications`，然后运行
+**终端命令**：把 dmg 里的 `Xcvt.app` 拖到 `/Applications`，然后运行
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Xcvt.app
