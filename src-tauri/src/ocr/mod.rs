@@ -21,6 +21,28 @@ pub mod paddle;
 pub const MAX_RETRIES: u32 = 3;
 pub const BACKOFF_SECS: [u64; 3] = [0, 2, 5];
 
+/// Per-provider in-flight OCR call ceiling. Used by both grouped and
+/// whole-file runners as the `buffer_unordered` width.
+///
+/// The values are deliberately conservative defaults, not provider limits:
+/// - **Paddle**: documented to tolerate a handful of parallel jobs (the
+///   `10010 "queue full"` retryable code already protects us if we exceed
+///   capacity); 3 keeps us well under the typical AI Studio quota.
+/// - **OpenAI / OpenRouter**: paid tiers comfortably handle 5+ parallel
+///   chat-completion calls; 5 is a "won't get rate-limited on a small paid
+///   account" floor.
+/// - **OpenAI-compatible**: most user-deployed endpoints (vLLM, ollama,
+///   LiteLLM proxy) prefer low parallelism; 2 trades throughput for
+///   not-saturating-someone's-gaming-PC defaults.
+pub fn concurrency_for(p: Provider) -> usize {
+    match p {
+        Provider::Paddleocr => 3,
+        Provider::Openai => 5,
+        Provider::Openrouter => 5,
+        Provider::OpenaiCompatible => 2,
+    }
+}
+
 /// Default polling cadence for Paddle's async jobs endpoint. The Baidu sample
 /// uses 5s; 2s is responsive without hammering the queue.
 pub const PADDLE_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -401,5 +423,13 @@ mod tests {
                 .unwrap_err();
         assert!(matches!(err, AppError::Cancelled(_)));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn concurrency_for_returns_per_provider_defaults() {
+        assert_eq!(concurrency_for(Provider::Paddleocr), 3);
+        assert_eq!(concurrency_for(Provider::Openai), 5);
+        assert_eq!(concurrency_for(Provider::Openrouter), 5);
+        assert_eq!(concurrency_for(Provider::OpenaiCompatible), 2);
     }
 }

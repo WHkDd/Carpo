@@ -27,6 +27,12 @@ const SAVE_FILTERS = [
   { name: "Text", extensions: ["txt"] },
 ];
 
+/** Threshold above which the OCR text panel falls back to a plain
+ *  `<pre>` view instead of rendering through ReactMarkdown + KaTeX.
+ *  Above ~100 KB, the markdown/math passes start to noticeably block the
+ *  main thread on every re-render; the pre view is `O(1)` to update. */
+const MARKDOWN_RENDER_LIMIT_CHARS = 100_000;
+
 function buildAllPagesText(pageTexts: Record<number, string>): string {
   return Object.entries(pageTexts)
     .map(([page, text]) => ({ page: Number(page), text }))
@@ -410,18 +416,32 @@ export function OcrTextPanel() {
           />
         ) : (
           <div className="prose-ocr min-h-0 flex-1 overflow-auto rounded-md border border-border/40 bg-background px-3 py-2">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              // KaTeX in non-trust / strict mode: refuses to expand
-              // `\href`, `\url`, `\includegraphics`, etc. The OCR text
-              // comes from third-party LLM providers, so no rehype-raw
-              // and an explicit allow-list of safe elements.
-              rehypePlugins={[[rehypeKatex, { strict: true, trust: false }]]}
-              disallowedElements={["script", "iframe", "object", "embed", "form", "input", "button"]}
-              unwrapDisallowed
-            >
-              {draft}
-            </ReactMarkdown>
+            {draft.length > MARKDOWN_RENDER_LIMIT_CHARS ? (
+              <>
+                <div
+                  className="mb-2 rounded border border-border/40 bg-surface-2 px-2 py-1 text-[10.5px] text-foreground-muted"
+                  role="status"
+                >
+                  文本约 {Math.round(draft.length / 1024)} KB，已切换到纯文本视图避免渲染卡顿
+                </div>
+                <pre className="whitespace-pre-wrap font-mono text-[11.5px] leading-relaxed text-foreground">
+                  {draft}
+                </pre>
+              </>
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkMath]}
+                // KaTeX in non-trust / strict mode: refuses to expand
+                // `\href`, `\url`, `\includegraphics`, etc. The OCR text
+                // comes from third-party LLM providers, so no rehype-raw
+                // and an explicit allow-list of safe elements.
+                rehypePlugins={[[rehypeKatex, { strict: true, trust: false }]]}
+                disallowedElements={["script", "iframe", "object", "embed", "form", "input", "button"]}
+                unwrapDisallowed
+              >
+                {draft}
+              </ReactMarkdown>
+            )}
           </div>
         )
       ) : (

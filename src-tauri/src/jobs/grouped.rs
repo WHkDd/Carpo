@@ -32,10 +32,8 @@ use crate::ocr::{self, OcrRequest};
 use crate::secrets::{self, SecretKey};
 use crate::state::AppState;
 
-/// Max in-flight OCR calls. PaddleOCR's async jobs queue tolerates a few
-/// parallel submissions cleanly; 3 keeps us well under documented rate caps
-/// while shortening wall-clock proportionally on multi-block runs.
-const OCR_CONCURRENCY: usize = 3;
+// Per-provider in-flight OCR call ceiling now lives in `ocr::concurrency_for`
+// so each runner reads the same source of truth.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -219,6 +217,7 @@ async fn run(
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
 
+    let concurrency = ocr::concurrency_for(settings.provider);
     let outcomes: Vec<BlockOutcome> = stream::iter(items)
         .map(|item| {
             run_one_block(
@@ -235,7 +234,7 @@ async fn run(
                 item,
             )
         })
-        .buffer_unordered(OCR_CONCURRENCY)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 
@@ -289,7 +288,7 @@ async fn run_one_block(
         },
     );
 
-    let bitmap = match loader.get(item.block.page).await {
+    let bitmap = match loader.get(item.block.page, &token).await {
         Ok(b) => b,
         Err(AppError::Cancelled(_)) => {
             return BlockOutcome::Cancelled {

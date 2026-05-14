@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { pageKey } from "@/store/pageStateSlice";
 import { getSecret, startGroupedOcr } from "@/lib/tauri";
-import { ACTIVE_PREVIEW_DPI, PROFILE_DPI } from "@/lib/ocr-profile";
+import { ACTIVE_PREVIEW_DPI } from "@/lib/ocr-profile";
 import {
   appErrorMessage,
   type ArticleOcrPlan,
@@ -135,13 +135,15 @@ export function useGroupedOcrTrigger() {
         return;
       }
 
-      const profile = PROFILE_DPI[settings.ocr_profile];
       const req: GroupedOcrRequest = {
         file_id: currentFileId,
         path: file.path,
         kind: file.kind,
         preview_dpi: file.kind === "pdf" ? ACTIVE_PREVIEW_DPI : 0,
-        ocr_dpi: profile.ocr,
+        // OCR-grade DPI is derived backend-side from `settings.ocr_profile`
+        // (see `OcrProfile::ocr_dpi` in Rust). The field is kept on the wire
+        // for backward compatibility but the value is ignored.
+        ocr_dpi: 0,
         articles,
         newspaper_name: docState.newspaperName,
         newspaper_date: docState.newspaperDate,
