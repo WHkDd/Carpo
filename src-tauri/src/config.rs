@@ -26,6 +26,19 @@ pub enum OcrProfile {
     Fast,
 }
 
+impl OcrProfile {
+    /// Render DPI used when handing pages to OCR providers. Owned by the
+    /// backend so the request DTO's `ocr_dpi` field can no longer drift
+    /// from the persisted profile (it used to be computed by the frontend
+    /// and tunneled through every request).
+    pub fn ocr_dpi(self) -> u32 {
+        match self {
+            OcrProfile::Standard => 300,
+            OcrProfile::Fast => 200,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NonSecretSettings {
     pub provider: Provider,
@@ -76,4 +89,17 @@ pub fn save<R: Runtime>(app: &AppHandle<R>, s: &NonSecretSettings) -> AppResult<
     store
         .save()
         .map_err(|e| AppError::Config(format!("store save: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ocr_profile_dpi_mapping_matches_frontend_constants() {
+        // Mirror of `src/lib/ocr-profile.ts::PROFILE_DPI[*].ocr`. If either
+        // side moves, this test is the canary so the two stop drifting.
+        assert_eq!(OcrProfile::Standard.ocr_dpi(), 300);
+        assert_eq!(OcrProfile::Fast.ocr_dpi(), 200);
+    }
 }

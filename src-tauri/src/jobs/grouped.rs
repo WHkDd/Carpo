@@ -2,14 +2,16 @@
 //!
 //! Drives the user-marked articles → ordered block refs → cropped page bitmap
 //! → `ocr::recognize_with_retry` pipeline. Runs blocks concurrently (bounded
-//! by `OCR_CONCURRENCY`) and emits fine-grained progress events: one after
-//! prerender, one when each block starts, and one when each block finishes.
+//! by `OCR_CONCURRENCY`) and emits fine-grained progress events: one at job
+//! start, one when each block starts, and one when each block finishes.
+//! Page bitmaps are loaded lazily through [`PageLoader`]; work items are
+//! sorted by source page so consecutive workers tend to hit the LRU.
 //! The shared `CancellationToken` threads through every level — the OCR
 //! retry-backoff, the Paddle poll loop, and the per-block tokio::select! —
 //! so a user cancel reaches the network call within milliseconds rather than
 //! waiting for the next polling cycle.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -22,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::page_loader::PageLoader;
 use crate::config::{self, NonSecretSettings, Provider};
 use crate::error::{AppError, AppResult};
 use crate::events;
@@ -75,8 +78,12 @@ pub struct GroupedOcrRequest {
     /// Ignored for `FileKind::Image` (image files have a single native
     /// resolution; block rects are already in native pixel coords).
     pub preview_dpi: u32,
-    /// DPI at which the backend re-renders the page before cropping. Higher
-    /// is better for OCR quality at the cost of larger payloads.
+    /// Legacy / informational only. The backend now derives the OCR-grade
+    /// render DPI from `settings.ocr_profile`; this field is preserved on
+    /// the wire so old frontends keep deserializing cleanly, but its value
+    /// is ignored.
+    #[serde(default)]
+    #[allow(dead_code)]
     pub ocr_dpi: u32,
     pub articles: Vec<ArticleOcrPlan>,
     #[serde(default)]
@@ -154,13 +161,23 @@ async fn run(
     let settings = config::load(app)?;
     let secret_key = secret_key_for_provider(settings.provider);
     let secret = secrets::get(secret_key).await?;
-    let scale = page_scale(&req);
+    // Backend owns the OCR-DPI decision now: the request still carries
+    // `ocr_dpi` for backwards compat (see DTO doc) but the source of truth
+    // is `settings.ocr_profile`. This keeps profile and DPI in lockstep
+    // even if the frontend forgets to recompute.
+    let ocr_dpi = settings.ocr_profile.ocr_dpi();
+    let scale = page_scale(&req, ocr_dpi);
 
-    // Pre-render every referenced page into Send-safe `DynamicImage`s. PDF
-    // rendering runs on the dedicated PdfWorker thread; image files are read
-    // via spawn_blocking. The cache is shared across all blocks that point at
-    // the same page, amortising the render cost.
-    let page_cache = prerender_pages(app, &req, &token).await?;
+    // Lazy bitmap loader: pages are rendered on demand and cached in a small
+    // LRU. This caps the resident decoded-page footprint at
+    // `PAGE_LRU_CAPACITY × page_size` regardless of how many pages the
+    // articles span.
+    let loader = Arc::new(PageLoader::new(
+        app.clone(),
+        req.kind,
+        PathBuf::from(&req.path),
+        ocr_dpi,
+    ));
     let client = app.state::<AppState>().http.clone();
 
     let mut items: Vec<WorkItem> = Vec::new();
@@ -178,6 +195,11 @@ async fn run(
             });
         }
     }
+    // Sort work items by source page. With `buffer_unordered(OCR_CONCURRENCY)`
+    // this keeps consecutive workers focused on the same page so the LRU hit
+    // rate stays high — without sorting, two workers might bounce between
+    // pages and force re-renders.
+    items.sort_by_key(|item| item.block.page);
     let total: u32 = items.len() as u32;
     let job_id_str = job_id.to_string();
 
@@ -187,13 +209,12 @@ async fn run(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("页面已就绪 · 共 {} 块待识别", total),
+            label: format!("准备识别 · 共 {} 块", total),
             current_block: 0,
             article_total: 0,
         },
     );
 
-    let page_cache = Arc::new(page_cache);
     let settings = Arc::new(settings);
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
@@ -207,7 +228,7 @@ async fn run(
                 job_id_str.clone(),
                 total,
                 scale,
-                Arc::clone(&page_cache),
+                Arc::clone(&loader),
                 Arc::clone(&settings),
                 Arc::clone(&secret_arc),
                 Arc::clone(&done_counter),
@@ -240,7 +261,7 @@ async fn run_one_block(
     job_id_str: String,
     total: u32,
     scale: f32,
-    page_cache: Arc<HashMap<u32, Arc<DynamicImage>>>,
+    loader: Arc<PageLoader>,
     settings: Arc<NonSecretSettings>,
     secret: Arc<Option<String>>,
     done_counter: Arc<AtomicU32>,
@@ -268,14 +289,22 @@ async fn run_one_block(
         },
     );
 
-    let Some(bitmap) = page_cache.get(&item.block.page) else {
-        return BlockOutcome::Failed {
-            article_id: item.article_id,
-            message: format!("page {} 未预渲染 (内部错误)", item.block.page),
-        };
+    let bitmap = match loader.get(item.block.page).await {
+        Ok(b) => b,
+        Err(AppError::Cancelled(_)) => {
+            return BlockOutcome::Cancelled {
+                article_id: item.article_id,
+            }
+        }
+        Err(e) => {
+            return BlockOutcome::Failed {
+                article_id: item.article_id,
+                message: format!("page {} 加载失败: {e}", item.block.page),
+            }
+        }
     };
 
-    let cropped = match crop_block(bitmap, &item.block.rect, scale) {
+    let cropped = match crop_block(&bitmap, &item.block.rect, scale) {
         Ok(c) => c,
         Err(e) => {
             return BlockOutcome::Failed {
@@ -440,51 +469,6 @@ enum BlockOutcome {
     },
 }
 
-async fn prerender_pages(
-    app: &AppHandle,
-    req: &GroupedOcrRequest,
-    token: &CancellationToken,
-) -> AppResult<HashMap<u32, Arc<DynamicImage>>> {
-    let mut unique_pages: BTreeSet<u32> = BTreeSet::new();
-    for article in &req.articles {
-        for block in &article.blocks {
-            unique_pages.insert(block.page);
-        }
-    }
-
-    // Image files have one native bitmap; load it once and clone the Arc for
-    // every referenced "page". PDFs go through the dedicated PdfWorker thread.
-    if matches!(req.kind, FileKind::Image) {
-        if token.is_cancelled() {
-            return Err(AppError::Cancelled("grouped prerender".into()));
-        }
-        let path = PathBuf::from(&req.path);
-        let bitmap = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
-            .await
-            .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
-        let bitmap = Arc::new(bitmap);
-        let mut cache = HashMap::new();
-        for page in unique_pages {
-            cache.insert(page, Arc::clone(&bitmap));
-        }
-        return Ok(cache);
-    }
-
-    let mut cache = HashMap::new();
-    for page in unique_pages {
-        if token.is_cancelled() {
-            return Err(AppError::Cancelled("grouped prerender".into()));
-        }
-        let bitmap = app
-            .state::<AppState>()
-            .pdf
-            .render_image(PathBuf::from(&req.path), page, req.ocr_dpi)
-            .await?;
-        cache.insert(page, Arc::new(bitmap));
-    }
-    Ok(cache)
-}
-
 pub(super) fn secret_key_for_provider(p: Provider) -> SecretKey {
     match p {
         Provider::Paddleocr => SecretKey::PaddleToken,
@@ -496,11 +480,16 @@ pub(super) fn secret_key_for_provider(p: Provider) -> SecretKey {
 
 /// PDF blocks are stored in preview-pixel coordinates; rendering at `ocr_dpi`
 /// gives a larger bitmap, so block rects must scale up by `ocr_dpi /
-/// preview_dpi`. Image files have a single native resolution — no scaling.
-fn page_scale(req: &GroupedOcrRequest) -> f32 {
+/// preview_dpi`. `preview_dpi` is genuinely a per-request input — it
+/// describes the DPI the user *drew* the rectangles at, which can differ
+/// from the current preview DPI if the profile or canvas DPI changed
+/// between drawing and triggering OCR. `ocr_dpi` now flows from
+/// `settings.ocr_profile`, so it's passed in rather than read off `req`.
+/// Image files have a single native resolution — no scaling.
+fn page_scale(req: &GroupedOcrRequest, ocr_dpi: u32) -> f32 {
     match req.kind {
         FileKind::Image => 1.0,
-        FileKind::Pdf if req.preview_dpi > 0 => req.ocr_dpi as f32 / req.preview_dpi as f32,
+        FileKind::Pdf if req.preview_dpi > 0 => ocr_dpi as f32 / req.preview_dpi as f32,
         FileKind::Pdf => 1.0,
     }
 }
@@ -550,9 +539,6 @@ pub fn validate(req: &GroupedOcrRequest) -> AppResult<()> {
             return Err(AppError::Config(format!("报道 {} 没有版块", article.title)));
         }
     }
-    if req.ocr_dpi == 0 {
-        return Err(AppError::Config("ocr_dpi 必须大于 0".into()));
-    }
     if matches!(req.kind, FileKind::Pdf) && req.preview_dpi == 0 {
         return Err(AppError::Config("PDF 必须提供 preview_dpi".into()));
     }
@@ -601,20 +587,20 @@ mod tests {
     #[test]
     fn page_scale_image_is_one() {
         let r = make_req(FileKind::Image);
-        assert!((page_scale(&r) - 1.0).abs() < f32::EPSILON);
+        assert!((page_scale(&r, 300) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn page_scale_pdf_uses_dpi_ratio() {
         let r = make_req(FileKind::Pdf);
-        assert!((page_scale(&r) - 2.0).abs() < f32::EPSILON);
+        assert!((page_scale(&r, 300) - 2.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn page_scale_pdf_with_zero_preview_dpi_falls_back_to_one() {
         let mut r = make_req(FileKind::Pdf);
         r.preview_dpi = 0;
-        assert!((page_scale(&r) - 1.0).abs() < f32::EPSILON);
+        assert!((page_scale(&r, 300) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
