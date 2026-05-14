@@ -3,7 +3,7 @@
 桌面 OCR 工具，专门处理近代中文报刊扫描件。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
 
-跨平台桌面应用，覆盖 macOS（Apple Silicon + Intel）与 Windows。
+跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。
 
 ## 特性
 
@@ -21,7 +21,6 @@ provider 任选，结果导出为 Markdown / 纯文本。
 正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
 
 - macOS Apple Silicon：`Xcvt_*_aarch64.dmg`
-- macOS Intel：`Xcvt_*_x64.dmg`
 - Windows：`Xcvt_*_x64-setup.exe` 或 `Xcvt_*_x64_en-US.msi`
 
 ### macOS 首次启动

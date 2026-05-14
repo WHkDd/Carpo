@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 macos-arm64|macos-x64|windows-x64" >&2
+  echo "usage: $0 macos-arm64|windows-x64" >&2
 }
 
 if [[ $# -ne 1 ]]; then
@@ -14,12 +14,6 @@ case "$1" in
   macos-arm64)
     asset_arch="mac-arm64"
     output_arch="macos-arm64"
-    lib_path="lib/libpdfium.dylib"
-    output_name="libpdfium.dylib"
-    ;;
-  macos-x64)
-    asset_arch="mac-x64"
-    output_arch="macos-x64"
     lib_path="lib/libpdfium.dylib"
     output_name="libpdfium.dylib"
     ;;

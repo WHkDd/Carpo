@@ -18,8 +18,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Apple Silicon only on macOS — GitHub free macos-13 runner queue
+          # is unreliable and the Intel Mac install base for this app is
+          # negligible. Restoring x64 means re-adding the matrix entry +
+          # `tauri.macos-x64.conf.json` overlay + the mac-x64 SHA256SUMS line.
           - { os: macos-14, target: aarch64-apple-darwin, pdfium: macos-arm64, suffix: macos-arm64, config_overlay: "" }
-          - { os: macos-13, target: x86_64-apple-darwin,  pdfium: macos-x64,   suffix: macos-x64,   config_overlay: "src-tauri/tauri.macos-x64.conf.json" }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, pdfium: windows-x64, suffix: windows-x64, config_overlay: "src-tauri/tauri.windows-x64.conf.json" }
     runs-on: ${{ matrix.os }}
     steps:

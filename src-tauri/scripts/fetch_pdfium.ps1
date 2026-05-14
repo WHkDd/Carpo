@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("macos-arm64", "macos-x64", "windows-x64")]
+  [ValidateSet("macos-arm64", "windows-x64")]
   [string] $Arch
 )
 
@@ -15,12 +15,6 @@ switch ($Arch) {
   "macos-arm64" {
     $assetArch = "mac-arm64"
     $outputArch = "macos-arm64"
-    $libPath = "lib/libpdfium.dylib"
-    $outputName = "libpdfium.dylib"
-  }
-  "macos-x64" {
-    $assetArch = "mac-x64"
-    $outputArch = "macos-x64"
     $libPath = "lib/libpdfium.dylib"
     $outputName = "libpdfium.dylib"
   }
