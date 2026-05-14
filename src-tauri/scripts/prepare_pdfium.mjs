@@ -5,14 +5,17 @@ const platform = os.platform();
 const arch = os.arch();
 
 let target = null;
-if (platform === "darwin") {
-  target = arch === "arm64" ? "macos-arm64" : "macos-x64";
+if (platform === "darwin" && arch === "arm64") {
+  target = "macos-arm64";
 } else if (platform === "win32" && arch === "x64") {
   target = "windows-x64";
 }
 
 if (!target) {
-  console.error(`Unsupported pdfium host: ${platform}/${arch}`);
+  console.error(
+    `Unsupported pdfium host: ${platform}/${arch} ` +
+      `(supported: darwin/arm64, win32/x64)`
+  );
   process.exit(1);
 }
 

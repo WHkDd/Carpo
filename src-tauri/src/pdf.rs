@@ -209,11 +209,11 @@ fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
 fn dev_pdfium_library_path() -> AppResult<PathBuf> {
     let arch = match (env::consts::OS, env::consts::ARCH) {
         ("macos", "aarch64") => "macos-arm64",
-        ("macos", "x86_64") => "macos-x64",
         ("windows", "x86_64") => "windows-x64",
         (os, arch) => {
             return Err(AppError::Pdf(format!(
-                "unsupported pdfium dev target: {os}/{arch}"
+                "unsupported pdfium dev target: {os}/{arch} \
+                 (supported: macos/aarch64, windows/x86_64)"
             )))
         }
     };
