@@ -243,10 +243,7 @@ mod tests {
     async fn image_payload_uses_data_url() {
         let server = MockServer::start().await;
         // base64 of "ABC" is "QUJD"
-        let expected_url = format!(
-            "data:image/png;base64,{}",
-            STANDARD.encode(b"ABC")
-        );
+        let expected_url = format!("data:image/png;base64,{}", STANDARD.encode(b"ABC"));
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(body_partial_json(json!({

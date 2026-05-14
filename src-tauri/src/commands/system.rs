@@ -26,6 +26,12 @@ pub async fn open_log_dir(app: tauri::AppHandle) -> AppResult<String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Caller contract: `path` MUST originate from a Tauri-resolved API
+/// (`app.path().*`) or a backend-controlled constant. NEVER call this with a
+/// path that came from frontend input — `open` / `explorer` / `xdg-open`
+/// will happily reveal arbitrary filesystem locations and on macOS some path
+/// patterns can trigger handler apps with their own side effects. The single
+/// caller (`open_log_dir`) satisfies this; new callers must too.
 fn reveal_in_file_manager(path: &Path) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     let program = "open";

@@ -412,7 +412,13 @@ export function OcrTextPanel() {
           <div className="prose-ocr min-h-0 flex-1 overflow-auto rounded-md border border-border/40 bg-background px-3 py-2">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex]}
+              // KaTeX in non-trust / strict mode: refuses to expand
+              // `\href`, `\url`, `\includegraphics`, etc. The OCR text
+              // comes from third-party LLM providers, so no rehype-raw
+              // and an explicit allow-list of safe elements.
+              rehypePlugins={[[rehypeKatex, { strict: true, trust: false }]]}
+              disallowedElements={["script", "iframe", "object", "embed", "form", "input", "button"]}
+              unwrapDisallowed
             >
               {draft}
             </ReactMarkdown>

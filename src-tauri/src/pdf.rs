@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ::image::{DynamicImage, GenericImageView, ImageFormat};
+use ::image::{DynamicImage, GenericImageView};
 use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError};
 use tokio::sync::{mpsc, oneshot};
 
@@ -25,11 +25,22 @@ pub struct PdfInfoData {
     pub title: Option<String>,
 }
 
+/// JPEG quality used for preview encodes. 85 is a sweet spot for newspaper
+/// scans: text edges stay crisp and file size drops ~6× vs PNG, so the IPC
+/// payload and decode time both shrink. Tune carefully — too low and the
+/// preview canvas starts to look "compressed".
+pub const PREVIEW_JPEG_QUALITY: u8 = 85;
+
+/// Preview-grade page bitmap. The `bytes` payload is JPEG-encoded (see
+/// [`PREVIEW_JPEG_QUALITY`]); the frontend wraps it in a Blob with the
+/// matching MIME and hands the object URL to Konva. `bytes` was named
+/// `png_bytes` historically — the format changed but the wire shape is
+/// unchanged (width/height prefix + image bytes).
 #[derive(Debug)]
 pub struct RenderedPage {
     pub width: u32,
     pub height: u32,
-    pub png_bytes: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 pub fn init_pdfium() -> AppResult<Pdfium> {
@@ -82,18 +93,37 @@ pub fn render_page_with(
 ) -> AppResult<RenderedPage> {
     let image = render_page_image_with(pdfium, path, page, dpi)?;
     let (width, height) = image.dimensions();
-
-    let mut png = Cursor::new(Vec::new());
-    image
-        .write_to(&mut png, ImageFormat::Png)
-        .map_err(|err| AppError::Image(format!("png encode failed: {err}")))?;
-
+    let bytes = encode_preview_jpeg(image)?;
     Ok(RenderedPage {
         width,
         height,
-        png_bytes: png.into_inner(),
+        bytes,
     })
 }
+
+/// Encodes a bitmap as a preview-grade JPEG. JPEG can't carry an alpha
+/// channel, so RGBA inputs are flattened to RGB first. For OCR-grade
+/// renders use the raw `DynamicImage` returned by `render_page_image_with`
+/// — this helper is for the canvas preview only.
+pub fn encode_preview_jpeg(image: DynamicImage) -> AppResult<Vec<u8>> {
+    use image::codecs::jpeg::JpegEncoder;
+
+    let rgb = image.into_rgb8();
+    let (w, h) = rgb.dimensions();
+    let mut buf = Cursor::new(Vec::new());
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, PREVIEW_JPEG_QUALITY);
+    encoder
+        .encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+        .map_err(|err| AppError::Image(format!("jpeg encode failed: {err}")))?;
+    Ok(buf.into_inner())
+}
+
+/// Hard ceiling on render DPI. The frontend currently caps requests at 300
+/// (OCR profile "standard"); anything past 600 is almost certainly a bug or a
+/// hostile payload. At 600 DPI an A3 page is already ~700 MB decoded — past
+/// this point we stop trusting the caller and reject up front instead of
+/// letting PDFium try to allocate.
+pub const MAX_DPI: u32 = 600;
 
 /// Renders a page into an in-memory `DynamicImage` without the PNG
 /// encode/decode round-trip. Used by the OCR job runners — they crop and
@@ -107,6 +137,11 @@ pub fn render_page_image_with(
 ) -> AppResult<DynamicImage> {
     if dpi == 0 {
         return Err(AppError::Pdf("dpi must be greater than 0".to_string()));
+    }
+    if dpi > MAX_DPI {
+        return Err(AppError::Pdf(format!(
+            "dpi {dpi} exceeds maximum {MAX_DPI}"
+        )));
     }
 
     let document = load_document(pdfium, path)?;
@@ -233,9 +268,16 @@ pub struct PdfWorker {
     tx: mpsc::Sender<PdfTask>,
 }
 
+/// Bounded mpsc depth for the PDFium worker. This is the *backpressure
+/// point*: callers calling `tx.send(task).await` will suspend once the
+/// queue is full instead of growing it unbounded. 32 is large enough to
+/// absorb a burst of preview renders during fast page-flips while still
+/// shedding load if the renderer falls behind permanently.
+const PDF_WORKER_QUEUE_DEPTH: usize = 32;
+
 impl PdfWorker {
     pub fn spawn() -> AppResult<Self> {
-        let (tx, mut rx) = mpsc::channel::<PdfTask>(32);
+        let (tx, mut rx) = mpsc::channel::<PdfTask>(PDF_WORKER_QUEUE_DEPTH);
         // `Pdfium` is not `Send`, so we cannot move it between threads. Init
         // it inside the worker thread and signal the outcome back over a
         // oneshot channel so PdfWorker::spawn surfaces init failures.
@@ -303,12 +345,7 @@ impl PdfWorker {
         self.dispatch(PdfTask::Info { path, resp: rtx }, rrx).await
     }
 
-    pub async fn render_png(
-        &self,
-        path: PathBuf,
-        page: u32,
-        dpi: u32,
-    ) -> AppResult<RenderedPage> {
+    pub async fn render_png(&self, path: PathBuf, page: u32, dpi: u32) -> AppResult<RenderedPage> {
         let (rtx, rrx) = oneshot::channel();
         self.dispatch(
             PdfTask::RenderPng {
@@ -363,9 +400,20 @@ mod tests {
         let rendered = render_page_with(&pdfium, sample_pdf(), 1, 150).unwrap();
         assert!(rendered.width > 0);
         assert!(rendered.height > 0);
-        assert!(rendered.png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        // JPEG SOI marker.
+        assert!(rendered.bytes.starts_with(b"\xff\xd8\xff"));
 
         let image = render_page_image_with(&pdfium, sample_pdf(), 1, 150).unwrap();
         assert!(image.width() > 0 && image.height() > 0);
+    }
+
+    #[test]
+    fn rejects_dpi_above_max() {
+        let pdfium = init_pdfium().unwrap();
+        let err = render_page_image_with(&pdfium, sample_pdf(), 1, MAX_DPI + 1).unwrap_err();
+        match err {
+            AppError::Pdf(msg) => assert!(msg.contains("exceeds maximum")),
+            other => panic!("expected Pdf, got {other:?}"),
+        }
     }
 }

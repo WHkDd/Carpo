@@ -28,7 +28,10 @@ export interface FetchedBitmap {
 
 /** Decodes the binary wire format used by `render_page` and
  *  `load_raster_image`: 4 bytes width (LE u32) + 4 bytes height (LE u32) +
- *  PNG bytes. Returns a Blob the caller can pass to `URL.createObjectURL`. */
+ *  JPEG bytes. The backend used to send PNG and switched to JPEG for the
+ *  preview path (see `encode_preview_jpeg`); the OCR pipeline still works
+ *  with the original file directly. Returns a Blob the caller can pass to
+ *  `URL.createObjectURL`. */
 function unpackPageBytes(buffer: ArrayBuffer): FetchedBitmap {
   if (buffer.byteLength < 8) {
     throw new Error("renderPage response too short");
@@ -36,11 +39,11 @@ function unpackPageBytes(buffer: ArrayBuffer): FetchedBitmap {
   const view = new DataView(buffer);
   const width = view.getUint32(0, true);
   const height = view.getUint32(4, true);
-  const pngBytes = new Uint8Array(buffer, 8);
+  const imageBytes = new Uint8Array(buffer, 8);
   return {
     width,
     height,
-    blob: new Blob([pngBytes], { type: "image/png" }),
+    blob: new Blob([imageBytes], { type: "image/jpeg" }),
   };
 }
 

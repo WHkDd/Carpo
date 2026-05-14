@@ -1,22 +1,23 @@
 //! Whole-file OCR job runner.
 //!
 //! One call per requested page — no block cropping, no article grouping.
-//! Progress events: one after prerender, one before/after each page's OCR.
-//! Final `JOB_DONE` carries `{page, text}` pairs.
+//! Page bitmaps are fetched on demand via [`PageLoader`], so peak memory
+//! is bounded by the loader's small LRU rather than `pages.len() ×
+//! page_size`. Progress events: one at start, one before/after each page's
+//! OCR. Final `JOB_DONE` carries `{page, text}` pairs.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
-use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::grouped::{encode_png_bytes, secret_key_for_provider, FileKind};
+use super::page_loader::PageLoader;
 use crate::config;
 use crate::error::{AppError, AppResult};
 use crate::events;
@@ -33,6 +34,9 @@ pub struct WholeFileOcrRequest {
     pub path: String,
     pub kind: FileKind,
     pub pages: Vec<u32>,
+    /// Legacy / informational only — see [`super::grouped::GroupedOcrRequest`].
+    /// The backend pulls the OCR-grade render DPI from `settings.ocr_profile`.
+    #[serde(default)]
     pub ocr_dpi: u32,
     #[serde(default)]
     pub newspaper_name: String,
@@ -104,8 +108,19 @@ async fn run(
     let secret = secrets::get(secret_key).await?;
     let total = req.pages.len() as u32;
     let job_id_str = job_id.to_string();
+    // Backend-derived (see `OcrProfile::ocr_dpi`); request DTO field is
+    // ignored.
+    let ocr_dpi = settings.ocr_profile.ocr_dpi();
 
-    let page_cache = prerender_pages(app, &req, &token).await?;
+    // Lazy bitmap loader. With `OCR_CONCURRENCY = 3` and the LRU capacity in
+    // `PageLoader`, peak memory stays at a handful of decoded pages instead
+    // of the full requested range.
+    let loader = Arc::new(PageLoader::new(
+        app.clone(),
+        req.kind,
+        PathBuf::from(&req.path),
+        ocr_dpi,
+    ));
     let client = app.state::<AppState>().http.clone();
 
     let _ = app.emit(
@@ -114,11 +129,10 @@ async fn run(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("页面已就绪 · 共 {} 页待识别", total),
+            label: format!("准备识别 · 共 {} 页", total),
         },
     );
 
-    let page_cache = Arc::new(page_cache);
     let settings = Arc::new(settings);
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
@@ -131,7 +145,7 @@ async fn run(
                 token.clone(),
                 job_id_str.clone(),
                 total,
-                Arc::clone(&page_cache),
+                Arc::clone(&loader),
                 Arc::clone(&settings),
                 Arc::clone(&secret_arc),
                 Arc::clone(&done_counter),
@@ -175,7 +189,7 @@ async fn run_one_page(
     token: CancellationToken,
     job_id_str: String,
     total: u32,
-    page_cache: Arc<HashMap<u32, Arc<DynamicImage>>>,
+    loader: Arc<PageLoader>,
     settings: Arc<config::NonSecretSettings>,
     secret: Arc<Option<String>>,
     done_counter: Arc<AtomicU32>,
@@ -197,14 +211,18 @@ async fn run_one_page(
         },
     );
 
-    let Some(bitmap) = page_cache.get(&page) else {
-        return PageOutcome::Failed {
-            page,
-            message: format!("page {} 未预渲染 (内部错误)", page),
-        };
+    let bitmap = match loader.get(page).await {
+        Ok(b) => b,
+        Err(AppError::Cancelled(_)) => return PageOutcome::Cancelled,
+        Err(e) => {
+            return PageOutcome::Failed {
+                page,
+                message: format!("page {} 加载失败: {e}", page),
+            }
+        }
     };
 
-    let png_bytes = match encode_png_bytes(bitmap) {
+    let png_bytes = match encode_png_bytes(&bitmap) {
         Ok(b) => b,
         Err(e) => {
             return PageOutcome::Failed {
@@ -261,51 +279,12 @@ enum PageOutcome {
     Cancelled,
 }
 
-async fn prerender_pages(
-    app: &AppHandle,
-    req: &WholeFileOcrRequest,
-    token: &CancellationToken,
-) -> AppResult<HashMap<u32, Arc<DynamicImage>>> {
-    if matches!(req.kind, FileKind::Image) {
-        if token.is_cancelled() {
-            return Err(AppError::Cancelled("whole-file prerender".into()));
-        }
-        let path = PathBuf::from(&req.path);
-        let bitmap = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
-            .await
-            .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
-        let bitmap = Arc::new(bitmap);
-        let mut cache = HashMap::new();
-        for page in &req.pages {
-            cache.insert(*page, Arc::clone(&bitmap));
-        }
-        return Ok(cache);
-    }
-
-    let mut cache = HashMap::new();
-    for page in &req.pages {
-        if token.is_cancelled() {
-            return Err(AppError::Cancelled("whole-file prerender".into()));
-        }
-        let bitmap = app
-            .state::<AppState>()
-            .pdf
-            .render_image(PathBuf::from(&req.path), *page, req.ocr_dpi)
-            .await?;
-        cache.insert(*page, Arc::new(bitmap));
-    }
-    Ok(cache)
-}
-
 pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
     if req.path.is_empty() {
         return Err(AppError::Config("缺少文件路径".into()));
     }
     if req.pages.is_empty() {
         return Err(AppError::Config("没有可识别的页面".into()));
-    }
-    if req.ocr_dpi == 0 {
-        return Err(AppError::Config("ocr_dpi 必须大于 0".into()));
     }
     if req.pages.len() > 1000 {
         return Err(AppError::Config("单次最多识别 1000 页".into()));
@@ -332,13 +311,6 @@ mod tests {
     #[test]
     fn validate_rejects_empty_pages() {
         let r = make_req(vec![]);
-        assert!(validate(&r).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_zero_ocr_dpi() {
-        let mut r = make_req(vec![1]);
-        r.ocr_dpi = 0;
         assert!(validate(&r).is_err());
     }
 

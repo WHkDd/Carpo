@@ -8,6 +8,7 @@
 //! work units and breaks out cleanly.
 
 pub mod grouped;
+pub mod page_loader;
 pub mod whole_file;
 
 use std::collections::HashMap;

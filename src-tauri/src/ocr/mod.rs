@@ -201,7 +201,12 @@ pub async fn recognize_with_retry(
             Err(e) => return Err(e),
         }
     }
-    Err(last_err.unwrap_or_else(|| AppError::Internal("retry loop exhausted".into())))
+    // The retry budget is gone — strip the retryable flag so the UI doesn't
+    // try to repeat the call on top of our exhausted loop. The original
+    // message is preserved.
+    Err(last_err
+        .map(AppError::into_non_retryable)
+        .unwrap_or_else(|| AppError::Internal("retry loop exhausted".into())))
 }
 
 #[cfg(test)]
@@ -270,9 +275,10 @@ mod tests {
             prompt: "",
         };
         let cancel = never_cancelled();
-        let out = recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
-            .await
-            .unwrap();
+        let out =
+            recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
+                .await
+                .unwrap();
         assert_eq!(out, "recovered");
     }
 
@@ -291,10 +297,13 @@ mod tests {
             prompt: "",
         };
         let cancel = never_cancelled();
-        let err = recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
-            .await
-            .unwrap_err();
-        assert!(err.is_retryable());
+        let err =
+            recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
+                .await
+                .unwrap_err();
+        // After MAX_RETRIES the wrapper strips the retryable flag so the UI
+        // doesn't pile its own retry on top of an already-exhausted loop.
+        assert!(!err.is_retryable());
     }
 
     #[tokio::test]
@@ -332,9 +341,15 @@ mod tests {
             prompt: "p",
         };
         let cancel = never_cancelled();
-        let out = recognize(&reqwest::Client::new(), &settings, Some("sk-x"), req, &cancel)
-            .await
-            .unwrap();
+        let out = recognize(
+            &reqwest::Client::new(),
+            &settings,
+            Some("sk-x"),
+            req,
+            &cancel,
+        )
+        .await
+        .unwrap();
         assert_eq!(out, "via custom");
     }
 
@@ -380,9 +395,10 @@ mod tests {
             cancel_clone.cancel();
         });
         let started = std::time::Instant::now();
-        let err = recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
-            .await
-            .unwrap_err();
+        let err =
+            recognize_with_retry(&reqwest::Client::new(), &settings, Some("tk"), req, &cancel)
+                .await
+                .unwrap_err();
         assert!(matches!(err, AppError::Cancelled(_)));
         assert!(started.elapsed() < Duration::from_secs(2));
     }

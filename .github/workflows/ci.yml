@@ -24,9 +24,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-        continue-on-error: true # eslint config not yet authored
       - run: pnpm test --run
-        continue-on-error: true # no tests yet
 
   rust:
     name: Rust (fmt · clippy · test)

@@ -45,6 +45,29 @@ impl AppError {
             _ => false,
         }
     }
+
+    /// Strips the `retryable` flag off whichever variant carries it. Used by
+    /// `recognize_with_retry` after the retry budget is exhausted: at that
+    /// point the error is, by definition, not worth retrying again from the
+    /// caller's perspective. Without this, the UI sees `is_retryable: true`
+    /// and may double-retry on top of our internal loop.
+    pub fn into_non_retryable(self) -> Self {
+        match self {
+            AppError::Ocr {
+                provider, message, ..
+            } => AppError::Ocr {
+                provider,
+                message,
+                retryable: false,
+            },
+            AppError::Network(msg) => AppError::Ocr {
+                provider: "network".into(),
+                message: msg,
+                retryable: false,
+            },
+            other => other,
+        }
+    }
 }
 
 impl From<std::io::Error> for AppError {
@@ -61,6 +84,15 @@ impl From<serde_json::Error> for AppError {
 
 impl From<reqwest::Error> for AppError {
     fn from(e: reqwest::Error) -> Self {
-        AppError::Network(e.to_string())
+        // `Network` is treated as retryable everywhere; only true transport
+        // failures (timeout, connect, redirect) belong there. Decode /
+        // builder / body errors are protocol-level bugs that won't fix
+        // themselves on a retry — surface them as `Internal` so the retry
+        // wrapper doesn't pile on.
+        if e.is_decode() || e.is_builder() || e.is_body() {
+            AppError::Internal(format!("http: {e}"))
+        } else {
+            AppError::Network(e.to_string())
+        }
     }
 }
