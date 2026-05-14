@@ -171,12 +171,13 @@ impl PageLoader {
             // time. An already-running PDFium render still completes (no
             // abort API) but the result is dropped silently below.
             //
-            // OCR-grade renders go through the dedicated `pdf_ocr` worker
-            // so they don't contend with preview renders driven by user
-            // navigation.
+            // Shares the single `PdfWorker` with the preview path — see
+            // `AppState` for why we can't run two PDFium workers in one
+            // process. The `PageLoader` LRU + dedup keep the worker
+            // queue from filling up, so preview latency stays bounded.
             let img = app
                 .state::<AppState>()
-                .pdf_ocr
+                .pdf
                 .render_image_cancellable(path, page, dpi, Some(cancel_for_task))
                 .await?;
             Ok::<_, AppError>(Arc::new(img))
