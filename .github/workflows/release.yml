@@ -5,6 +5,13 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# softprops/action-gh-release needs contents:write to create / update the
+# release object. The default GITHUB_TOKEN ships read-only for forks and
+# for repos with restrictive default workflow permissions, so we grant it
+# explicitly here.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -57,6 +64,13 @@ jobs:
       - name: Build (base config)
         if: matrix.config_overlay == ''
         run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Fix DMG volume icon visibility (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for dmg in src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg; do
+            bash src-tauri/scripts/fix_dmg_volume_icon.sh "$dmg"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
