@@ -10,17 +10,16 @@ use crate::{
 /// types, so `AppState` is naturally `Send + Sync` — no `unsafe impl` is
 /// needed (or correct).
 ///
-/// Two PDFium worker threads instead of one: a single shared worker would
-/// queue OCR-grade prerenders behind preview renders (and vice versa), so
-/// turning a multi-page OCR loose would freeze page-flip in the canvas. Each
-/// worker owns its own `Pdfium` handle (cheap) and processes its own queue.
+/// We deliberately run **one** `PdfWorker`, not two. PDFium's
+/// `FPDF_InitLibrary` is process-global (see pdfium-render
+/// `Pdfium::new`); calling it twice in the same process aborts on
+/// startup. A previous attempt at preview/OCR worker separation crashed
+/// the Tauri shell at launch. With `PageLoader`'s lazy + deduped loading
+/// the OCR side only ever asks for 1–N pages (`N = OCR_CONCURRENCY`)
+/// at once, so worst-case preview latency is bounded by a small handful
+/// of render slots — acceptable until we add an in-worker priority lane.
 pub struct AppState {
-    /// Preview rendering for the canvas. Sized for low-latency single-page
-    /// requests driven by user interaction.
     pub pdf: PdfWorker,
-    /// OCR-grade rendering used by the job runners. Throughput-oriented and
-    /// can be saturated for minutes at a time without affecting `pdf`.
-    pub pdf_ocr: PdfWorker,
     pub http: reqwest::Client,
     pub jobs: Arc<JobRegistry>,
 }
@@ -35,7 +34,6 @@ impl AppState {
             .map_err(|e| AppError::Internal(format!("http client: {e}")))?;
         Ok(Self {
             pdf: PdfWorker::spawn()?,
-            pdf_ocr: PdfWorker::spawn()?,
             http,
             jobs: Arc::new(JobRegistry::new()),
         })
