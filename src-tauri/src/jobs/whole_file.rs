@@ -25,7 +25,7 @@ use crate::ocr::{self, OcrRequest};
 use crate::secrets;
 use crate::state::AppState;
 
-const OCR_CONCURRENCY: usize = 3;
+// Per-provider in-flight OCR call ceiling lives in `ocr::concurrency_for`.
 
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
@@ -137,6 +137,7 @@ async fn run(
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
 
+    let concurrency = ocr::concurrency_for(settings.provider);
     let outcomes: Vec<PageOutcome> = stream::iter(req.pages.clone().into_iter().enumerate())
         .map(|(idx, page)| {
             run_one_page(
@@ -153,7 +154,7 @@ async fn run(
                 idx + 1,
             )
         })
-        .buffer_unordered(OCR_CONCURRENCY)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 
@@ -211,7 +212,7 @@ async fn run_one_page(
         },
     );
 
-    let bitmap = match loader.get(page).await {
+    let bitmap = match loader.get(page, &token).await {
         Ok(b) => b,
         Err(AppError::Cancelled(_)) => return PageOutcome::Cancelled,
         Err(e) => {
@@ -286,8 +287,13 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
     if req.pages.is_empty() {
         return Err(AppError::Config("没有可识别的页面".into()));
     }
-    if req.pages.len() > 1000 {
-        return Err(AppError::Config("单次最多识别 1000 页".into()));
+    // 500 pages × ~20s/page ≈ 3 hours of OCR even on a fast provider; past
+    // this point the user is better served by splitting the file so cancel
+    // / retry granularity matches a sane review cycle.
+    if req.pages.len() > 500 {
+        return Err(AppError::Config(
+            "单次最多识别 500 页（建议拆分大文件以获得更短的反馈周期）".into(),
+        ));
     }
     Ok(())
 }

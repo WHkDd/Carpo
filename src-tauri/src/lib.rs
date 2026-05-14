@@ -18,7 +18,7 @@ async fn ping() -> Result<&'static str, error::AppError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -56,6 +56,24 @@ pub fn run() {
             app.manage(state::AppState::new()?);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|handle, event| {
+        // Graceful shutdown: when the user requests app exit, fire every
+        // active job's cancellation token. Provider polling loops, retry
+        // backoffs, and the PdfWorker queue all watch the same token, so
+        // this stops outstanding network calls instead of letting them
+        // race the process teardown. Fire-and-forget — we don't `await`
+        // job teardown so quit stays snappy.
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let Some(state) = handle.try_state::<state::AppState>() {
+                for entry in state.jobs.list() {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(&entry.job_id) {
+                        state.jobs.cancel(uuid);
+                    }
+                }
+            }
+        }
+    });
 }

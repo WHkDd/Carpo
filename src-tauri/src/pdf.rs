@@ -16,6 +16,7 @@ use std::{
 use ::image::{DynamicImage, GenericImageView};
 use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfRenderConfig, Pdfium, PdfiumError};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
 
@@ -237,7 +238,11 @@ fn map_pdfium_error(err: PdfiumError) -> AppError {
 
 /// Tasks the PdfWorker thread can perform. Each variant carries a oneshot
 /// channel back to the caller so any error path reaches the original
-/// async caller without unwinding through the worker thread.
+/// async caller without unwinding through the worker thread. `cancel`
+/// (where present) lets the worker thread skip work that's already been
+/// cancelled while it was sitting in the mpsc queue — PDFium itself has
+/// no abort API, so once a render starts it runs to completion, but
+/// queued-but-not-started tasks are checked at pull time.
 enum PdfTask {
     Info {
         path: PathBuf,
@@ -254,7 +259,12 @@ enum PdfTask {
         page: u32,
         dpi: u32,
         resp: oneshot::Sender<AppResult<DynamicImage>>,
+        cancel: Option<CancellationToken>,
     },
+}
+
+fn cancel_fired(cancel: &Option<CancellationToken>) -> bool {
+    cancel.as_ref().is_some_and(|t| t.is_cancelled())
 }
 
 /// Owns the `Pdfium` handle on a dedicated OS thread. All public methods are
@@ -313,7 +323,19 @@ impl PdfWorker {
                             page,
                             dpi,
                             resp,
+                            cancel,
                         } => {
+                            // Skip-if-cancelled: a task may have been sitting
+                            // in the queue while its caller was cancelled at
+                            // the outer `tokio::select!`. Draining it without
+                            // running the render reclaims worker time for the
+                            // next job.
+                            if cancel_fired(&cancel) {
+                                let _ = resp.send(Err(AppError::Cancelled(
+                                    "pdf render task cancelled before start".into(),
+                                )));
+                                continue;
+                            }
                             let _ = resp.send(render_page_image_with(&pdfium, &path, page, dpi));
                         }
                     }
@@ -359,11 +381,21 @@ impl PdfWorker {
         .await
     }
 
-    pub async fn render_image(
+    /// Renders a page as a `DynamicImage`, with an optional cancellation
+    /// token. If the token fires while the task is sitting in the worker
+    /// queue, the task is skipped at pull time and returns
+    /// `AppError::Cancelled`. PDFium has no abort API so an already
+    /// in-flight render still runs to completion — pair this with a
+    /// caller-side `tokio::select!` against the same token if you also
+    /// want the *caller* to stop waiting (the orphaned render then
+    /// silently sends its result into a closed oneshot). Pass `None` for
+    /// preview-style fire-and-forget callers.
+    pub async fn render_image_cancellable(
         &self,
         path: PathBuf,
         page: u32,
         dpi: u32,
+        cancel: Option<CancellationToken>,
     ) -> AppResult<DynamicImage> {
         let (rtx, rrx) = oneshot::channel();
         self.dispatch(
@@ -372,6 +404,7 @@ impl PdfWorker {
                 page,
                 dpi,
                 resp: rtx,
+                cancel,
             },
             rrx,
         )
@@ -414,6 +447,26 @@ mod tests {
         match err {
             AppError::Pdf(msg) => assert!(msg.contains("exceeds maximum")),
             other => panic!("expected Pdf, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_skips_already_cancelled_render_image_task() {
+        // The worker drains pre-cancelled tasks at pull time without
+        // calling PDFium. With the token already fired, we should get
+        // back AppError::Cancelled without ever touching the renderer.
+        let worker = PdfWorker::spawn().unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let err = worker
+            .render_image_cancellable(sample_pdf().to_path_buf(), 1, 150, Some(cancel))
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Cancelled(msg) => {
+                assert!(msg.contains("cancelled before start"), "{msg}");
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
         }
     }
 }

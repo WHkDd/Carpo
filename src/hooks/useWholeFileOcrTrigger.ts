@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { getSecret, startWholeFileOcr } from "@/lib/tauri";
-import { PROFILE_DPI } from "@/lib/ocr-profile";
 import {
   appErrorMessage,
   type Provider,
@@ -132,7 +131,6 @@ export function useWholeFileOcrTrigger() {
         return;
       }
 
-      const profile = PROFILE_DPI[settings.ocr_profile];
       const newspaperName = docState?.newspaperName ?? "";
       const newspaperDate = docState?.newspaperDate ?? "";
       const req: WholeFileOcrRequest = {
@@ -140,7 +138,9 @@ export function useWholeFileOcrTrigger() {
         path: file.path,
         kind: file.kind,
         pages,
-        ocr_dpi: profile.ocr,
+        // OCR-grade DPI is backend-derived (see `OcrProfile::ocr_dpi` in
+        // Rust); kept on the wire for backward compatibility only.
+        ocr_dpi: 0,
         newspaper_name: newspaperName,
         newspaper_date: newspaperDate,
       };

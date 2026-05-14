@@ -10,26 +10,29 @@
 //! - For images: loads the bitmap exactly once, lazily, behind a
 //!   `tokio::sync::OnceCell`. Every "page" of an image file is the same
 //!   bitmap, so we hand back a cloned `Arc`.
-//! - For PDFs: keeps a small LRU of decoded pages. Workers ask for a page
-//!   on demand; the loader either serves a cached `Arc<DynamicImage>` or
-//!   dispatches a `render_image` call to the dedicated PdfWorker thread.
-//!   Cache capacity is small enough that the steady-state footprint is
-//!   `OCR_CONCURRENCY × page_size` rather than `referenced_pages × page_size`.
+//! - For PDFs: keeps a small LRU of decoded pages plus an in-flight slot
+//!   map. Workers ask for a page on demand; concurrent requests for the
+//!   same page attach to a shared `OnceCell` so PDFium only renders once
+//!   per (page, generation) pair. Cache capacity stays small enough that
+//!   the steady-state footprint is `OCR_CONCURRENCY × page_size` rather
+//!   than `referenced_pages × page_size`.
 //!
-//! There is no in-flight dedupe: two concurrent workers asking for the same
-//! page may each trigger a render. The PdfWorker queues them sequentially
-//! so the wall-clock cost is one extra render per collision; the memory cost
-//! is bounded by `Arc` strong counts dropping when workers finish with the
-//! bitmap. For typical workloads (sorted-by-page items in grouped mode,
-//! page-per-worker in whole-file mode) collisions are rare.
+//! Cancellation: every `get()` call accepts a `CancellationToken`. It's
+//! threaded through to `PdfWorker::render_image_cancellable` (so queued
+//! tasks are skipped at pull time) AND raced against the load future
+//! itself via `tokio::select!` so the caller stops waiting the moment the
+//! job is cancelled. The orphaned in-flight render still runs to
+//! completion on the PDFium thread (PDFium has no abort API), but its
+//! result lands in a closed `oneshot` and is dropped.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use image::DynamicImage;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, OnceCell};
+use tokio_util::sync::CancellationToken;
 
 use super::grouped::FileKind;
 use crate::error::{AppError, AppResult};
@@ -47,6 +50,11 @@ pub struct PageLoader {
     ocr_dpi: u32,
     image_bitmap: OnceCell<Arc<DynamicImage>>,
     pdf_cache: Mutex<LruInner>,
+    /// Per-page in-flight slot. Multiple concurrent callers for the same
+    /// page attach to the same `OnceCell` and observe a single render.
+    /// Stored as `Weak` so the entry self-evicts once every awaiter drops
+    /// its `Arc<OnceCell>` — no manual reaping needed.
+    pdf_in_flight: Mutex<HashMap<u32, Weak<OnceCell<Arc<DynamicImage>>>>>,
 }
 
 struct LruInner {
@@ -97,49 +105,90 @@ impl PageLoader {
             ocr_dpi,
             image_bitmap: OnceCell::new(),
             pdf_cache: Mutex::new(LruInner::new(PAGE_LRU_CAPACITY)),
+            pdf_in_flight: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Returns a cached or freshly-rendered bitmap for `page`. Caller-side
-    /// failures (cancellation, render error, image load error) are surfaced
-    /// directly. The same `Arc` is returned to every caller asking for the
-    /// same page until eviction.
-    pub async fn get(&self, page: u32) -> AppResult<Arc<DynamicImage>> {
+    /// Returns a cached or freshly-rendered bitmap for `page`. The supplied
+    /// `cancel` token races the load: if it fires before the bitmap is
+    /// ready, the caller gets `AppError::Cancelled` immediately rather than
+    /// blocking on the in-flight render.
+    pub async fn get(&self, page: u32, cancel: &CancellationToken) -> AppResult<Arc<DynamicImage>> {
         if matches!(self.kind, FileKind::Image) {
-            return self.load_image().await;
+            return self.load_image(cancel).await;
         }
-        self.load_pdf_page(page).await
+        self.load_pdf_page(page, cancel).await
     }
 
-    async fn load_image(&self) -> AppResult<Arc<DynamicImage>> {
-        let arc = self
-            .image_bitmap
-            .get_or_try_init(|| async {
-                let path = self.path.clone();
-                let img = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
-                    .await
-                    .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
-                Ok::<_, AppError>(Arc::new(img))
-            })
-            .await?;
+    async fn load_image(&self, cancel: &CancellationToken) -> AppResult<Arc<DynamicImage>> {
+        let init = self.image_bitmap.get_or_try_init(|| async {
+            let path = self.path.clone();
+            let img = tokio::task::spawn_blocking(move || crate::image::load_from_disk(&path))
+                .await
+                .map_err(|e| AppError::Internal(format!("image load join: {e}")))??;
+            Ok::<_, AppError>(Arc::new(img))
+        });
+
+        let arc = tokio::select! {
+            r = init => r?,
+            _ = cancel.cancelled() => return Err(AppError::Cancelled("image load".into())),
+        };
         Ok(Arc::clone(arc))
     }
 
-    async fn load_pdf_page(&self, page: u32) -> AppResult<Arc<DynamicImage>> {
+    async fn load_pdf_page(
+        &self,
+        page: u32,
+        cancel: &CancellationToken,
+    ) -> AppResult<Arc<DynamicImage>> {
         if let Some(img) = self.pdf_cache.lock().await.get(page) {
             return Ok(img);
         }
-        // OCR-grade renders go through the dedicated `pdf_ocr` worker so
-        // they don't contend with preview renders driven by user navigation.
-        let img = self
-            .app
-            .state::<AppState>()
-            .pdf_ocr
-            .render_image(self.path.clone(), page, self.ocr_dpi)
-            .await?;
-        let arc = Arc::new(img);
-        self.pdf_cache.lock().await.insert(page, Arc::clone(&arc));
-        Ok(arc)
+
+        // Find or create the in-flight cell for this page. `Weak` means we
+        // never have to reap stale entries: the slot self-evicts once the
+        // last waiter drops its `Arc<OnceCell>`.
+        let cell: Arc<OnceCell<Arc<DynamicImage>>> = {
+            let mut in_flight = self.pdf_in_flight.lock().await;
+            match in_flight.get(&page).and_then(Weak::upgrade) {
+                Some(existing) => existing,
+                None => {
+                    let new_cell: Arc<OnceCell<Arc<DynamicImage>>> = Arc::new(OnceCell::new());
+                    in_flight.insert(page, Arc::downgrade(&new_cell));
+                    new_cell
+                }
+            }
+        };
+
+        let app = self.app.clone();
+        let path = self.path.clone();
+        let dpi = self.ocr_dpi;
+        let cancel_for_task = cancel.clone();
+
+        let init = cell.get_or_try_init(|| async move {
+            // Cancellable variant: if `cancel_for_task` fires before the
+            // task is pulled from the worker queue, it's skipped at pull
+            // time. An already-running PDFium render still completes (no
+            // abort API) but the result is dropped silently below.
+            //
+            // OCR-grade renders go through the dedicated `pdf_ocr` worker
+            // so they don't contend with preview renders driven by user
+            // navigation.
+            let img = app
+                .state::<AppState>()
+                .pdf_ocr
+                .render_image_cancellable(path, page, dpi, Some(cancel_for_task))
+                .await?;
+            Ok::<_, AppError>(Arc::new(img))
+        });
+
+        let arc = tokio::select! {
+            r = init => r?,
+            _ = cancel.cancelled() => return Err(AppError::Cancelled("pdf page render".into())),
+        };
+
+        self.pdf_cache.lock().await.insert(page, Arc::clone(arc));
+        Ok(Arc::clone(arc))
     }
 }
 
