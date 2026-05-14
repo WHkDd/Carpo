@@ -35,7 +35,7 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 ### Windows 首次启动
 
-未购买 EV 代码签名证书时，SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即可。
+SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即可。
 
 ## 本地开发
 
