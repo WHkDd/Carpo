@@ -3,7 +3,7 @@
 桌面 OCR 工具，专门处理近代中文报刊扫描件。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
 
-跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。
+跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。由于无Windows设备测试，Windows平台属于理论可用。
 
 ## 特性
 
@@ -57,6 +57,12 @@ pnpm lint                            # eslint
 pnpm tauri build                     # 出发布包到 src-tauri/target/release/bundle/
 ( cd src-tauri && cargo test )       # Rust 单测 + 集成测试
 ```
+
+## 待做
+
+[] 更多服务商接入（GLM-OCR等）
+[] 本地模型支持
+[] 全文识别模式下可跳页选择，目前只接受选择连续页
 
 ## 技术栈
 
