@@ -57,7 +57,7 @@ function useBulkOcrText() {
     [files, fileId]
   );
 
-  const allText = useMemo(() => {
+  const getBulkText = useCallback(() => {
     if (!fileId) return "";
     if (recognitionMode === "whole_file") {
       return buildAllPagesText(pageOcrTexts[fileId] ?? {});
@@ -88,10 +88,29 @@ function useBulkOcrText() {
     docState.newspaperDate,
   ]);
 
+  const hasBulkText = useMemo(() => {
+    if (!fileId) return false;
+    if (recognitionMode === "whole_file") {
+      const pages = pageOcrTexts[fileId] ?? {};
+      return Object.values(pages).some((t) => t && t.length > 0);
+    }
+    if ((documentResults[fileId] ?? "").length > 0) return true;
+    const texts = articleOcrTexts[fileId] ?? {};
+    return articles.some((a) => (texts[a.id] ?? "").length > 0);
+  }, [
+    fileId,
+    recognitionMode,
+    pageOcrTexts,
+    documentResults,
+    articleOcrTexts,
+    articles,
+  ]);
+
   // Count *units* (articles in grouped mode, pages in whole-file mode) that
-  // contributed non-empty OCR text. Drives the "已复制 N 篇 / N 页" flash so
-  // the user has a quantitative confirmation that everything was captured.
-  const bulkCount = useMemo(() => {
+  // contributed non-empty OCR text. This is intentionally evaluated only
+  // after a bulk action succeeds, so the normal render path never sorts and
+  // joins all page text for large documents.
+  const getBulkCount = useCallback(() => {
     if (!fileId) return 0;
     if (recognitionMode === "whole_file") {
       const pages = pageOcrTexts[fileId] ?? {};
@@ -102,34 +121,44 @@ function useBulkOcrText() {
   }, [fileId, recognitionMode, pageOcrTexts, articleOcrTexts, articles]);
 
   return {
-    allText,
+    getBulkText,
     fileLabel: fileEntry?.name ?? "(未命名)",
     hasFile: fileId !== null,
     recognitionMode,
-    bulkCount,
+    hasBulkText,
+    getBulkCount,
   };
 }
 
 export function OcrBulkActions() {
-  const { allText, fileLabel, hasFile, recognitionMode, bulkCount } =
-    useBulkOcrText();
+  const {
+    getBulkText,
+    fileLabel,
+    hasFile,
+    recognitionMode,
+    hasBulkText,
+    getBulkCount,
+  } = useBulkOcrText();
   const [copied, setCopied] = useState(false);
+  const [copiedCount, setCopiedCount] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const hasAllText = allText.length > 0;
   const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
 
   const onCopyAll = useCallback(async () => {
+    const allText = getBulkText();
     if (!allText) return;
     try {
       await writeText(allText);
+      setCopiedCount(getBulkCount());
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (e) {
       setSaveError(`复制失败：${appErrorMessage(e)}`);
     }
-  }, [allText]);
+  }, [getBulkText, getBulkCount]);
 
   const onSaveAll = useCallback(async () => {
+    const allText = getBulkText();
     if (!allText) return;
     setSaveError(null);
     try {
@@ -147,7 +176,7 @@ export function OcrBulkActions() {
     } catch (e) {
       setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
-  }, [allText, fileLabel, recognitionMode]);
+  }, [getBulkText, fileLabel, recognitionMode]);
 
   if (!hasFile) return null;
 
@@ -159,7 +188,7 @@ export function OcrBulkActions() {
           role="status"
         >
           <Check className="h-3 w-3" strokeWidth={1.9} aria-hidden />
-          已复制 {bulkCount} {unitLabel}
+          已复制 {copiedCount} {unitLabel}
         </span>
       )}
       {saveError && (
@@ -169,7 +198,7 @@ export function OcrBulkActions() {
       )}
       <button
         type="button"
-        disabled={!hasAllText}
+        disabled={!hasBulkText}
         onClick={() => void onCopyAll()}
         title={recognitionMode === "whole_file" ? "复制所有页" : "复制所有报道"}
         aria-label={
@@ -181,7 +210,7 @@ export function OcrBulkActions() {
       </button>
       <button
         type="button"
-        disabled={!hasAllText}
+        disabled={!hasBulkText}
         onClick={() => void onSaveAll()}
         title={recognitionMode === "whole_file" ? "导出所有页" : "导出所有报道"}
         aria-label={

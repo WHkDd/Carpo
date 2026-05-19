@@ -204,19 +204,25 @@ function syncArticleBlocks(
   doc: DocumentState
 ): void {
   const pagePrefix = `${fileId}::`;
+  const blocksByPage = new Map<number, Map<string, Block>>();
+
   Object.entries(state.pageStates).forEach(([key, pageState]) => {
     if (!key.startsWith(pagePrefix)) return;
+    const page = Number(key.slice(pagePrefix.length));
+    if (!Number.isFinite(page)) return;
+    const blockById = new Map<string, Block>();
     pageState.blocks.forEach((block) => {
       block.articleId = null;
       block.articleOrder = null;
+      blockById.set(block.id, block);
     });
+    blocksByPage.set(page, blockById);
   });
 
   doc.articles.forEach((article) => {
     normalizeArticleRefs(article);
     article.blockRefs.forEach((ref) => {
-      const ps = state.pageStates[pageKey(fileId, ref.page)];
-      const block = ps?.blocks.find((candidate) => candidate.id === ref.blockId);
+      const block = blocksByPage.get(ref.page)?.get(ref.blockId);
       if (!block) return;
       block.articleId = article.id;
       block.articleOrder = ref.order;
