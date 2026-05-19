@@ -4,8 +4,6 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   Check,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   Download,
   Eye,
@@ -20,7 +18,7 @@ import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
-import { cn } from "@/lib/utils";
+import { PageJumpControl } from "@/components/layout/PageJumpControl";
 
 const SAVE_FILTERS = [
   { name: "Markdown", extensions: ["md"] },
@@ -235,8 +233,6 @@ export function OcrTextPanel() {
   );
   const pageOcrTexts = useStore((s) => s.pageOcrTexts);
   const files = useStore((s) => s.files);
-  const prevPage = useStore((s) => s.prevPage);
-  const nextPage = useStore((s) => s.nextPage);
 
   const fileEntry = useMemo(
     () => files.find((f) => f.id === fileId) ?? null,
@@ -334,47 +330,17 @@ export function OcrTextPanel() {
         ? pinnedArticle.article.title || `报道${pinnedArticle.article.num}`
         : "全文";
 
-  const atFirst = currentPage <= 1;
-  const atLast = currentPage >= totalPages;
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-1.5 px-2 pt-2 pb-1">
       <div className="flex items-center justify-between gap-2 px-1.5">
         <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
           {recognitionMode === "whole_file" && hasMultiplePages ? (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={prevPage}
-                disabled={atFirst}
-                aria-label="上一页"
-                className={cn(
-                  "grid h-5 w-5 place-items-center rounded transition-colors",
-                  atFirst
-                    ? "text-foreground-subtle/40"
-                    : "text-foreground-subtle hover:bg-surface-2 hover:text-foreground"
-                )}
-              >
-                <ChevronLeft className="h-3 w-3" strokeWidth={1.8} />
-              </button>
-              <span className="font-mono text-[11px] tabular-nums text-foreground-muted">
-                第 {currentPage} / {totalPages} 页
-              </span>
-              <button
-                type="button"
-                onClick={nextPage}
-                disabled={atLast}
-                aria-label="下一页"
-                className={cn(
-                  "grid h-5 w-5 place-items-center rounded transition-colors",
-                  atLast
-                    ? "text-foreground-subtle/40"
-                    : "text-foreground-subtle hover:bg-surface-2 hover:text-foreground"
-                )}
-              >
-                <ChevronRight className="h-3 w-3" strokeWidth={1.8} />
-              </button>
-            </div>
+            <PageJumpControl
+              fileId={fileId}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              variant="panel"
+            />
           ) : (
             <span className="truncate font-medium text-foreground-muted">
               {titleLabel}
