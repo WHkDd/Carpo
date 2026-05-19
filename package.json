@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest",
-    "test:rust": "pnpm prepare:pdfium && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "pnpm prepare:pdfium && pnpm build && cargo test --manifest-path src-tauri/Cargo.toml",
     "prepare:pdfium": "node src-tauri/scripts/prepare_pdfium.mjs"
   },
   "dependencies": {
