@@ -294,6 +294,32 @@ describe("pageStateSlice", () => {
     ]);
   });
 
+  it("removeBlocks compacts cross-page article refs and syncs page metadata", () => {
+    store.getState().addBlock(fid, 1, block("p1b1"));
+    store.getState().addBlock(fid, 2, block("p2b1"));
+    store.getState().addBlock(fid, 3, block("p3b1"));
+    store.getState().pushSelection(fid, 1, "p1b1");
+    store.getState().pushSelection(fid, 2, "p2b1");
+    store.getState().pushSelection(fid, 3, "p3b1");
+    const article = store.getState().markSelectionAsArticle(fid, 1);
+
+    store.getState().removeBlocks(fid, 2, ["p2b1"]);
+
+    expect(store.getState().getDocumentState(fid).articles[0]!.blockRefs).toEqual([
+      { page: 1, blockId: "p1b1", order: 1 },
+      { page: 3, blockId: "p3b1", order: 2 },
+    ]);
+    expect(store.getState().getPageState(fid, 1).blocks[0]).toMatchObject({
+      articleId: article!.id,
+      articleOrder: 1,
+    });
+    expect(store.getState().getPageState(fid, 3).blocks[0]).toMatchObject({
+      articleId: article!.id,
+      articleOrder: 2,
+    });
+    expect(store.getState().getPageState(fid, 2).blocks).toEqual([]);
+  });
+
   it("stores newspaper metadata at document scope", () => {
     store.getState().updateDocumentMetadata(fid, {
       newspaperName: "申报",
