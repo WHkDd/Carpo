@@ -62,7 +62,7 @@ PDFium 会缓存到用户级目录，多个 worktree 可复用同一份下载结
 pnpm typecheck                       # tsc --noEmit
 pnpm test                            # vitest
 pnpm lint                            # eslint
-pnpm test:rust                       # 准备 PDFium 后运行 Rust 测试
+pnpm test:rust                       # 准备 PDFium、构建前端后运行 Rust 测试
 pnpm tauri build                     # 出发布包到 src-tauri/target/release/bundle/
 ```
 
