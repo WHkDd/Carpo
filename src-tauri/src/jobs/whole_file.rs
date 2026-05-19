@@ -6,6 +6,7 @@
 //! page_size`. Progress events: one at start, one before/after each page's
 //! OCR. Final `JOB_DONE` carries `{page, text}` pairs.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -287,6 +288,18 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
     if req.pages.is_empty() {
         return Err(AppError::Config("没有可识别的页面".into()));
     }
+    if req.pages.iter().any(|page| *page == 0) {
+        return Err(AppError::Config("页码从 1 开始，不能为 0".into()));
+    }
+    if matches!(req.kind, FileKind::Image) && req.pages.iter().any(|page| *page != 1) {
+        return Err(AppError::Config("图片文件只能识别第 1 页".into()));
+    }
+    let mut seen = HashSet::with_capacity(req.pages.len());
+    for page in &req.pages {
+        if !seen.insert(*page) {
+            return Err(AppError::Config(format!("页码重复：{page}")));
+        }
+    }
     // 500 pages × ~20s/page ≈ 3 hours of OCR even on a fast provider; past
     // this point the user is better served by splitting the file so cancel
     // / retry granularity matches a sane review cycle.
@@ -323,6 +336,32 @@ mod tests {
     #[test]
     fn validate_passes_basic() {
         let r = make_req(vec![1, 2, 3]);
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..r
+        };
         assert!(validate(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_page_zero() {
+        let r = make_req(vec![0, 1]);
+        assert!(validate(&r).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_pages() {
+        let r = make_req(vec![1, 2, 2]);
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..r
+        };
+        assert!(validate(&r).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_first_image_page() {
+        let r = make_req(vec![2]);
+        assert!(validate(&r).is_err());
     }
 }

@@ -2,12 +2,16 @@ import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { getSecret, startWholeFileOcr } from "@/lib/tauri";
 import {
+  PageRangeError,
+  parsePageRangePlan,
+  type PageRangePlan,
+} from "@/lib/page-range";
+import {
   appErrorMessage,
   type Provider,
   type SecretKey,
   type WholeFileOcrRequest,
 } from "@/lib/ipc-types";
-import type { WholeFileRange } from "@/store/pageStateSlice";
 
 const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   paddleocr: "paddle_token",
@@ -33,38 +37,15 @@ export interface WholeFileTriggerState {
   /** Total page count of the active file (1 for images and single-page
    *  PDFs). */
   totalPages: number;
-  /** Effective range. `null` means "full range" — i.e. use [1..totalPages]. */
-  range: WholeFileRange | null;
+  /** Raw range input stored for the active file. Empty means all pages. */
+  rangeInput: string;
+  /** Effective normalized range plan. Null only when no file is open. */
+  rangePlan: PageRangePlan | null;
+  /** Immediate validation error for the range input. */
+  rangeError: string | null;
   /** `true` if the active file is a PDF with more than one page — used by
    *  the Toolbar to decide whether to render the range chip. */
   showRange: boolean;
-}
-
-/** Default range when no custom range is set: the full page list. Images and
- *  single-page PDFs always resolve to `[1]`. */
-function effectiveRange(
-  file: { kind: "image" | "pdf"; pdfTotal?: number } | null,
-  custom: WholeFileRange | null
-): WholeFileRange | null {
-  if (!file) return null;
-  const total = file.kind === "pdf" ? Math.max(1, file.pdfTotal ?? 1) : 1;
-  if (custom === null) return null;
-  // Re-clamp to the live total so a stale stored range from a re-opened file
-  // can't ask for nonexistent pages.
-  const from = Math.min(total, Math.max(1, Math.floor(custom.from)));
-  const to = Math.min(total, Math.max(from, Math.floor(custom.to)));
-  if (from === 1 && to === total) return null;
-  return { from, to };
-}
-
-function pagesFromRange(totalPages: number, range: WholeFileRange | null): number[] {
-  if (range === null) {
-    return Array.from({ length: totalPages }, (_, i) => i + 1);
-  }
-  return Array.from(
-    { length: range.to - range.from + 1 },
-    (_, i) => range.from + i
-  );
 }
 
 export function useWholeFileOcrTrigger() {
@@ -76,30 +57,38 @@ export function useWholeFileOcrTrigger() {
     s.currentFileId ? s.getDocumentState(s.currentFileId) : null
   );
   const settings = useStore((s) => s.settings);
-  const customRange = useStore((s) =>
-    s.currentFileId ? s.wholeFileRange[s.currentFileId] ?? null : null
+  const rangeInput = useStore((s) =>
+    s.currentFileId ? s.wholeFileRange[s.currentFileId] ?? "" : ""
   );
   const startJob = useStore((s) => s.startJob);
-
-  const range = useMemo(
-    () => effectiveRange(file, customRange ?? null),
-    [file, customRange]
-  );
 
   const totalPages = file
     ? file.kind === "pdf"
       ? Math.max(1, file.pdfTotal ?? 1)
       : 1
     : 0;
-  const pages = useMemo(
-    () => (file ? pagesFromRange(totalPages, range) : []),
-    [file, totalPages, range]
-  );
+  const rangeState = useMemo(() => {
+    if (!file) {
+      return { plan: null, error: null };
+    }
+    try {
+      return {
+        plan: parsePageRangePlan(file.kind === "pdf" ? rangeInput : "", totalPages),
+        error: null,
+      };
+    } catch (e) {
+      return {
+        plan: null,
+        error: e instanceof PageRangeError ? e.message : appErrorMessage(e),
+      };
+    }
+  }, [file, rangeInput, totalPages]);
+  const pages = useMemo(() => rangeState.plan?.pages ?? [], [rangeState.plan]);
   const pageCount = pages.length;
 
   const showRange = !!file && file.kind === "pdf" && totalPages > 1;
 
-  const ready = !!file && pageCount > 0;
+  const ready = !!file && pageCount > 0 && rangeState.error === null;
 
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -110,7 +99,11 @@ export function useWholeFileOcrTrigger() {
       return;
     }
     if (pages.length === 0) {
-      setError("没有可识别的页面");
+      setError(rangeState.error ?? "没有可识别的页面");
+      return;
+    }
+    if (rangeState.error !== null) {
+      setError(rangeState.error);
       return;
     }
     setStarting(true);
@@ -161,7 +154,7 @@ export function useWholeFileOcrTrigger() {
     } finally {
       setStarting(false);
     }
-  }, [currentFileId, file, docState, pages, settings, startJob]);
+  }, [currentFileId, file, docState, pages, rangeState.error, settings, startJob]);
 
   return {
     state: {
@@ -170,7 +163,9 @@ export function useWholeFileOcrTrigger() {
       starting,
       pageCount,
       totalPages,
-      range,
+      rangeInput,
+      rangePlan: rangeState.plan,
+      rangeError: rangeState.error,
       showRange,
     } satisfies WholeFileTriggerState,
     trigger,

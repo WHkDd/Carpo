@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useStore } from "@/store";
 import { cancelJob as ipcCancelJob } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
 import type { JobKind } from "@/lib/ipc-types";
 import type { JobStatus } from "@/store/jobSlice";
+import { PageJumpControl } from "./PageJumpControl";
 
 /** Top-left canvas pill that fuses the page navigator and the OCR progress
  *  indicator into a single capsule:
@@ -81,8 +82,7 @@ export function ProgressPill() {
       s.files.find((f) => f.id === s.currentFileId)?.currentPage ?? 1
     );
   });
-  const prevPage = useStore((s) => s.prevPage);
-  const nextPage = useStore((s) => s.nextPage);
+  const fileId = useStore((s) => s.currentFileId);
 
   // OCR slot: subscribe to each primitive field separately so React only
   // re-renders on actual value changes. The progress dispatcher rebuilds the
@@ -130,9 +130,6 @@ export function ProgressPill() {
     }
   }
 
-  const atFirst = currentPage <= 1;
-  const atLast = currentPage >= totalPages;
-
   return (
     <div
       className="absolute left-2 top-2 z-10 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]"
@@ -142,37 +139,12 @@ export function ProgressPill() {
       <div className="flex h-7 items-stretch text-[12px]">
         {showPageNav && (
           <div className="flex items-center gap-1.5 px-2">
-            <button
-              type="button"
-              onClick={prevPage}
-              disabled={atFirst}
-              aria-label="上一页"
-              className={cn(
-                "grid h-5 w-5 place-items-center rounded transition-colors",
-                atFirst
-                  ? "text-foreground-subtle/40"
-                  : "text-foreground-subtle hover:bg-surface-2 hover:text-foreground"
-              )}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-            <span className="font-mono tabular-nums text-foreground-muted">
-              {currentPage} / {totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={nextPage}
-              disabled={atLast}
-              aria-label="下一页"
-              className={cn(
-                "grid h-5 w-5 place-items-center rounded transition-colors",
-                atLast
-                  ? "text-foreground-subtle/40"
-                  : "text-foreground-subtle hover:bg-surface-2 hover:text-foreground"
-              )}
-            >
-              <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
+            <PageJumpControl
+              fileId={fileId}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              variant="canvas"
+            />
           </div>
         )}
 
