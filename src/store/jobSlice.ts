@@ -10,6 +10,7 @@ import type {
   JobError,
   JobProgress,
 } from "@/lib/ipc-types";
+import type { LayoutPage } from "@/lib/layout-document";
 
 export type JobStatus =
   | "running"
@@ -47,6 +48,38 @@ export interface WholeFileActiveJob extends BaseActiveJob {
 
 export type ActiveJob = GroupedActiveJob | WholeFileActiveJob;
 
+export type RecognizedPageStatus = "pending" | "running" | "done" | "failed";
+
+export type RecognizedPageSourceMode =
+  | "page_image"
+  | "paddle_document"
+  | "paddle_document_chunk"
+  | "paddle_json_import";
+
+export interface RecognizedPage {
+  text: string;
+  layout?: LayoutPage;
+  status: RecognizedPageStatus;
+  error?: string;
+  sourceMode: RecognizedPageSourceMode;
+  sourceJobId?: string;
+  chunkId?: string;
+  chunkPage?: number;
+}
+
+export type RecognizedPages = Record<string, Record<number, RecognizedPage>>;
+
+function mergeRecognizedPage(
+  prev: RecognizedPage | undefined,
+  next: RecognizedPage
+): RecognizedPage {
+  const merged = { ...prev, ...next };
+  if (merged.status !== "failed") {
+    delete merged.error;
+  }
+  return merged;
+}
+
 export type StartJobInfo =
   | {
       jobId: string;
@@ -82,6 +115,11 @@ export interface JobSlice {
    *  re-running a subrange doesn't wipe the previous pages' results.
    *  Cleared when the file is removed from the queue. */
   pageOcrTexts: Record<string, Record<number, string>>;
+  /** fileId → original PDF page → normalized page OCR/layout result. This is
+   *  the forward-compatible store for page-image OCR, Paddle document jobs,
+   *  chunked document jobs, and imported Paddle JSON. During migration it is
+   *  kept in sync with `pageOcrTexts` so older UI paths continue to work. */
+  recognizedPages: RecognizedPages;
   /** Called immediately after `startGroupedOcr` / `startWholeFileOcr` returns
    *  the job id. The first `JobProgress` event will fill in `total`; until
    *  then we show 0/0. */
@@ -100,6 +138,12 @@ export interface JobSlice {
    *  explicit empty string is a valid value (e.g. an error sentinel) so the
    *  slot exists. */
   setPageOcrTexts: (fileId: string, texts: Record<number, string>) => void;
+  /** Merge normalized per-page results and mirror their text into
+   *  `pageOcrTexts` for compatibility with older consumers. */
+  setRecognizedPages: (
+    fileId: string,
+    pages: Record<number, RecognizedPage>
+  ) => void;
 }
 
 export const createJobSlice: StateCreator<
@@ -118,6 +162,7 @@ export const createJobSlice: StateCreator<
   documentResults: {},
   articleOcrTexts: {},
   pageOcrTexts: {},
+  recognizedPages: {},
   startJob: (info) =>
     set((state) => {
       const base: BaseActiveJob = {
@@ -194,6 +239,36 @@ export const createJobSlice: StateCreator<
     set((state) => {
       const prev = state.pageOcrTexts[fileId] ?? {};
       state.pageOcrTexts[fileId] = { ...prev, ...texts };
+
+      const prevPages = state.recognizedPages[fileId] ?? {};
+      const nextPages: Record<number, RecognizedPage> = { ...prevPages };
+      Object.entries(texts).forEach(([rawPage, text]) => {
+        const page = Number(rawPage);
+        if (!Number.isFinite(page)) return;
+        nextPages[page] = mergeRecognizedPage(prevPages[page], {
+          text,
+          status: "done",
+          sourceMode: "page_image",
+        });
+      });
+      state.recognizedPages[fileId] = nextPages;
+    }),
+  setRecognizedPages: (fileId, pages) =>
+    set((state) => {
+      const prevPages = state.recognizedPages[fileId] ?? {};
+      const nextPages: Record<number, RecognizedPage> = { ...prevPages };
+      const prevTexts = state.pageOcrTexts[fileId] ?? {};
+      const nextTexts: Record<number, string> = { ...prevTexts };
+
+      Object.entries(pages).forEach(([rawPage, pageResult]) => {
+        const page = Number(rawPage);
+        if (!Number.isFinite(page)) return;
+        nextPages[page] = mergeRecognizedPage(prevPages[page], pageResult);
+        nextTexts[page] = pageResult.text;
+      });
+
+      state.recognizedPages[fileId] = nextPages;
+      state.pageOcrTexts[fileId] = nextTexts;
     }),
 });
 

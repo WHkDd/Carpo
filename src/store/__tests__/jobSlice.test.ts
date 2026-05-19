@@ -141,4 +141,87 @@ describe("jobSlice", () => {
     store.getState().markCancelling();
     expect(store.getState().activeJob?.status).toBe("done");
   });
+
+  it("mirrors legacy page OCR text into recognizedPages", () => {
+    store.getState().setPageOcrTexts("file-1", {
+      1: "第一页",
+      3: "第三页",
+    });
+
+    expect(store.getState().pageOcrTexts["file-1"]).toEqual({
+      1: "第一页",
+      3: "第三页",
+    });
+    expect(store.getState().recognizedPages["file-1"]).toMatchObject({
+      1: {
+        text: "第一页",
+        status: "done",
+        sourceMode: "page_image",
+      },
+      3: {
+        text: "第三页",
+        status: "done",
+        sourceMode: "page_image",
+      },
+    });
+  });
+
+  it("mirrors recognizedPages text back to the legacy page map", () => {
+    store.getState().setRecognizedPages("file-1", {
+      2: {
+        text: "第二页",
+        status: "done",
+        sourceMode: "paddle_document",
+        sourceJobId: "job-1",
+      },
+      4: {
+        text: "[识别失败：timeout]",
+        status: "failed",
+        error: "timeout",
+        sourceMode: "page_image",
+        sourceJobId: "job-2",
+      },
+    });
+
+    expect(store.getState().pageOcrTexts["file-1"]).toEqual({
+      2: "第二页",
+      4: "[识别失败：timeout]",
+    });
+    expect(store.getState().recognizedPages["file-1"]?.[2]).toMatchObject({
+      text: "第二页",
+      status: "done",
+      sourceMode: "paddle_document",
+      sourceJobId: "job-1",
+    });
+    expect(store.getState().recognizedPages["file-1"]?.[4]).toMatchObject({
+      text: "[识别失败：timeout]",
+      status: "failed",
+      error: "timeout",
+    });
+  });
+
+  it("clears stale page errors when a later result succeeds", () => {
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "[识别失败：timeout]",
+        status: "failed",
+        error: "timeout",
+        sourceMode: "page_image",
+      },
+    });
+
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "重跑成功",
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    expect(store.getState().recognizedPages["file-1"]?.[1]).toEqual({
+      text: "重跑成功",
+      status: "done",
+      sourceMode: "paddle_document",
+    });
+  });
 });

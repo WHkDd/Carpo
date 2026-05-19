@@ -18,6 +18,7 @@ import {
   type WholeFileJobDone,
 } from "@/lib/ipc-types";
 import { useStore } from "@/store";
+import type { RecognizedPage } from "@/store/jobSlice";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
 import { StatusBar } from "./StatusBar";
@@ -53,7 +54,7 @@ function AppShellInner() {
   const applyJobError = useStore((s) => s.applyJobError);
   const setDocumentResult = useStore((s) => s.setDocumentResult);
   const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
-  const setPageOcrTexts = useStore((s) => s.setPageOcrTexts);
+  const setRecognizedPages = useStore((s) => s.setRecognizedPages);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   usePdfPageSync();
@@ -134,8 +135,9 @@ function AppShellInner() {
               });
               setDocumentResult(job.fileId, assembled);
             } else {
-              // whole_file: zip requestedPages with results/errors, write the
-              // page-keyed map. Whole-file mode reads this page map directly.
+              // whole_file: zip requestedPages with results/errors, then
+              // write normalized page results while keeping legacy page text
+              // in sync for older consumers.
               const payload = e.payload as WholeFileJobDone;
               const errorByPage = new Map(
                 payload.errors.map((er) => [er.page, er.message])
@@ -143,17 +145,30 @@ function AppShellInner() {
               const resultByPage = new Map(
                 payload.results.map((r) => [r.page, r.text])
               );
-              const perPage: Record<number, string> = {};
+              const perPage: Record<number, RecognizedPage> = {};
               for (const page of job.requestedPages) {
                 const row = resultByPage.get(page);
                 const errMsg = errorByPage.get(page);
-                perPage[page] = row !== undefined
-                  ? row
-                  : errMsg !== undefined
-                    ? `[识别失败：${errMsg}]`
-                    : "[未识别]";
+                perPage[page] =
+                  row !== undefined
+                    ? {
+                        text: row,
+                        status: "done",
+                        sourceMode: "page_image",
+                        sourceJobId: job.jobId,
+                      }
+                    : {
+                        text:
+                          errMsg !== undefined
+                            ? `[识别失败：${errMsg}]`
+                            : "[未识别]",
+                        status: "failed",
+                        error: errMsg ?? "未返回识别结果",
+                        sourceMode: "page_image",
+                        sourceJobId: job.jobId,
+                      };
               }
-              setPageOcrTexts(job.fileId, perPage);
+              setRecognizedPages(job.fileId, perPage);
             }
           }
           applyJobDone(e.payload);
@@ -176,7 +191,7 @@ function AppShellInner() {
     applyJobError,
     setDocumentResult,
     setArticleOcrTexts,
-    setPageOcrTexts,
+    setRecognizedPages,
   ]);
 
   useEffect(() => {
