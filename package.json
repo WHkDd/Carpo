@@ -8,10 +8,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "pnpm prepare:pdfium && tauri",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest",
+    "test:rust": "pnpm prepare:pdfium && cargo test --manifest-path src-tauri/Cargo.toml",
     "prepare:pdfium": "node src-tauri/scripts/prepare_pdfium.mjs"
   },
   "dependencies": {

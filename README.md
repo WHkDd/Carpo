@@ -41,12 +41,20 @@ SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即
 
 ```bash
 pnpm install
-pnpm prepare:pdfium   # 下载对应平台的 PDFium 动态库到 src-tauri/pdfium/
+pnpm prepare:pdfium   # 下载/复用用户级共享缓存，并复制到当前 worktree 的 src-tauri/pdfium/
 pnpm tauri dev
 ```
 
 要求：Node 20+、pnpm 10、Rust stable（推荐 1.78+）、平台对应的 webview 依赖
 （macOS：Xcode CLI；Windows：WebView2 Runtime）。
+
+PDFium 会缓存到用户级目录，多个 worktree 可复用同一份下载结果：
+
+- macOS 默认：`~/Library/Caches/xcvt/pdfium/`
+- Windows 默认：`%LOCALAPPDATA%\xcvt\pdfium\`
+
+如需覆盖缓存位置，可设置 `XCVT_PDFIUM_CACHE_DIR`。如需直接指定动态库文件，可设置
+`XCVT_PDFIUM_LIBRARY_PATH`。
 
 ### 常用命令
 
@@ -54,8 +62,8 @@ pnpm tauri dev
 pnpm typecheck                       # tsc --noEmit
 pnpm test                            # vitest
 pnpm lint                            # eslint
+pnpm test:rust                       # 准备 PDFium 后运行 Rust 测试
 pnpm tauri build                     # 出发布包到 src-tauri/target/release/bundle/
-( cd src-tauri && cargo test )       # Rust 单测 + 集成测试
 ```
 
 ## 待做

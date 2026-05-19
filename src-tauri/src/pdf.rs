@@ -186,6 +186,10 @@ fn load_document<'a>(
 fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
     let mut candidates = Vec::new();
 
+    if let Some(path) = env::var_os("XCVT_PDFIUM_LIBRARY_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     if let Ok(exe) = env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
@@ -202,7 +206,10 @@ fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
         }
     }
 
-    candidates.extend([dev_pdfium_library_path()?]);
+    candidates.push(dev_pdfium_library_path()?);
+    if let Some(path) = shared_pdfium_library_path() {
+        candidates.push(path);
+    }
     Ok(candidates)
 }
 
@@ -228,6 +235,44 @@ fn dev_pdfium_library_path() -> AppResult<PathBuf> {
         .join("pdfium")
         .join(arch)
         .join(filename))
+}
+
+fn shared_pdfium_library_path() -> Option<PathBuf> {
+    let arch = match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => "macos-arm64",
+        ("windows", "x86_64") => "windows-x64",
+        _ => return None,
+    };
+
+    let filename = if cfg!(target_os = "windows") {
+        "pdfium.dll"
+    } else {
+        "libpdfium.dylib"
+    };
+
+    let cache_root = env::var_os("XCVT_PDFIUM_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(default_pdfium_cache_root)?;
+    let version = include_str!("../pdfium/VERSION").trim().replace('/', "_");
+
+    Some(cache_root.join(version).join(arch).join(filename))
+}
+
+fn default_pdfium_cache_root() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        env::var_os("HOME").map(PathBuf::from).map(|home| {
+            home.join("Library")
+                .join("Caches")
+                .join("xcvt")
+                .join("pdfium")
+        })
+    } else if cfg!(target_os = "windows") {
+        env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .map(|local| local.join("xcvt").join("pdfium"))
+    } else {
+        None
+    }
 }
 
 fn map_pdfium_error(err: PdfiumError) -> AppError {

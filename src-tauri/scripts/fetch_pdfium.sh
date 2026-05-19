@@ -33,14 +33,16 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 tauri_dir="$(cd -- "${script_dir}/.." && pwd)"
 pdfium_dir="${tauri_dir}/pdfium"
 version="$(tr -d '[:space:]' < "${pdfium_dir}/VERSION")"
+cache_root="${XCVT_PDFIUM_CACHE_DIR:-${HOME}/Library/Caches/xcvt/pdfium}"
 asset="pdfium-${asset_arch}.tgz"
 url="https://github.com/bblanchon/pdfium-binaries/releases/download/${version}/${asset}"
-cache_dir="${pdfium_dir}/.cache/${version//\//_}"
+cache_dir="${cache_root}/${version//\//_}"
 archive="${cache_dir}/${asset}"
 extract_dir="${cache_dir}/${asset%.tgz}"
+shared_output_dir="${cache_dir}/${output_arch}"
 output_dir="${pdfium_dir}/${output_arch}"
 
-mkdir -p "${cache_dir}" "${extract_dir}" "${output_dir}"
+mkdir -p "${cache_dir}" "${extract_dir}" "${shared_output_dir}" "${output_dir}"
 
 if [[ ! -f "${archive}" ]]; then
   curl -fL --retry 3 --retry-delay 2 -o "${archive}" "${url}"
@@ -68,5 +70,6 @@ if [[ ! -f "${extract_dir}/${lib_path}" ]]; then
   exit 1
 fi
 
-cp "${extract_dir}/${lib_path}" "${output_dir}/${output_name}"
+cp "${extract_dir}/${lib_path}" "${shared_output_dir}/${output_name}"
+cp "${shared_output_dir}/${output_name}" "${output_dir}/${output_name}"
 echo "${output_dir}/${output_name}"
