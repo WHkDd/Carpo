@@ -19,6 +19,7 @@ import { useStore } from "@/store";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { PageJumpControl } from "@/components/layout/PageJumpControl";
+import type { RecognizedPage } from "@/store/jobSlice";
 
 const SAVE_FILTERS = [
   { name: "Markdown", extensions: ["md"] },
@@ -40,6 +41,30 @@ function buildAllPagesText(pageTexts: Record<number, string>): string {
     .join("\n\n");
 }
 
+function buildAllRecognizedPagesText(
+  pages: Record<number, RecognizedPage>
+): string {
+  return Object.entries(pages)
+    .map(([page, result]) => ({ page: Number(page), text: result.text }))
+    .filter((entry) => Number.isFinite(entry.page) && entry.text.length > 0)
+    .sort((a, b) => a.page - b.page)
+    .map((entry) => `# 第 ${entry.page} 页\n\n${entry.text.trim()}`)
+    .join("\n\n");
+}
+
+function hasRecognizedPageText(
+  pages: Record<number, RecognizedPage> | undefined
+): boolean {
+  return Object.values(pages ?? {}).some((entry) => entry.text.length > 0);
+}
+
+function countRecognizedPageText(
+  pages: Record<number, RecognizedPage> | undefined
+): number {
+  return Object.values(pages ?? {}).filter((entry) => entry.text.length > 0)
+    .length;
+}
+
 function useBulkOcrText() {
   const fileId = useStore((s) => s.currentFileId);
   const recognitionMode = useStore((s) => s.recognitionMode);
@@ -47,6 +72,7 @@ function useBulkOcrText() {
   const articleOcrTexts = useStore((s) => s.articleOcrTexts);
   const articles = useStore((s) => s.getDocumentState(fileId ?? "").articles);
   const pageOcrTexts = useStore((s) => s.pageOcrTexts);
+  const recognizedPages = useStore((s) => s.recognizedPages);
   const files = useStore((s) => s.files);
   const docState = useStore((s) => s.getDocumentState(fileId ?? ""));
 
@@ -58,7 +84,10 @@ function useBulkOcrText() {
   const getBulkText = useCallback(() => {
     if (!fileId) return "";
     if (recognitionMode === "whole_file") {
-      return buildAllPagesText(pageOcrTexts[fileId] ?? {});
+      const pages = recognizedPages[fileId];
+      return hasRecognizedPageText(pages)
+        ? buildAllRecognizedPagesText(pages ?? {})
+        : buildAllPagesText(pageOcrTexts[fileId] ?? {});
     }
     const assembled = documentResults[fileId] ?? "";
     if (assembled.length > 0) return assembled;
@@ -78,6 +107,7 @@ function useBulkOcrText() {
   }, [
     fileId,
     recognitionMode,
+    recognizedPages,
     pageOcrTexts,
     documentResults,
     articleOcrTexts,
@@ -89,8 +119,10 @@ function useBulkOcrText() {
   const hasBulkText = useMemo(() => {
     if (!fileId) return false;
     if (recognitionMode === "whole_file") {
-      const pages = pageOcrTexts[fileId] ?? {};
-      return Object.values(pages).some((t) => t && t.length > 0);
+      const pages = recognizedPages[fileId];
+      if (hasRecognizedPageText(pages)) return true;
+      const legacyPages = pageOcrTexts[fileId] ?? {};
+      return Object.values(legacyPages).some((t) => t && t.length > 0);
     }
     if ((documentResults[fileId] ?? "").length > 0) return true;
     const texts = articleOcrTexts[fileId] ?? {};
@@ -98,6 +130,7 @@ function useBulkOcrText() {
   }, [
     fileId,
     recognitionMode,
+    recognizedPages,
     pageOcrTexts,
     documentResults,
     articleOcrTexts,
@@ -111,12 +144,22 @@ function useBulkOcrText() {
   const getBulkCount = useCallback(() => {
     if (!fileId) return 0;
     if (recognitionMode === "whole_file") {
-      const pages = pageOcrTexts[fileId] ?? {};
-      return Object.values(pages).filter((t) => t && t.length > 0).length;
+      const pages = recognizedPages[fileId];
+      const recognizedCount = countRecognizedPageText(pages);
+      if (recognizedCount > 0) return recognizedCount;
+      const legacyPages = pageOcrTexts[fileId] ?? {};
+      return Object.values(legacyPages).filter((t) => t && t.length > 0).length;
     }
     const texts = articleOcrTexts[fileId] ?? {};
     return articles.filter((a) => (texts[a.id] ?? "").length > 0).length;
-  }, [fileId, recognitionMode, pageOcrTexts, articleOcrTexts, articles]);
+  }, [
+    fileId,
+    recognitionMode,
+    recognizedPages,
+    pageOcrTexts,
+    articleOcrTexts,
+    articles,
+  ]);
 
   return {
     getBulkText,
@@ -232,6 +275,7 @@ export function OcrTextPanel() {
     (s) => s.getDocumentState(fileId ?? "").articles
   );
   const pageOcrTexts = useStore((s) => s.pageOcrTexts);
+  const recognizedPages = useStore((s) => s.recognizedPages);
   const files = useStore((s) => s.files);
 
   const fileEntry = useMemo(
@@ -257,7 +301,11 @@ export function OcrTextPanel() {
     : fileId
       ? documentResults[fileId] ?? ""
       : "";
-  const pageText = fileId ? pageOcrTexts[fileId]?.[currentPage] ?? "" : "";
+  const pageText = fileId
+    ? recognizedPages[fileId]?.[currentPage]?.text ??
+      pageOcrTexts[fileId]?.[currentPage] ??
+      ""
+    : "";
 
   const text = recognitionMode === "whole_file" ? pageText : articleText;
   const charCount = text.length;
