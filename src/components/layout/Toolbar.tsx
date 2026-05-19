@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ScanText, Square } from "lucide-react";
 import { useStore } from "@/store";
 import { useWholeFileOcrTrigger } from "@/hooks/useWholeFileOcrTrigger";
+import { formatPageRangeLabel, parsePageRangePlan } from "@/lib/page-range";
+import type { PageRangePlan } from "@/lib/page-range";
 
 export function Toolbar() {
   const currentFile = useStore((s) =>
@@ -72,41 +74,48 @@ export function Toolbar() {
           <div className="h-3 w-px bg-border" aria-hidden />
           <PageRangeChip
             totalPages={triggerState.totalPages}
-            range={triggerState.range}
+            rangeInput={triggerState.rangeInput}
+            rangePlan={triggerState.rangePlan}
+            rangeError={triggerState.rangeError}
           />
         </>
       )}
 
-      {recognitionMode === "whole_file" && triggerState.error && (
+      {recognitionMode === "whole_file" &&
+        (triggerState.error || triggerState.rangeError) && (
         <span
           className="ml-1 max-w-[260px] truncate text-[11px] text-destructive"
           role="alert"
-          title={triggerState.error}
+          title={triggerState.error ?? triggerState.rangeError ?? undefined}
         >
-          {triggerState.error}
+          {triggerState.error ?? triggerState.rangeError}
         </span>
-      )}
+        )}
     </div>
   );
 }
 
 function PageRangeChip({
   totalPages,
-  range,
+  rangeInput,
+  rangePlan,
+  rangeError,
 }: {
   totalPages: number;
-  range: { from: number; to: number } | null;
+  rangeInput: string;
+  rangePlan: PageRangePlan | null;
+  rangeError: string | null;
 }) {
   const fileId = useStore((s) => s.currentFileId);
   const setRange = useStore((s) => s.setWholeFileRange);
   const [open, setOpen] = useState(false);
 
-  const from = range?.from ?? 1;
-  const to = range?.to ?? totalPages;
-  const isFull = range === null;
-  const label = isFull
-    ? `第 1–${totalPages} 页 · 全部`
-    : `第 ${from}–${to} 页`;
+  const isFull = rangeInput.trim().length === 0;
+  const label = rangePlan
+    ? formatPageRangeLabel(rangePlan)
+    : rangeInput.trim().length > 0
+      ? `第 ${rangeInput.trim()} 页`
+      : `第 1-${totalPages} 页 · 全部`;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -125,24 +134,25 @@ function PageRangeChip({
     };
   }, [open]);
 
-  const [draftFrom, setDraftFrom] = useState(from);
-  const [draftTo, setDraftTo] = useState(to);
+  const [draft, setDraft] = useState(rangeInput);
   useEffect(() => {
     if (open) {
-      setDraftFrom(from);
-      setDraftTo(to);
+      setDraft(rangeInput);
     }
-  }, [open, from, to]);
+  }, [open, rangeInput]);
+
+  const draftValidation = useMemo(() => {
+    try {
+      return { plan: parsePageRangePlan(draft, totalPages), error: null };
+    } catch (e) {
+      return { plan: null, error: e instanceof Error ? e.message : "页码范围无效" };
+    }
+  }, [draft, totalPages]);
 
   function commit() {
     if (!fileId) return;
-    const a = Math.max(1, Math.min(totalPages, Math.floor(draftFrom)));
-    const b = Math.max(a, Math.min(totalPages, Math.floor(draftTo)));
-    if (a === 1 && b === totalPages) {
-      setRange(fileId, null);
-    } else {
-      setRange(fileId, { from: a, to: b });
-    }
+    if (draftValidation.error) return;
+    setRange(fileId, draft);
     setOpen(false);
   }
 
@@ -153,47 +163,48 @@ function PageRangeChip({
         onClick={() => setOpen((v) => !v)}
         title="点击修改页码范围"
         className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-mono leading-none tabular-nums transition-colors ${
-          isFull
+          isFull && rangeError === null
             ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
-            : "bg-primary-muted text-foreground"
+            : rangeError
+              ? "bg-destructive/10 text-destructive"
+              : "bg-primary-muted text-foreground"
         }`}
       >
         {label}
       </button>
 
       {open && (
-        <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-[240px] rounded-md border border-border/70 bg-background p-2 shadow-lg">
+        <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-[300px] rounded-md border border-border/70 bg-background p-2 shadow-lg">
           <div className="mb-2 flex items-center justify-between text-[11px] text-foreground-muted">
             <span>页码范围</span>
             <span className="font-mono tabular-nums">
               共 {totalPages} 页
             </span>
           </div>
-          <div className="mb-2 flex items-center gap-1.5 text-[12px] text-foreground">
-            <span className="text-[11px] text-foreground-muted">从</span>
+          <div className="mb-2">
             <input
-              type="number"
-              min={1}
-              max={totalPages}
-              value={draftFrom}
-              onChange={(e) => setDraftFrom(parseInt(e.target.value, 10) || 1)}
+              type="text"
+              value={draft}
+              placeholder="1-5,8,10-12"
+              onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commit();
+                if (e.key === "Escape") {
+                  setDraft(rangeInput);
+                  setOpen(false);
+                }
               }}
-              className="h-6 w-14 rounded border border-border/60 bg-surface px-1.5 font-mono text-[12px] tabular-nums outline-none focus:border-border-strong"
+              className={`h-7 w-full rounded border bg-surface px-2 font-mono text-[12px] tabular-nums outline-none placeholder:text-foreground-subtle focus:border-border-strong ${
+                draftValidation.error ? "border-destructive" : "border-border/60"
+              }`}
             />
-            <span className="text-[11px] text-foreground-muted">到</span>
-            <input
-              type="number"
-              min={draftFrom}
-              max={totalPages}
-              value={draftTo}
-              onChange={(e) => setDraftTo(parseInt(e.target.value, 10) || 1)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commit();
-              }}
-              className="h-6 w-14 rounded border border-border/60 bg-surface px-1.5 font-mono text-[12px] tabular-nums outline-none focus:border-border-strong"
-            />
+            <div className="mt-1 min-h-4 text-[10px] text-foreground-subtle">
+              {draftValidation.error
+                ? draftValidation.error
+                : draftValidation.plan
+                  ? `${draftValidation.plan.pages.length} 页 · ${draftValidation.plan.paddlePageRanges}`
+                  : "留空表示全部页"}
+            </div>
           </div>
           <div className="flex items-center justify-between">
             <button

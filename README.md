@@ -11,6 +11,7 @@ provider 任选，结果导出为 Markdown / 纯文本。
 - **多 provider 路由**：PaddleOCR（百度异步 jobs API）、OpenAI Vision、OpenRouter、任意
   OpenAI-compatible 自建端点；任意切换不丢失先前识别结果。
 - **结构化导出**：识别后的报道按选择顺序组装成单篇 Markdown，支持复制 / 单篇导出 / 整文档导出。
+- **页码控制**：PDF 支持直接输入页码跳转；全文识别可指定 `1-5,8,10-12` 这类非连续页码范围。
 - **本地凭据**：API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）保管，
   不会写入项目文件，也不会跨设备同步。
 - **细粒度取消**：识别进行中点取消会立刻打断长 poll 与回退退避，不会再继续烧 OCR 配额。
@@ -70,7 +71,7 @@ pnpm tauri build                     # 出发布包到 src-tauri/target/release/
 
 - 更多服务商接入（GLM-OCR等）
 - 本地模型支持
-- 全文识别模式下可跳页选择，目前只接受选择连续页
+- 更多全文识别结果导入与版式重建能力
 
 ## 技术栈
 
