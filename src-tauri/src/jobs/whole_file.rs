@@ -288,7 +288,7 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
     if req.pages.is_empty() {
         return Err(AppError::Config("没有可识别的页面".into()));
     }
-    if req.pages.iter().any(|page| *page == 0) {
+    if req.pages.contains(&0) {
         return Err(AppError::Config("页码从 1 开始，不能为 0".into()));
     }
     if matches!(req.kind, FileKind::Image) && req.pages.iter().any(|page| *page != 1) {

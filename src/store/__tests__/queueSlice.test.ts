@@ -63,6 +63,13 @@ describe("queueSlice", () => {
     store
       .getState()
       .updateDocumentMetadata("file-1", { newspaperName: "申报" });
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "第一页",
+        status: "done",
+        sourceMode: "page_image",
+      },
+    });
 
     store.getState().removeFile("file-1");
 
@@ -72,5 +79,7 @@ describe("queueSlice", () => {
     expect(store.getState().pageStates["file-1::1"]).toBeUndefined();
     expect(store.getState().selectionOrders["file-1"]).toBeUndefined();
     expect(store.getState().documentStates["file-1"]).toBeUndefined();
+    expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
+    expect(store.getState().pageOcrTexts["file-1"]).toBeUndefined();
   });
 });
