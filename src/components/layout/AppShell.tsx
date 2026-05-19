@@ -99,12 +99,15 @@ function AppShellInner() {
               const errorById = new Map(
                 payload.errors.map((er) => [er.article_id, er.message])
               );
+              const resultById = new Map(
+                payload.results.map((r) => [r.article_id, r.text])
+              );
               const perArticle: Record<string, string> = {};
               for (const a of job.requestedArticles) {
-                const row = payload.results.find((r) => r.article_id === a.id);
+                const text = resultById.get(a.id);
                 const errMsg = errorById.get(a.id);
-                perArticle[a.id] = row
-                  ? row.text
+                perArticle[a.id] = text !== undefined
+                  ? text
                   : errMsg
                     ? `[识别失败：${errMsg}]`
                     : "[未识别]";
