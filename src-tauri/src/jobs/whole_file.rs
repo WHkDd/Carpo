@@ -1,10 +1,20 @@
 //! Whole-file OCR job runner.
 //!
-//! One call per requested page — no block cropping, no article grouping.
-//! Page bitmaps are fetched on demand via [`PageLoader`], so peak memory
-//! is bounded by the loader's small LRU rather than `pages.len() ×
-//! page_size`. Progress events: one at start, one before/after each page's
-//! OCR. Final `JOB_DONE` carries `{page, text}` pairs.
+//! Two execution strategies, picked at runtime from the active provider:
+//!
+//! - **Page-image path** (default for OpenAI / OpenRouter / OpenAI-Compatible,
+//!   and Paddle on image files): one OCR call per page. Bitmaps are pulled
+//!   lazily through [`PageLoader`] so peak memory stays bounded.
+//!
+//! - **Paddle document path** (Paddle + PDF): the full PDF is uploaded once
+//!   via the Paddle document-level API with a `pageRanges` filter, then
+//!   the JSONL result is parsed into per-page text. This is roughly
+//!   matches the Paddle web demo and gives much better layout-aware
+//!   recognition than slicing the PDF into per-page PNGs ourselves.
+//!
+//! Both paths emit `JOB_PROGRESS` events and resolve to the same
+//! `DoneEvent` shape, with a `source` discriminator so the frontend can
+//! tag results with the right `RecognizedPageSourceMode`.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -19,10 +29,10 @@ use uuid::Uuid;
 
 use super::grouped::{encode_png_bytes, secret_key_for_provider, FileKind};
 use super::page_loader::PageLoader;
-use crate::config;
+use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
 use crate::events;
-use crate::ocr::{self, OcrRequest};
+use crate::ocr::{self, paddle_document, OcrRequest, PADDLE_POLL_INTERVAL, PADDLE_POLL_TIMEOUT};
 use crate::secrets;
 use crate::state::AppState;
 
@@ -65,12 +75,20 @@ struct PageErrorPayload {
     message: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DoneSource {
+    PageImage,
+    PaddleDocument,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct DoneEvent {
     job_id: String,
     results: Vec<PageResultPayload>,
     errors: Vec<PageErrorPayload>,
     cancelled: bool,
+    source: DoneSource,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,8 +125,26 @@ async fn run(
     let settings = config::load(app)?;
     let secret_key = secret_key_for_provider(settings.provider);
     let secret = secrets::get(secret_key).await?;
-    let total = req.pages.len() as u32;
     let job_id_str = job_id.to_string();
+
+    // Route Paddle + PDF to the document-level path. Everything else (any
+    // image file, or any non-Paddle provider) keeps using the per-page PNG
+    // pipeline so OpenAI / OpenRouter still see one image per call.
+    if settings.provider == Provider::Paddleocr && matches!(req.kind, FileKind::Pdf) {
+        return run_paddle_document(app, req, job_id_str, token, settings, secret).await;
+    }
+    run_page_image(app, req, job_id_str, token, settings, secret).await
+}
+
+async fn run_page_image(
+    app: &AppHandle,
+    req: WholeFileOcrRequest,
+    job_id_str: String,
+    token: CancellationToken,
+    settings: config::NonSecretSettings,
+    secret: Option<String>,
+) -> AppResult<()> {
+    let total = req.pages.len() as u32;
     // Backend-derived (see `OcrProfile::ocr_dpi`); request DTO field is
     // ignored.
     let ocr_dpi = settings.ocr_profile.ocr_dpi();
@@ -179,6 +215,126 @@ async fn run(
             results,
             errors,
             cancelled,
+            source: DoneSource::PageImage,
+        },
+    );
+    Ok(())
+}
+
+async fn run_paddle_document(
+    app: &AppHandle,
+    req: WholeFileOcrRequest,
+    job_id_str: String,
+    token: CancellationToken,
+    settings: config::NonSecretSettings,
+    secret: Option<String>,
+) -> AppResult<()> {
+    let total = req.pages.len() as u32;
+    let _ = app.emit(
+        events::JOB_PROGRESS,
+        ProgressEvent {
+            job_id: job_id_str.clone(),
+            done: 0,
+            total,
+            label: format!("提交文档 · 共 {} 页", total),
+        },
+    );
+
+    let client = app.state::<AppState>().http.clone();
+    let paddle_token = secret.as_deref().unwrap_or("");
+    let job_url = if settings.paddle_url.is_empty() {
+        crate::ocr::paddle::DEFAULT_JOB_URL
+    } else {
+        settings.paddle_url.as_str()
+    };
+    let model = if settings.paddle_model.is_empty() {
+        crate::ocr::paddle::DEFAULT_MODEL
+    } else {
+        settings.paddle_model.as_str()
+    };
+    let file_name = std::path::Path::new(&req.path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document.pdf")
+        .to_string();
+
+    let page_ranges = paddle_document::pages_to_ranges_string(&req.pages);
+    let job_id_for_progress = job_id_str.clone();
+    let app_for_progress = app.clone();
+    let mut on_progress = move |done: u32, total_pages: u32| {
+        let _ = app_for_progress.emit(
+            events::JOB_PROGRESS,
+            ProgressEvent {
+                job_id: job_id_for_progress.clone(),
+                done,
+                total: total_pages.max(1),
+                label: format!("识别中 · 已完成 {}/{} 页", done, total_pages),
+            },
+        );
+    };
+
+    let outcome = paddle_document::recognize_document(
+        &client,
+        job_url,
+        paddle_token,
+        model,
+        PathBuf::from(&req.path),
+        "application/pdf",
+        &file_name,
+        Some(page_ranges),
+        paddle_document::default_document_payload(),
+        req.pages.clone(),
+        PADDLE_POLL_INTERVAL,
+        PADDLE_POLL_TIMEOUT,
+        &token,
+        &mut on_progress,
+    )
+    .await;
+
+    let mut results: Vec<PageResultPayload> = Vec::new();
+    let mut errors: Vec<PageErrorPayload> = Vec::new();
+    let mut cancelled = false;
+    match outcome {
+        Ok(pages) => {
+            for entry in pages {
+                if entry.text.is_empty() {
+                    errors.push(PageErrorPayload {
+                        page: entry.page,
+                        message: "文档识别未返回该页文本".to_string(),
+                    });
+                } else {
+                    results.push(PageResultPayload {
+                        page: entry.page,
+                        text: entry.text,
+                    });
+                }
+            }
+        }
+        Err(AppError::Cancelled(_)) => {
+            cancelled = true;
+        }
+        Err(e) => {
+            // Surface the failure as a single per-page error per requested
+            // page so the UI can still light up each row in red, then return
+            // OK below — the DoneEvent carries the cancelled / error state.
+            let message = e.to_string();
+            for page in &req.pages {
+                errors.push(PageErrorPayload {
+                    page: *page,
+                    message: message.clone(),
+                });
+            }
+        }
+    }
+
+    let _ = app.emit(
+        events::JOB_DONE,
+        DoneEvent {
+            job_id: job_id_str,
+            results,
+            errors,
+            cancelled,
+            source: DoneSource::PaddleDocument,
         },
     );
     Ok(())
