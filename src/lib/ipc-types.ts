@@ -147,6 +147,14 @@ export interface GroupedOcrErrorEntry {
 export interface WholeFileOcrResultEntry {
   page: number;
   text: string;
+  /** Set only when `WholeFileJobDone.source === "paddle_document_chunk"`.
+   *  Identifies which chunk PDF this page came from — purely
+   *  informational, since the UI keys everything off the original PDF's
+   *  `page`. */
+  chunk_id?: string;
+  /** 1-based position of the page inside its chunk PDF. Same scope as
+   *  `chunk_id`. */
+  chunk_page?: number;
 }
 export interface WholeFileOcrErrorEntry {
   page: number;
@@ -166,8 +174,17 @@ export interface GroupedJobDone {
  *  pick the `RecognizedPageSourceMode` when writing per-page results so the
  *  panel can later tell `paddle_document` runs apart from per-page PNG runs
  *  (e.g. for the layout-rebuilt PDF export). Older job payloads without the
- *  field are treated as `page_image`. */
-export type WholeFileDoneSource = "page_image" | "paddle_document";
+ *  field are treated as `page_image`.
+ *
+ *  `paddle_document_chunk` is emitted when the Paddle PDF path had to
+ *  split the source into smaller chunks (50 MB / 1000-page Paddle caps);
+ *  the per-result `chunk_id` / `chunk_page` fields are populated only
+ *  for that source, never for `page_image` or single-shot
+ *  `paddle_document`. */
+export type WholeFileDoneSource =
+  | "page_image"
+  | "paddle_document"
+  | "paddle_document_chunk";
 
 /** Whole-file-OCR job result. Used by `start_whole_file_ocr`. */
 export interface WholeFileJobDone {
