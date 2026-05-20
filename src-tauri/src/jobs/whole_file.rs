@@ -11,10 +11,16 @@
 //!   the JSONL result is parsed into per-page text. This is roughly
 //!   matches the Paddle web demo and gives much better layout-aware
 //!   recognition than slicing the PDF into per-page PNGs ourselves.
+//!   When the source file exceeds Paddle's 50 MB multipart cap or the
+//!   1000-page hard ceiling, this path further splits the request into
+//!   chunk PDFs via [`crate::pdf_chunk`], submits each chunk separately,
+//!   and reassembles results onto the original PDF's page numbers
+//!   before reporting back. The chunk submission stays invisible to
+//!   the UI — chunk-local page numbers never leave the runner.
 //!
-//! Both paths emit `JOB_PROGRESS` events and resolve to the same
-//! `DoneEvent` shape, with a `source` discriminator so the frontend can
-//! tag results with the right `RecognizedPageSourceMode`.
+//! All three sub-paths emit `JOB_PROGRESS` events and resolve to the
+//! same `DoneEvent` shape, with a `source` discriminator so the frontend
+//! can tag results with the right `RecognizedPageSourceMode`.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -33,6 +39,7 @@ use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
 use crate::events;
 use crate::ocr::{self, paddle_document, OcrRequest, PADDLE_POLL_INTERVAL, PADDLE_POLL_TIMEOUT};
+use crate::pdf_chunk::{self, ChunkConfig, ChunkStrategy};
 use crate::secrets;
 use crate::state::AppState;
 
@@ -67,6 +74,15 @@ struct ProgressEvent {
 struct PageResultPayload {
     page: u32,
     text: String,
+    /// Set only on the chunked Paddle path. The chunk id is the local
+    /// manifest identifier (`chunk-001`, `chunk-002`, ...); the chunk
+    /// page is the 1-based position inside that chunk PDF. Both are
+    /// purely informational — the UI keys results off `page` (the
+    /// original PDF page) and never displays chunk pagination.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chunk_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chunk_page: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +96,7 @@ struct PageErrorPayload {
 enum DoneSource {
     PageImage,
     PaddleDocument,
+    PaddleDocumentChunk,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,7 +217,12 @@ async fn run_page_image(
     let mut cancelled = false;
     for o in outcomes {
         match o {
-            PageOutcome::Done { page, text } => results.push(PageResultPayload { page, text }),
+            PageOutcome::Done { page, text } => results.push(PageResultPayload {
+                page,
+                text,
+                chunk_id: None,
+                chunk_page: None,
+            }),
             PageOutcome::Failed { page, message } => {
                 errors.push(PageErrorPayload { page, message })
             }
@@ -221,27 +243,15 @@ async fn run_page_image(
     Ok(())
 }
 
-async fn run_paddle_document(
-    app: &AppHandle,
-    req: WholeFileOcrRequest,
-    job_id_str: String,
-    token: CancellationToken,
-    settings: config::NonSecretSettings,
-    secret: Option<String>,
-) -> AppResult<()> {
-    let total = req.pages.len() as u32;
-    let _ = app.emit(
-        events::JOB_PROGRESS,
-        ProgressEvent {
-            job_id: job_id_str.clone(),
-            done: 0,
-            total,
-            label: format!("提交文档 · 共 {} 页", total),
-        },
-    );
+/// Snapshot of Paddle-specific settings carved out of `NonSecretSettings`
+/// so the chunked and direct paths share one resolution site instead of
+/// repeating the empty-string-fallback dance.
+struct PaddleEndpoint<'a> {
+    job_url: &'a str,
+    model: &'a str,
+}
 
-    let client = app.state::<AppState>().http.clone();
-    let paddle_token = secret.as_deref().unwrap_or("");
+fn resolve_paddle_endpoint(settings: &config::NonSecretSettings) -> PaddleEndpoint<'_> {
     let job_url = if settings.paddle_url.is_empty() {
         crate::ocr::paddle::DEFAULT_JOB_URL
     } else {
@@ -252,13 +262,110 @@ async fn run_paddle_document(
     } else {
         settings.paddle_model.as_str()
     };
-    let file_name = std::path::Path::new(&req.path)
+    PaddleEndpoint { job_url, model }
+}
+
+/// Normalize the request's requested pages once at job entry: sorted
+/// ascending and deduplicated. Every downstream consumer (strategy
+/// decision, chunk planning, `pageRanges` string, JSONL line→page
+/// reassembly) reads from this single Vec — that's the fix for the
+/// implicit ordering coupling between `paddle_document::pages_to_ranges_string`
+/// (which sorts internally) and `paddle_document::map_lines_to_pages`
+/// (which zips by caller order). `validate()` already rejects duplicates
+/// and zeros up front, so this is mostly defensive against future regressions.
+fn normalize_requested_pages(raw: &[u32]) -> Vec<u32> {
+    let mut v = raw.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+async fn run_paddle_document(
+    app: &AppHandle,
+    req: WholeFileOcrRequest,
+    job_id_str: String,
+    token: CancellationToken,
+    settings: config::NonSecretSettings,
+    secret: Option<String>,
+) -> AppResult<()> {
+    let pages_sorted = normalize_requested_pages(&req.pages);
+    let total = pages_sorted.len() as u32;
+    let _ = app.emit(
+        events::JOB_PROGRESS,
+        ProgressEvent {
+            job_id: job_id_str.clone(),
+            done: 0,
+            total,
+            label: format!("提交文档 · 共 {} 页", total),
+        },
+    );
+
+    // Strategy decision is driven by observable file metadata: on-disk
+    // size against Paddle's 50 MB multipart cap, and the *source* PDF's
+    // page count against the 1000-page hard ceiling. The user's
+    // requested page subset doesn't change either limit — Paddle counts
+    // the submitted file as a whole.
+    let source_size_bytes = tokio::fs::metadata(&req.path)
+        .await
+        .map_err(|e| AppError::Internal(format!("stat {}: {e}", req.path)))?
+        .len();
+    let source_page_count = app
+        .state::<AppState>()
+        .pdf
+        .info(PathBuf::from(&req.path))
+        .await?
+        .page_count;
+    let strategy = pdf_chunk::decide_strategy(source_size_bytes, source_page_count);
+
+    match strategy {
+        ChunkStrategy::DirectMultipart => {
+            run_paddle_document_direct(
+                app,
+                &req.path,
+                job_id_str,
+                token,
+                &settings,
+                secret.as_deref(),
+                pages_sorted,
+            )
+            .await
+        }
+        ChunkStrategy::Chunked => {
+            run_paddle_document_chunked(
+                app,
+                &req.path,
+                job_id_str,
+                token,
+                &settings,
+                secret.as_deref(),
+                pages_sorted,
+                source_size_bytes,
+                source_page_count,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_paddle_document_direct(
+    app: &AppHandle,
+    source_path: &str,
+    job_id_str: String,
+    token: CancellationToken,
+    settings: &config::NonSecretSettings,
+    secret: Option<&str>,
+    pages_sorted: Vec<u32>,
+) -> AppResult<()> {
+    let client = app.state::<AppState>().http.clone();
+    let endpoint = resolve_paddle_endpoint(settings);
+    let paddle_token = secret.unwrap_or("");
+    let file_name = std::path::Path::new(source_path)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("document.pdf")
         .to_string();
 
-    let page_ranges = paddle_document::pages_to_ranges_string(&req.pages);
+    let page_ranges = paddle_document::pages_to_ranges_string(&pages_sorted);
     let job_id_for_progress = job_id_str.clone();
     let app_for_progress = app.clone();
     let mut on_progress = move |done: u32, total_pages: u32| {
@@ -275,15 +382,15 @@ async fn run_paddle_document(
 
     let outcome = paddle_document::recognize_document(
         &client,
-        job_url,
+        endpoint.job_url,
         paddle_token,
-        model,
-        PathBuf::from(&req.path),
+        endpoint.model,
+        PathBuf::from(source_path),
         "application/pdf",
         &file_name,
         Some(page_ranges),
         paddle_document::default_document_payload(),
-        req.pages.clone(),
+        pages_sorted.clone(),
         PADDLE_POLL_INTERVAL,
         PADDLE_POLL_TIMEOUT,
         &token,
@@ -306,6 +413,8 @@ async fn run_paddle_document(
                     results.push(PageResultPayload {
                         page: entry.page,
                         text: entry.text,
+                        chunk_id: None,
+                        chunk_page: None,
                     });
                 }
             }
@@ -318,7 +427,7 @@ async fn run_paddle_document(
             // page so the UI can still light up each row in red, then return
             // OK below — the DoneEvent carries the cancelled / error state.
             let message = e.to_string();
-            for page in &req.pages {
+            for page in &pages_sorted {
                 errors.push(PageErrorPayload {
                     page: *page,
                     message: message.clone(),
@@ -335,6 +444,220 @@ async fn run_paddle_document(
             errors,
             cancelled,
             source: DoneSource::PaddleDocument,
+        },
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_paddle_document_chunked(
+    app: &AppHandle,
+    source_path: &str,
+    job_id_str: String,
+    token: CancellationToken,
+    settings: &config::NonSecretSettings,
+    secret: Option<&str>,
+    pages_sorted: Vec<u32>,
+    source_size_bytes: u64,
+    source_page_count: u32,
+) -> AppResult<()> {
+    let client = app.state::<AppState>().http.clone();
+    let endpoint = resolve_paddle_endpoint(settings);
+    let paddle_token = secret.unwrap_or("");
+    let total = pages_sorted.len() as u32;
+    let chunk_config = ChunkConfig::default();
+
+    let _ = app.emit(
+        events::JOB_PROGRESS,
+        ProgressEvent {
+            job_id: job_id_str.clone(),
+            done: 0,
+            total,
+            label: format!("准备分块 · 共 {} 页", total),
+        },
+    );
+
+    let chunk_output = match app
+        .state::<AppState>()
+        .pdf
+        .build_chunks(
+            PathBuf::from(source_path),
+            pages_sorted.clone(),
+            source_size_bytes,
+            source_page_count,
+            chunk_config,
+        )
+        .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            // Chunking failures (over-size single page, pdfium error, ...)
+            // are hard config/runtime errors — emit them as one failed
+            // page per requested page so the UI rows light up and the
+            // user sees the actionable message ("please pre-compress").
+            let message = e.to_string();
+            let errors = pages_sorted
+                .iter()
+                .map(|p| PageErrorPayload {
+                    page: *p,
+                    message: message.clone(),
+                })
+                .collect();
+            let _ = app.emit(
+                events::JOB_DONE,
+                DoneEvent {
+                    job_id: job_id_str,
+                    results: Vec::new(),
+                    errors,
+                    cancelled: false,
+                    source: DoneSource::PaddleDocumentChunk,
+                },
+            );
+            return Ok(());
+        }
+    };
+
+    let mut results: Vec<PageResultPayload> = Vec::new();
+    let mut errors: Vec<PageErrorPayload> = Vec::new();
+    let mut cancelled = false;
+    let mut completed_so_far: u32 = 0;
+
+    for (chunk_idx, manifest) in chunk_output.manifests.iter().enumerate() {
+        if token.is_cancelled() {
+            cancelled = true;
+            break;
+        }
+        let chunk_len = manifest.original_pages.len() as u32;
+        let chunk_local_pages: Vec<u32> = (1..=chunk_len).collect();
+        let chunk_page_ranges = paddle_document::pages_to_ranges_string(&chunk_local_pages);
+        let chunk_file_name = format!("{}.pdf", manifest.chunk_id);
+
+        let _ = app.emit(
+            events::JOB_PROGRESS,
+            ProgressEvent {
+                job_id: job_id_str.clone(),
+                done: completed_so_far,
+                total,
+                label: format!(
+                    "提交分块 {}/{} · {} 页",
+                    chunk_idx + 1,
+                    chunk_output.manifests.len(),
+                    chunk_len
+                ),
+            },
+        );
+
+        // Per-chunk progress is reported by paddle_document via the
+        // `extractProgress.extractedPages` field. Aggregate into a
+        // job-wide counter so the UI sees a single monotonically-
+        // increasing fraction across all chunks.
+        let job_id_for_progress = job_id_str.clone();
+        let app_for_progress = app.clone();
+        let chunk_idx_for_progress = chunk_idx + 1;
+        let chunk_total_for_progress = chunk_output.manifests.len();
+        let base_done_for_progress = completed_so_far;
+        let mut on_progress = move |chunk_done: u32, chunk_total: u32| {
+            let aggregate_done = base_done_for_progress.saturating_add(chunk_done.min(chunk_total));
+            let _ = app_for_progress.emit(
+                events::JOB_PROGRESS,
+                ProgressEvent {
+                    job_id: job_id_for_progress.clone(),
+                    done: aggregate_done,
+                    total,
+                    label: format!(
+                        "分块 {}/{} 识别中 · 已完成 {}/{} 页",
+                        chunk_idx_for_progress, chunk_total_for_progress, chunk_done, chunk_total
+                    ),
+                },
+            );
+        };
+
+        let outcome = paddle_document::recognize_document(
+            &client,
+            endpoint.job_url,
+            paddle_token,
+            endpoint.model,
+            manifest.chunk_pdf_path.clone(),
+            "application/pdf",
+            &chunk_file_name,
+            Some(chunk_page_ranges),
+            paddle_document::default_document_payload(),
+            chunk_local_pages,
+            PADDLE_POLL_INTERVAL,
+            PADDLE_POLL_TIMEOUT,
+            &token,
+            &mut on_progress,
+        )
+        .await;
+
+        match outcome {
+            Ok(chunk_results) => {
+                for entry in chunk_results {
+                    // entry.page is *chunk-local*. Translate back to the
+                    // original PDF's page number via the manifest — this
+                    // is the only place chunk-local page numbers leak
+                    // beyond paddle_document.
+                    let Some(original_page) = manifest.original_page(entry.page) else {
+                        // Paddle returned a page we didn't ask for; log
+                        // and skip rather than panic.
+                        log::warn!(
+                            "chunk {} returned out-of-range chunk_page={} (chunk size {})",
+                            manifest.chunk_id,
+                            entry.page,
+                            manifest.original_pages.len()
+                        );
+                        continue;
+                    };
+                    if entry.text.is_empty() {
+                        errors.push(PageErrorPayload {
+                            page: original_page,
+                            message: "文档识别未返回该页文本".to_string(),
+                        });
+                    } else {
+                        results.push(PageResultPayload {
+                            page: original_page,
+                            text: entry.text,
+                            chunk_id: Some(manifest.chunk_id.clone()),
+                            chunk_page: Some(entry.page),
+                        });
+                    }
+                }
+            }
+            Err(AppError::Cancelled(_)) => {
+                cancelled = true;
+                break;
+            }
+            Err(e) => {
+                // A single chunk failed mid-job. Mark every original page
+                // covered by this chunk as failed, then keep going — the
+                // user may still get usable results from the surviving
+                // chunks. Stop only on cancel.
+                let message = e.to_string();
+                for original_page in &manifest.original_pages {
+                    errors.push(PageErrorPayload {
+                        page: *original_page,
+                        message: message.clone(),
+                    });
+                }
+            }
+        }
+
+        completed_so_far = completed_so_far.saturating_add(chunk_len);
+    }
+
+    // Holding `chunk_output` until here keeps the TempDir alive so chunk
+    // PDFs survive until we're done uploading them. The drop on the next
+    // line removes them all in one shot.
+    drop(chunk_output);
+
+    let _ = app.emit(
+        events::JOB_DONE,
+        DoneEvent {
+            job_id: job_id_str,
+            results,
+            errors,
+            cancelled,
+            source: DoneSource::PaddleDocumentChunk,
         },
     );
     Ok(())
@@ -437,7 +760,28 @@ enum PageOutcome {
     Cancelled,
 }
 
-pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
+/// Per-(provider, kind) request-page cap, picked based on which sub-path
+/// the runner will dispatch into:
+///
+/// - **Page-image path** (anything that's not Paddle+Pdf) does one
+///   network round-trip per page. At ~20 s/page on a healthy provider,
+///   500 pages is already ~3 h of wall time; past that the user is
+///   better served by splitting the file so cancel/retry granularity
+///   stays sane.
+/// - **Paddle document path** (Paddle + Pdf) ships every page in one
+///   async job (or a small handful of chunks). Wall-clock no longer
+///   scales linearly with the requested page count, so the binding
+///   constraint shifts to Paddle's own 1000-page-per-file hard limit
+///   — and chunking lifts even that for the source PDF, since each
+///   chunk is sent on its own.
+fn max_pages_for(provider: Provider, kind: FileKind) -> u32 {
+    match (provider, kind) {
+        (Provider::Paddleocr, FileKind::Pdf) => 1000,
+        _ => 500,
+    }
+}
+
+pub fn validate(req: &WholeFileOcrRequest, settings: &config::NonSecretSettings) -> AppResult<()> {
     if req.path.is_empty() {
         return Err(AppError::Config("缺少文件路径".into()));
     }
@@ -456,13 +800,27 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
             return Err(AppError::Config(format!("页码重复：{page}")));
         }
     }
-    // 500 pages × ~20s/page ≈ 3 hours of OCR even on a fast provider; past
-    // this point the user is better served by splitting the file so cancel
-    // / retry granularity matches a sane review cycle.
-    if req.pages.len() > 500 {
-        return Err(AppError::Config(
-            "单次最多识别 500 页（建议拆分大文件以获得更短的反馈周期）".into(),
-        ));
+    // Strict-ascending contract with the frontend. `PageRangePlan` already
+    // hands us sorted pages, but enforcing the invariant here turns the
+    // implicit coupling into a checked one — the Paddle document path
+    // relies on `pages_to_ranges_string`'s sorted output lining up with
+    // `map_lines_to_pages`'s caller-order zip, and a regression to either
+    // side would have produced silently mis-mapped page numbers without
+    // this check.
+    if !req.pages.windows(2).all(|w| w[0] < w[1]) {
+        return Err(AppError::Config("页码必须严格升序".into()));
+    }
+    let max_pages = max_pages_for(settings.provider, req.kind);
+    if req.pages.len() as u32 > max_pages {
+        let hint = if max_pages == 1000 {
+            "（Paddle 文档级 OCR 单次最多 1000 页，请拆分输入或减少页码范围）"
+        } else {
+            "（建议拆分大文件以获得更短的反馈周期）"
+        };
+        return Err(AppError::Config(format!(
+            "单次最多识别 {} 页{}",
+            max_pages, hint
+        )));
     }
     Ok(())
 }
@@ -470,6 +828,21 @@ pub fn validate(req: &WholeFileOcrRequest) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::OcrProfile;
+
+    fn settings_with(provider: Provider) -> config::NonSecretSettings {
+        config::NonSecretSettings {
+            provider,
+            ocr_profile: OcrProfile::Standard,
+            ocr_prompt: String::new(),
+            paddle_url: String::new(),
+            paddle_model: String::new(),
+            openai_model: String::new(),
+            openrouter_model: String::new(),
+            openai_compatible_base_url: String::new(),
+            openai_compatible_model: String::new(),
+        }
+    }
 
     fn make_req(pages: Vec<u32>) -> WholeFileOcrRequest {
         WholeFileOcrRequest {
@@ -486,7 +859,7 @@ mod tests {
     #[test]
     fn validate_rejects_empty_pages() {
         let r = make_req(vec![]);
-        assert!(validate(&r).is_err());
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
     }
 
     #[test]
@@ -496,13 +869,13 @@ mod tests {
             kind: FileKind::Pdf,
             ..r
         };
-        assert!(validate(&r).is_ok());
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_ok());
     }
 
     #[test]
     fn validate_rejects_page_zero() {
         let r = make_req(vec![0, 1]);
-        assert!(validate(&r).is_err());
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
     }
 
     #[test]
@@ -512,12 +885,72 @@ mod tests {
             kind: FileKind::Pdf,
             ..r
         };
-        assert!(validate(&r).is_err());
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
     }
 
     #[test]
     fn validate_rejects_non_first_image_page() {
         let r = make_req(vec![2]);
-        assert!(validate(&r).is_err());
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
+    }
+
+    #[test]
+    fn validate_paddle_pdf_allows_up_to_1000_pages() {
+        let pages: Vec<u32> = (1..=1000).collect();
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..make_req(pages)
+        };
+        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_ok());
+    }
+
+    #[test]
+    fn validate_paddle_pdf_rejects_over_1000_pages() {
+        let pages: Vec<u32> = (1..=1001).collect();
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..make_req(pages)
+        };
+        let err = validate(&r, &settings_with(Provider::Paddleocr)).unwrap_err();
+        match err {
+            AppError::Config(msg) => assert!(msg.contains("1000"), "{msg}"),
+            other => panic!("expected Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_page_image_path_keeps_500_cap() {
+        // OpenAI + Pdf takes the per-page network path, so the 500-page
+        // sane-feedback-cycle cap still applies.
+        let pages: Vec<u32> = (1..=501).collect();
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..make_req(pages)
+        };
+        let err = validate(&r, &settings_with(Provider::Openai)).unwrap_err();
+        match err {
+            AppError::Config(msg) => assert!(msg.contains("500"), "{msg}"),
+            other => panic!("expected Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_requested_pages_sorts_and_dedupes() {
+        assert_eq!(normalize_requested_pages(&[5, 1, 3, 1, 5]), vec![1, 3, 5]);
+        assert_eq!(normalize_requested_pages(&[]), Vec::<u32>::new());
+        assert_eq!(normalize_requested_pages(&[7]), vec![7]);
+    }
+
+    #[test]
+    fn validate_rejects_non_ascending_pages() {
+        let r = WholeFileOcrRequest {
+            kind: FileKind::Pdf,
+            ..make_req(vec![3, 1, 2])
+        };
+        let err = validate(&r, &settings_with(Provider::Paddleocr)).unwrap_err();
+        match err {
+            AppError::Config(msg) => assert!(msg.contains("严格升序"), "{msg}"),
+            other => panic!("expected Config, got {other:?}"),
+        }
     }
 }

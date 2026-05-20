@@ -143,14 +143,21 @@ function AppShellInner() {
               // upcoming layout exporter can react accordingly.
               const payload = e.payload as WholeFileJobDone;
               const sourceMode: RecognizedPageSourceMode =
-                payload.source === "paddle_document"
+                payload.source === "paddle_document_chunk"
+                  ? "paddle_document_chunk"
+                  : payload.source === "paddle_document"
                   ? "paddle_document"
                   : "page_image";
               const errorByPage = new Map(
                 payload.errors.map((er) => [er.page, er.message])
               );
+              // Index whole entries (not just text) so the chunked
+              // payload's per-row chunk_id / chunk_page survive onto
+              // the stored RecognizedPage. UI never shows chunk
+              // numbers — they're only there for layout export and
+              // debugging.
               const resultByPage = new Map(
-                payload.results.map((r) => [r.page, r.text])
+                payload.results.map((r) => [r.page, r])
               );
               const perPage: Record<number, RecognizedPage> = {};
               for (const page of job.requestedPages) {
@@ -159,10 +166,16 @@ function AppShellInner() {
                 perPage[page] =
                   row !== undefined
                     ? {
-                        text: row,
+                        text: row.text,
                         status: "done",
                         sourceMode,
                         sourceJobId: job.jobId,
+                        ...(row.chunk_id !== undefined
+                          ? { chunkId: row.chunk_id }
+                          : {}),
+                        ...(row.chunk_page !== undefined
+                          ? { chunkPage: row.chunk_page }
+                          : {}),
                       }
                     : {
                         text:

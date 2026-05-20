@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
+use crate::pdf_chunk::{self, ChunkConfig, ChunkManifest};
 
 #[derive(Debug, Clone)]
 pub struct PdfInfoData {
@@ -279,6 +280,37 @@ fn map_pdfium_error(err: PdfiumError) -> AppError {
     AppError::Pdf(err.to_string())
 }
 
+/// Synchronous chunking helper invoked from the PdfWorker thread.
+/// Creates a fresh `TempDir`, calls into [`pdf_chunk::build_chunks`],
+/// and returns both so the caller can hold the dir alive for the
+/// lifetime of the OCR job.
+fn build_chunks_blocking(
+    pdfium: &Pdfium,
+    source_path: &Path,
+    requested_pages: &[u32],
+    source_size_bytes: u64,
+    source_page_count: u32,
+    config: &ChunkConfig,
+) -> AppResult<ChunkBuildOutput> {
+    let temp_dir = tempfile::Builder::new()
+        .prefix("xcvt-paddle-chunks-")
+        .tempdir()
+        .map_err(|e| AppError::Internal(format!("create temp chunk dir: {e}")))?;
+    let manifests = pdf_chunk::build_chunks(
+        pdfium,
+        source_path,
+        requested_pages,
+        temp_dir.path(),
+        source_size_bytes,
+        source_page_count,
+        config,
+    )?;
+    Ok(ChunkBuildOutput {
+        temp_dir,
+        manifests,
+    })
+}
+
 // --- PdfWorker --------------------------------------------------------------
 
 /// Tasks the PdfWorker thread can perform. Each variant carries a oneshot
@@ -306,6 +338,23 @@ enum PdfTask {
         resp: oneshot::Sender<AppResult<DynamicImage>>,
         cancel: Option<CancellationToken>,
     },
+    BuildChunks {
+        path: PathBuf,
+        requested_pages: Vec<u32>,
+        source_size_bytes: u64,
+        source_page_count: u32,
+        config: ChunkConfig,
+        resp: oneshot::Sender<AppResult<ChunkBuildOutput>>,
+    },
+}
+
+/// Result of a [`PdfWorker::build_chunks`] call. Holds the owned
+/// `TempDir` so the chunk files survive past the call; dropping the
+/// returned value cleans them all up.
+#[derive(Debug)]
+pub struct ChunkBuildOutput {
+    pub temp_dir: tempfile::TempDir,
+    pub manifests: Vec<ChunkManifest>,
 }
 
 fn cancel_fired(cancel: &Option<CancellationToken>) -> bool {
@@ -383,6 +432,23 @@ impl PdfWorker {
                             }
                             let _ = resp.send(render_page_image_with(&pdfium, &path, page, dpi));
                         }
+                        PdfTask::BuildChunks {
+                            path,
+                            requested_pages,
+                            source_size_bytes,
+                            source_page_count,
+                            config,
+                            resp,
+                        } => {
+                            let _ = resp.send(build_chunks_blocking(
+                                &pdfium,
+                                &path,
+                                &requested_pages,
+                                source_size_bytes,
+                                source_page_count,
+                                &config,
+                            ));
+                        }
                     }
                 }
             })
@@ -419,6 +485,34 @@ impl PdfWorker {
                 path,
                 page,
                 dpi,
+                resp: rtx,
+            },
+            rrx,
+        )
+        .await
+    }
+
+    /// Builds chunked PDFs for Paddle's document-level OCR path. The
+    /// caller hands us the *sorted, deduplicated* page list — pdfium
+    /// runs inside the worker thread because `Pdfium` isn't `Send`. The
+    /// returned `ChunkBuildOutput` owns a `TempDir`; chunk files live
+    /// inside it and are removed when the caller drops the value.
+    pub async fn build_chunks(
+        &self,
+        path: PathBuf,
+        requested_pages: Vec<u32>,
+        source_size_bytes: u64,
+        source_page_count: u32,
+        config: ChunkConfig,
+    ) -> AppResult<ChunkBuildOutput> {
+        let (rtx, rrx) = oneshot::channel();
+        self.dispatch(
+            PdfTask::BuildChunks {
+                path,
+                requested_pages,
+                source_size_bytes,
+                source_page_count,
+                config,
                 resp: rtx,
             },
             rrx,

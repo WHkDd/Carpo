@@ -33,7 +33,11 @@ pub async fn start_whole_file_ocr(
     req: WholeFileOcrRequest,
     state: State<'_, AppState>,
 ) -> AppResult<JobStarted> {
-    crate::jobs::whole_file::validate(&req)?;
+    // Validation depends on the active provider (per-(provider, kind)
+    // page caps), so we load settings once here and hand them to
+    // `validate`. The runner reloads its own copy inside `run`.
+    let settings = crate::config::load(&app)?;
+    crate::jobs::whole_file::validate(&req, &settings)?;
     let (id, token) = state.jobs.register(JobKind::WholeFile);
     crate::jobs::whole_file::spawn(app, req, id, token);
     Ok(JobStarted {
