@@ -140,11 +140,11 @@ pub fn plan_chunk_page_batches(
     let avg = avg_bytes_per_page(source_size_bytes, source_page_count);
     // If we can't estimate (zero source pages, defensive), fall back to
     // the page-count cap alone.
-    let by_size = if avg == 0 {
-        config.max_chunk_pages as usize
-    } else {
-        ((config.target_chunk_bytes / avg).max(1)) as usize
-    };
+    let by_size = config
+        .target_chunk_bytes
+        .checked_div(avg)
+        .and_then(|pages| usize::try_from(pages.max(1)).ok())
+        .unwrap_or(config.max_chunk_pages as usize);
     let pages_per_chunk = by_size.min(config.max_chunk_pages as usize).max(1);
     requested_pages
         .chunks(pages_per_chunk)

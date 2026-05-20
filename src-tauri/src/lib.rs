@@ -51,6 +51,8 @@ pub fn run() {
             commands::ocr::list_provider_models,
             commands::ocr::cancel_job,
             commands::ocr::list_jobs,
+            commands::paddle_json::analyze_paddle_json,
+            commands::paddle_json::import_paddle_json,
             commands::system::open_log_dir
         ])
         .setup(|app| {
