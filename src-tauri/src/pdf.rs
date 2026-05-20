@@ -357,6 +357,12 @@ pub struct ChunkBuildOutput {
     pub manifests: Vec<ChunkManifest>,
 }
 
+impl ChunkBuildOutput {
+    pub fn temp_dir_path(&self) -> &Path {
+        self.temp_dir.path()
+    }
+}
+
 fn cancel_fired(cancel: &Option<CancellationToken>) -> bool {
     cancel.as_ref().is_some_and(|t| t.is_cancelled())
 }

@@ -517,6 +517,18 @@ async fn run_paddle_document_chunked(
         }
     };
 
+    let total_chunk_bytes: u64 = chunk_output
+        .manifests
+        .iter()
+        .map(|manifest| manifest.size_bytes)
+        .sum();
+    log::info!(
+        "built {} Paddle OCR chunks totalling {:.1} MB in {}",
+        chunk_output.manifests.len(),
+        total_chunk_bytes as f64 / 1_048_576.0,
+        chunk_output.temp_dir_path().display()
+    );
+
     let mut results: Vec<PageResultPayload> = Vec::new();
     let mut errors: Vec<PageErrorPayload> = Vec::new();
     let mut cancelled = false;

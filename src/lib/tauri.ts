@@ -9,6 +9,10 @@ import type {
   SecretKey,
   WholeFileOcrRequest,
 } from "./ipc-types";
+import type {
+  PaddleJsonImport,
+  PaddleJsonPreflightReport,
+} from "./layout-document";
 
 /**
  * Typed wrappers around invoke<>(). One thin function per command keeps the
@@ -124,4 +128,16 @@ export async function listJobs(): Promise<JobListEntry[]> {
 
 export async function openLogDir(): Promise<string> {
   return invoke<string>("open_log_dir");
+}
+
+export async function analyzePaddleJson(
+  path: string
+): Promise<PaddleJsonPreflightReport> {
+  return invoke<PaddleJsonPreflightReport>("analyze_paddle_json", { path });
+}
+
+export async function importPaddleJson(
+  path: string
+): Promise<PaddleJsonImport> {
+  return invoke<PaddleJsonImport>("import_paddle_json", { path });
 }
