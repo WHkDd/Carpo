@@ -6,6 +6,7 @@ mod image;
 mod jobs;
 mod ocr;
 mod pdf;
+mod pdf_chunk;
 mod secrets;
 mod state;
 

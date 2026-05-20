@@ -52,10 +52,13 @@ log = "0.4"
 
 # Misc
 uuid = { version = "1", features = ["v4", "serde"] }
+# Auto-cleaned scratch directory for PDF chunk files produced by the
+# Paddle document-level OCR path. Promoted from dev-dep because the
+# chunking runner holds a TempDir for the lifetime of the job.
+tempfile = "3"
 
 [dev-dependencies]
 wiremock = "0.6"
-tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [features]
