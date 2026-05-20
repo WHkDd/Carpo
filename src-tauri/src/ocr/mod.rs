@@ -18,6 +18,7 @@ use crate::error::{AppError, AppResult};
 pub mod openai;
 pub mod paddle;
 pub mod paddle_document;
+pub mod paddle_json;
 
 pub const MAX_RETRIES: u32 = 3;
 pub const BACKOFF_SECS: [u64; 3] = [0, 2, 5];
