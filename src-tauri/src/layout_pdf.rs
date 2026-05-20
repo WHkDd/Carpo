@@ -50,17 +50,12 @@ pub struct LayoutPdfExportResult {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutPdfExportMode {
+    #[default]
     Bbox,
     Reading,
-}
-
-impl Default for LayoutPdfExportMode {
-    fn default() -> Self {
-        Self::Bbox
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,6 +124,15 @@ struct PdfRect {
     y: f32,
     w: f32,
     h: f32,
+}
+
+struct TextBlockRender<'a> {
+    page_index: u32,
+    label: &'a str,
+    text: &'a str,
+    rect: PdfRect,
+    font_id: &'a FontId,
+    options: &'a LayoutPdfExportOptions,
 }
 
 #[derive(Debug)]
@@ -246,13 +250,15 @@ fn render_page(
         }
         render_text_block(
             &mut ops,
-            page.index,
-            &block.label,
-            &text,
-            rect,
-            font_id,
-            options,
             warnings,
+            TextBlockRender {
+                page_index: page.index,
+                label: &block.label,
+                text: &text,
+                rect,
+                font_id,
+                options,
+            },
         );
     }
 
@@ -297,16 +303,15 @@ fn map_bbox(bbox: [f64; 4], metrics: PageMetrics) -> PdfRect {
     }
 }
 
-fn render_text_block(
-    ops: &mut Vec<Op>,
-    page_index: u32,
-    label: &str,
-    text: &str,
-    rect: PdfRect,
-    font_id: &FontId,
-    options: &LayoutPdfExportOptions,
-    warnings: &mut Vec<String>,
-) {
+fn render_text_block(ops: &mut Vec<Op>, warnings: &mut Vec<String>, block: TextBlockRender<'_>) {
+    let TextBlockRender {
+        page_index,
+        label,
+        text,
+        rect,
+        font_id,
+        options,
+    } = block;
     let mut font_size = font_size_for(label, rect, options);
     let max_w = (rect.w - BLOCK_PADDING_PT * 2.0).max(font_size);
     let max_h = (rect.h - BLOCK_PADDING_PT * 2.0).max(font_size);
