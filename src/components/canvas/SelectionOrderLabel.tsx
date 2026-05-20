@@ -1,7 +1,7 @@
 import { memo, useMemo } from "react";
 import { Group, Rect, Text } from "react-konva";
 
-function readHslVar(name: string): string {
+function readHslVar(name: string, _colorVersion: number): string {
   if (typeof document === "undefined") return "";
   const raw = getComputedStyle(document.documentElement)
     .getPropertyValue(name)
@@ -26,11 +26,11 @@ function SelectionOrderLabelImpl({ x, y, order, colorVersion }: SelectionOrderLa
   const textW = Math.max(MIN_W, text.length * 7 + 8);
 
   const bgFill = useMemo(
-    () => readHslVar("--primary") || "#262626",
+    () => readHslVar("--primary", colorVersion) || "#262626",
     [colorVersion]
   );
   const textFill = useMemo(
-    () => readHslVar("--primary-foreground") || "#f7f7f5",
+    () => readHslVar("--primary-foreground", colorVersion) || "#f7f7f5",
     [colorVersion]
   );
 

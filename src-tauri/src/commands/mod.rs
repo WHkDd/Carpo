@@ -1,3 +1,4 @@
+pub mod export;
 pub mod files;
 pub mod ocr;
 pub mod paddle_json;
