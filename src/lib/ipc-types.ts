@@ -161,12 +161,22 @@ export interface GroupedJobDone {
   cancelled: boolean;
 }
 
+/** Discriminator stamped onto whole-file `JOB_DONE` payloads by the runner.
+ *  Mirrors `jobs::whole_file::DoneSource` in Rust. The frontend uses this to
+ *  pick the `RecognizedPageSourceMode` when writing per-page results so the
+ *  panel can later tell `paddle_document` runs apart from per-page PNG runs
+ *  (e.g. for the layout-rebuilt PDF export). Older job payloads without the
+ *  field are treated as `page_image`. */
+export type WholeFileDoneSource = "page_image" | "paddle_document";
+
 /** Whole-file-OCR job result. Used by `start_whole_file_ocr`. */
 export interface WholeFileJobDone {
   job_id: string;
   results: WholeFileOcrResultEntry[];
   errors: WholeFileOcrErrorEntry[];
   cancelled: boolean;
+  /** Optional for back-compat with older job payloads. */
+  source?: WholeFileDoneSource;
 }
 
 /** Wire payload for `JOB_DONE`. The two shapes are disambiguated by the

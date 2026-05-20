@@ -18,7 +18,7 @@ import {
   type WholeFileJobDone,
 } from "@/lib/ipc-types";
 import { useStore } from "@/store";
-import type { RecognizedPage } from "@/store/jobSlice";
+import type { RecognizedPage, RecognizedPageSourceMode } from "@/store/jobSlice";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
 import { StatusBar } from "./StatusBar";
@@ -137,8 +137,15 @@ function AppShellInner() {
             } else {
               // whole_file: zip requestedPages with results/errors, then
               // write normalized page results while keeping legacy page text
-              // in sync for older consumers.
+              // in sync for older consumers. `source` tells us whether the
+              // runner used the per-page PNG path or Paddle's document-level
+              // API — propagated to `sourceMode` so the right panel and the
+              // upcoming layout exporter can react accordingly.
               const payload = e.payload as WholeFileJobDone;
+              const sourceMode: RecognizedPageSourceMode =
+                payload.source === "paddle_document"
+                  ? "paddle_document"
+                  : "page_image";
               const errorByPage = new Map(
                 payload.errors.map((er) => [er.page, er.message])
               );
@@ -154,7 +161,7 @@ function AppShellInner() {
                     ? {
                         text: row,
                         status: "done",
-                        sourceMode: "page_image",
+                        sourceMode,
                         sourceJobId: job.jobId,
                       }
                     : {
@@ -164,7 +171,7 @@ function AppShellInner() {
                             : "[未识别]",
                         status: "failed",
                         error: errMsg ?? "未返回识别结果",
-                        sourceMode: "page_image",
+                        sourceMode,
                         sourceJobId: job.jobId,
                       };
               }
