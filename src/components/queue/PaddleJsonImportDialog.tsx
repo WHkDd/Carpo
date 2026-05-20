@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
-import { AlertTriangle, FileJson, X } from "lucide-react";
+import { AlertTriangle, FileDown, FileJson, X } from "lucide-react";
 import { appErrorMessage } from "@/lib/ipc-types";
 import {
   analyzePaddleJson as ipcAnalyzePaddleJson,
+  exportLayoutPdf as ipcExportLayoutPdf,
   importPaddleJson as ipcImportPaddleJson,
 } from "@/lib/tauri";
 import type {
   PaddleJsonImport,
   PaddleJsonPreflightReport,
 } from "@/lib/layout-document";
+import { DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS } from "@/lib/layout-document";
 import { useStore } from "@/store";
 import type { RecognizedPage } from "@/store/jobSlice";
 
@@ -49,6 +51,13 @@ const STRUCTURE_DESCRIPTIONS: Array<{
   { key: "hasOutputImages", label: "版面渲染图 (outputImages)" },
 ];
 
+const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
+
+function defaultPdfNameFromPath(path: string): string {
+  const filename = path.split(/[\\/]/).pop() || "paddle-json";
+  return `${filename.replace(/\.[^.]+$/, "")}_版式重建.pdf`;
+}
+
 export function PaddleJsonImportDialog({
   open,
   path,
@@ -56,6 +65,8 @@ export function PaddleJsonImportDialog({
 }: PaddleJsonImportDialogProps) {
   const [state, setState] = useState<DialogState>({ status: "loading" });
   const [target, setTarget] = useState<Target>("current");
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const currentFile = useStore((s) =>
     s.currentFileId
@@ -72,6 +83,7 @@ export function PaddleJsonImportDialog({
     if (!open || !path) return;
     let cancelled = false;
     setState({ status: "loading" });
+    setExportMessage(null);
     // Pull the full import payload up front: the Rust side already does the
     // heavy parse work, and confirming should be instant. If the user
     // cancels, we just throw the parsed payload away.
@@ -155,6 +167,33 @@ export function PaddleJsonImportDialog({
         status: "error",
         errorMessage: appErrorMessage(e),
       }));
+    }
+  }
+
+  async function exportLayoutPdf(): Promise<void> {
+    if (state.status !== "ready" || !state.imported || !path) return;
+    setExportingPdf(true);
+    setExportMessage(null);
+    try {
+      const targetPath = await saveDialog({
+        defaultPath: defaultPdfNameFromPath(path),
+        filters: PDF_FILTERS,
+      });
+      if (!targetPath) return;
+      const result = await ipcExportLayoutPdf({
+        document: state.imported.document,
+        targetPath,
+        options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+      });
+      setExportMessage(
+        result.warningCount > 0
+          ? `已导出 ${result.pageCount} 页 · ${result.warningCount} 个提示`
+          : `已导出 ${result.pageCount} 页`
+      );
+    } catch (e) {
+      setExportMessage(`导出失败：${appErrorMessage(e)}`);
+    } finally {
+      setExportingPdf(false);
     }
   }
 
@@ -278,25 +317,54 @@ export function PaddleJsonImportDialog({
               </label>
             </fieldset>
 
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={commit}
-                disabled={
-                  state.status !== "ready" ||
-                  (target === "current" && !currentFileId)
-                }
-                className="h-7 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {target === "current" ? "导入并写入按页文本" : "完成"}
-              </button>
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void exportLayoutPdf()}
+                  disabled={
+                    exportingPdf ||
+                    state.status !== "ready" ||
+                    !state.imported?.document.pages.length
+                  }
+                  className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-2.5 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  {exportingPdf ? "导出中…" : "导出版式 PDF"}
+                </button>
+                {exportMessage && (
+                  <span
+                    className={`truncate text-[11px] ${
+                      exportMessage.startsWith("导出失败")
+                        ? "text-destructive"
+                        : "text-foreground-subtle"
+                    }`}
+                    title={exportMessage}
+                  >
+                    {exportMessage}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={commit}
+                  disabled={
+                    state.status !== "ready" ||
+                    (target === "current" && !currentFileId)
+                  }
+                  className="h-7 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {target === "current" ? "导入并写入按页文本" : "完成"}
+                </button>
+              </div>
             </div>
           </footer>
         )}
@@ -312,8 +380,9 @@ function PreflightSummary({
   preflight: PaddleJsonPreflightReport;
   pdfTotal: number | undefined;
 }) {
-  const labelEntries = Object.entries(preflight.labelCounts).sort(
-    (a, b) => b[1] - a[1]
+  const labelEntries = useMemo(
+    () => Object.entries(preflight.labelCounts).sort((a, b) => b[1] - a[1]),
+    [preflight.labelCounts]
   );
   const modelSettingsPretty = useMemo(() => {
     if (

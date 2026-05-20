@@ -43,11 +43,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutBlock {
     pub label: String,
@@ -61,7 +61,7 @@ pub struct LayoutBlock {
     pub image_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutPage {
     pub index: u32,
@@ -70,7 +70,7 @@ pub struct LayoutPage {
     pub blocks: Vec<LayoutBlock>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutDocument {
     /// `"paddle"` for now. Reserved so the same `LayoutDocument` can later

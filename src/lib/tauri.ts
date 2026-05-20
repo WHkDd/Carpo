@@ -10,6 +10,8 @@ import type {
   WholeFileOcrRequest,
 } from "./ipc-types";
 import type {
+  LayoutPdfExportRequest,
+  LayoutPdfExportResult,
   PaddleJsonImport,
   PaddleJsonPreflightReport,
 } from "./layout-document";
@@ -140,4 +142,10 @@ export async function importPaddleJson(
   path: string
 ): Promise<PaddleJsonImport> {
   return invoke<PaddleJsonImport>("import_paddle_json", { path });
+}
+
+export async function exportLayoutPdf(
+  req: LayoutPdfExportRequest
+): Promise<LayoutPdfExportResult> {
+  return invoke<LayoutPdfExportResult>("export_layout_pdf", { req });
 }

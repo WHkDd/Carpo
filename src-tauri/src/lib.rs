@@ -4,6 +4,7 @@ mod error;
 mod events;
 mod image;
 mod jobs;
+mod layout_pdf;
 mod ocr;
 mod pdf;
 mod pdf_chunk;
@@ -53,6 +54,7 @@ pub fn run() {
             commands::ocr::list_jobs,
             commands::paddle_json::analyze_paddle_json,
             commands::paddle_json::import_paddle_json,
+            commands::export::export_layout_pdf,
             commands::system::open_log_dir
         ])
         .setup(|app| {

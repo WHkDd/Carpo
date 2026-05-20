@@ -38,6 +38,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Imaging / PDF
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
 pdfium-render = { version = "0.8", features = ["thread_safe"] }
+printpdf = { version = "0.9.1", default-features = false }
+ttf-parser = "0.25"
 base64 = "0.22"
 
 # Secrets

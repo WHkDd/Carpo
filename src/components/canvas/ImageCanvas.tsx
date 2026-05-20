@@ -400,7 +400,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       dragStartPos.current = {};
     }, []);
 
-    const { drawState, handlers } = useDrawBlock({
+    const { drawState, handlers: drawHandlers } = useDrawBlock({
       stageRef,
       manualDrawMode,
       onBlockCreated: ({ x, y, w, h }) => {
@@ -420,6 +420,11 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         useStore.getState().pushSelection(file.id, page, id);
       },
     });
+    const {
+      onMouseDown: onDrawMouseDown,
+      onMouseMove: onDrawMouseMove,
+      onMouseUp: onDrawMouseUp,
+    } = drawHandlers;
 
     const onStageMouseDown = useCallback(
       (e: KonvaEventObject<MouseEvent>) => {
@@ -432,9 +437,9 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             s.setEditingBlock(s.currentFileId, null);
           }
         }
-        handlers.onMouseDown(e);
+        onDrawMouseDown(e);
       },
-      [handlers.onMouseDown]
+      [onDrawMouseDown]
     );
 
     const rubberBand =
@@ -465,8 +470,8 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             onWheel={onWheel}
             onDragEnd={onDragEnd}
             onMouseDown={onStageMouseDown}
-            onMouseMove={handlers.onMouseMove}
-            onMouseUp={handlers.onMouseUp}
+            onMouseMove={onDrawMouseMove}
+            onMouseUp={onDrawMouseUp}
             style={{ cursor: manualDrawMode ? "crosshair" : undefined }}
           >
             <Layer listening={false}>

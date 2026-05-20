@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { Rect } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Rect as KRect } from "konva/lib/shapes/Rect";
@@ -52,25 +52,31 @@ function BlockRectImpl(props: BlockRectProps) {
   } = props;
 
   const hasArticle = articleNum != null;
+  // Parent increments this when article colour CSS tokens change; receiving
+  // the prop is enough to re-render and recompute the cached colour strings.
+  void colorVersion;
 
-  const baseFill = useMemo(() => {
-    if (isSelected) {
-      return hasArticle ? articleHsl(articleNum!, 0.38) : FILL_SELECTED;
-    }
-    return hasArticle ? articleHsl(articleNum!, 0.15) : FILL_BASE;
-  }, [isSelected, articleNum, hasArticle, colorVersion]);
-
-  const hoverFill = useMemo(() => {
-    if (isSelected) {
-      return hasArticle ? articleHsl(articleNum!, 0.42) : FILL_SELECTED_HOVER;
-    }
-    return hasArticle ? articleHsl(articleNum!, 0.32) : FILL_HOVER;
-  }, [isSelected, articleNum, hasArticle, colorVersion]);
-
-  const stroke = useMemo(() => {
-    if (isHighlighted) return STROKE_HIGHLIGHT;
-    return hasArticle ? articleHsl(articleNum!, 1) : isSelected ? STROKE_SELECTED : STROKE_BASE;
-  }, [isHighlighted, isSelected, articleNum, hasArticle, colorVersion]);
+  const baseFill = isSelected
+    ? hasArticle
+      ? articleHsl(articleNum!, 0.38)
+      : FILL_SELECTED
+    : hasArticle
+      ? articleHsl(articleNum!, 0.15)
+      : FILL_BASE;
+  const hoverFill = isSelected
+    ? hasArticle
+      ? articleHsl(articleNum!, 0.42)
+      : FILL_SELECTED_HOVER
+    : hasArticle
+      ? articleHsl(articleNum!, 0.32)
+      : FILL_HOVER;
+  const stroke = isHighlighted
+    ? STROKE_HIGHLIGHT
+    : hasArticle
+      ? articleHsl(articleNum!, 1)
+      : isSelected
+        ? STROKE_SELECTED
+        : STROKE_BASE;
 
   return (
     <Rect
