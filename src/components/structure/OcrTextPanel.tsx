@@ -18,6 +18,12 @@ import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
+import {
+  DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+  type LayoutDocument,
+  type LayoutPage,
+} from "@/lib/layout-document";
+import { exportLayoutPdf as ipcExportLayoutPdf } from "@/lib/tauri";
 import { PageJumpControl } from "@/components/layout/PageJumpControl";
 import type { RecognizedPage } from "@/store/jobSlice";
 
@@ -25,6 +31,7 @@ const SAVE_FILTERS = [
   { name: "Markdown", extensions: ["md"] },
   { name: "Text", extensions: ["txt"] },
 ];
+const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
 
 /** Threshold above which the OCR text panel falls back to a plain
  *  `<pre>` view instead of rendering through ReactMarkdown + KaTeX.
@@ -63,6 +70,17 @@ function countRecognizedPageText(
 ): number {
   return Object.values(pages ?? {}).filter((entry) => entry.text.length > 0)
     .length;
+}
+
+function buildLayoutDocumentFromRecognizedPages(
+  pages: Record<number, RecognizedPage> | undefined
+): LayoutDocument | null {
+  const layoutPages = Object.values(pages ?? {})
+    .map((entry) => entry.layout)
+    .filter((page): page is LayoutPage => !!page)
+    .sort((a, b) => a.index - b.index);
+  if (layoutPages.length === 0) return null;
+  return { source: "paddle", pages: layoutPages };
 }
 
 function useBulkOcrText() {
@@ -161,12 +179,20 @@ function useBulkOcrText() {
     articles,
   ]);
 
+  const layoutDocument = useMemo(() => {
+    if (!fileId || recognitionMode !== "whole_file") return null;
+    return buildLayoutDocumentFromRecognizedPages(recognizedPages[fileId]);
+  }, [fileId, recognitionMode, recognizedPages]);
+  const getLayoutDocument = useCallback(() => layoutDocument, [layoutDocument]);
+
   return {
     getBulkText,
+    getLayoutDocument,
     fileLabel: fileEntry?.name ?? "(未命名)",
     hasFile: fileId !== null,
     recognitionMode,
     hasBulkText,
+    hasLayoutDocument: layoutDocument !== null,
     getBulkCount,
   };
 }
@@ -174,15 +200,18 @@ function useBulkOcrText() {
 export function OcrBulkActions() {
   const {
     getBulkText,
+    getLayoutDocument,
     fileLabel,
     hasFile,
     recognitionMode,
     hasBulkText,
+    hasLayoutDocument,
     getBulkCount,
   } = useBulkOcrText();
   const [copied, setCopied] = useState(false);
   const [copiedCount, setCopiedCount] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [exportingLayoutPdf, setExportingLayoutPdf] = useState(false);
   const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
 
   const onCopyAll = useCallback(async () => {
@@ -218,6 +247,30 @@ export function OcrBulkActions() {
       setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
   }, [getBulkText, fileLabel, recognitionMode]);
+
+  const onExportLayoutPdf = useCallback(async () => {
+    const document = getLayoutDocument();
+    if (!document) return;
+    setSaveError(null);
+    setExportingLayoutPdf(true);
+    try {
+      const stem = fileLabel.replace(/\.[^.]+$/, "");
+      const target = await save({
+        defaultPath: `${stem}_版式重建.pdf`,
+        filters: PDF_FILTERS,
+      });
+      if (!target) return;
+      await ipcExportLayoutPdf({
+        document,
+        targetPath: target,
+        options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+      });
+    } catch (e) {
+      setSaveError(`导出失败：${appErrorMessage(e)}`);
+    } finally {
+      setExportingLayoutPdf(false);
+    }
+  }, [getLayoutDocument, fileLabel]);
 
   if (!hasFile) return null;
 
@@ -257,6 +310,16 @@ export function OcrBulkActions() {
         aria-label={
           recognitionMode === "whole_file" ? "导出所有页" : "导出所有报道"
         }
+        className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
+      >
+        <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        disabled={!hasLayoutDocument || exportingLayoutPdf}
+        onClick={() => void onExportLayoutPdf()}
+        title="导出版式 PDF"
+        aria-label="导出版式 PDF"
         className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
       >
         <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />

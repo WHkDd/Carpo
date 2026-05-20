@@ -26,6 +26,47 @@ export interface LayoutDocument {
   pages: LayoutPage[];
 }
 
+export type LayoutPdfExportMode = "bbox" | "reading";
+
+export interface LayoutPdfExportOptions {
+  mode: LayoutPdfExportMode;
+  includeHeader: boolean;
+  includeFooter: boolean;
+  includePageNumber: boolean;
+  includeAsideText: boolean;
+  includeFootnote: boolean;
+  includeImages: boolean;
+  includeTables: boolean;
+  fontScale: number;
+  marginScale: number;
+}
+
+export interface LayoutPdfExportRequest {
+  document: LayoutDocument;
+  targetPath: string;
+  options: LayoutPdfExportOptions;
+}
+
+export interface LayoutPdfExportResult {
+  targetPath: string;
+  pageCount: number;
+  warningCount: number;
+  warnings: string[];
+}
+
+export const DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS: LayoutPdfExportOptions = {
+  mode: "bbox",
+  includeHeader: true,
+  includeFooter: true,
+  includePageNumber: true,
+  includeAsideText: true,
+  includeFootnote: true,
+  includeImages: false,
+  includeTables: true,
+  fontScale: 1,
+  marginScale: 1,
+};
+
 /** Preflight report returned by `analyze_paddle_json` / `import_paddle_json`.
  *  Mirrors `ocr::paddle_json::PaddleJsonPreflightReport` on the Rust side. */
 export interface PaddleJsonPreflightReport {
