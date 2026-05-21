@@ -1,3 +1,5 @@
+import type { LayoutPage } from "./layout-document";
+
 /**
  * IPC DTOs — kept in sync by hand with src-tauri/src DTOs until we adopt
  * specta or ts-rs. Anything sent across the Tauri boundary lives here.
@@ -11,6 +13,33 @@ export type Provider =
 
 export type OcrProfile = "standard" | "fast";
 
+export interface PaddleDocumentOptions {
+  includeHeader: boolean;
+  includeFooter: boolean;
+  includePageNumber: boolean;
+  includeAsideText: boolean;
+  includeHeaderImage: boolean;
+  includeFooterImage: boolean;
+  includeFootnote: boolean;
+  useDocOrientationClassify: boolean;
+  useDocUnwarping: boolean;
+  useLayoutDetection: boolean;
+  useChartRecognition: boolean;
+  useSealRecognition: boolean;
+  useOcrForImageBlock: boolean;
+  mergeTables: boolean;
+  relevelTitles: boolean;
+  layoutShapeMode: string;
+  promptLabel: string;
+  repetitionPenalty: number;
+  temperature: number;
+  topP: number;
+  minPixels: number;
+  maxPixels: number;
+  layoutNms: boolean;
+  restructurePages: boolean;
+}
+
 export type SecretKey =
   | "paddle_token"
   | "openai_key"
@@ -23,6 +52,7 @@ export interface NonSecretSettings {
   ocr_prompt: string;
   paddle_url: string;
   paddle_model: string;
+  paddle_document_options: PaddleDocumentOptions;
   openai_model: string;
   openrouter_model: string;
   openai_compatible_base_url: string;
@@ -147,6 +177,7 @@ export interface GroupedOcrErrorEntry {
 export interface WholeFileOcrResultEntry {
   page: number;
   text: string;
+  layout?: LayoutPage;
   /** Set only when `WholeFileJobDone.source === "paddle_document_chunk"`.
    *  Identifies which chunk PDF this page came from — purely
    *  informational, since the UI keys everything off the original PDF's

@@ -13,6 +13,7 @@ import {
 } from "@/lib/tauri";
 import type {
   NonSecretSettings,
+  PaddleDocumentOptions,
   Provider,
   SecretKey,
 } from "@/lib/ipc-types";
@@ -455,6 +456,8 @@ function ProviderPanel({
   onDeleteSecret,
 }: ProviderPanelProps) {
   const isActive = draft.provider === provider;
+  const paddleOptions = draft.paddle_document_options ??
+    DEFAULT_SETTINGS.paddle_document_options;
 
   const modelValue = useMemo(() => {
     switch (provider) {
@@ -488,6 +491,19 @@ function ProviderPanel({
       }
       return next;
     });
+
+  const setPaddleDocumentOption = <K extends keyof PaddleDocumentOptions>(
+    key: K,
+    value: PaddleDocumentOptions[K]
+  ) =>
+    setDraft((d) => ({
+      ...d,
+      paddle_document_options: {
+        ...DEFAULT_SETTINGS.paddle_document_options,
+        ...d.paddle_document_options,
+        [key]: value,
+      },
+    }));
 
   // Show the typed-in draft when present, otherwise mask. Backend never
   // returns the actual key, so we cannot "show" a previously-saved one.
@@ -637,6 +653,13 @@ function ProviderPanel({
             </div>
           )}
         </Field>
+
+        {provider === "paddleocr" && (
+          <PaddleDocumentOptionsPanel
+            options={paddleOptions}
+            onChange={setPaddleDocumentOption}
+          />
+        )}
       </div>
     </div>
   );
@@ -647,6 +670,275 @@ function ProviderPanel({
     if (typeof secretEdit === "string" && secretEdit.length > 0) return true;
     return secretPresent;
   }
+}
+
+interface PaddleDocumentOptionsPanelProps {
+  options: PaddleDocumentOptions;
+  onChange: <K extends keyof PaddleDocumentOptions>(
+    key: K,
+    value: PaddleDocumentOptions[K]
+  ) => void;
+}
+
+function PaddleDocumentOptionsPanel({
+  options,
+  onChange,
+}: PaddleDocumentOptionsPanelProps) {
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="mb-3">
+        <h4 className="text-[13px] font-medium text-foreground">
+          全文识别版式参数
+        </h4>
+        <p className="mt-1 text-[11px] text-foreground-subtle">
+          仅用于 Paddle + PDF 全文识别；框选识别不读取这些参数。
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <div className="mb-2 text-[12px] font-medium text-foreground-muted">
+            辅助内容解析
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            <ToggleRow
+              label="页眉"
+              checked={options.includeHeader}
+              onChange={(v) => onChange("includeHeader", v)}
+            />
+            <ToggleRow
+              label="页眉图片"
+              checked={options.includeHeaderImage}
+              onChange={(v) => onChange("includeHeaderImage", v)}
+            />
+            <ToggleRow
+              label="页脚"
+              checked={options.includeFooter}
+              onChange={(v) => onChange("includeFooter", v)}
+            />
+            <ToggleRow
+              label="页脚图片"
+              checked={options.includeFooterImage}
+              onChange={(v) => onChange("includeFooterImage", v)}
+            />
+            <ToggleRow
+              label="页码"
+              checked={options.includePageNumber}
+              onChange={(v) => onChange("includePageNumber", v)}
+            />
+            <ToggleRow
+              label="脚注"
+              checked={options.includeFootnote}
+              onChange={(v) => onChange("includeFootnote", v)}
+            />
+            <ToggleRow
+              label="旁注文本"
+              checked={options.includeAsideText}
+              onChange={(v) => onChange("includeAsideText", v)}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 text-[12px] font-medium text-foreground-muted">
+            模型参数设置
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            <ToggleRow
+              label="图片方向矫正"
+              checked={options.useDocOrientationClassify}
+              onChange={(v) => onChange("useDocOrientationClassify", v)}
+            />
+            <ToggleRow
+              label="图片扭曲矫正"
+              checked={options.useDocUnwarping}
+              onChange={(v) => onChange("useDocUnwarping", v)}
+            />
+            <ToggleRow
+              label="版面分析"
+              checked={options.useLayoutDetection}
+              onChange={(v) => onChange("useLayoutDetection", v)}
+            />
+            <ToggleRow
+              label="图表识别"
+              checked={options.useChartRecognition}
+              onChange={(v) => onChange("useChartRecognition", v)}
+            />
+            <ToggleRow
+              label="印章识别"
+              checked={options.useSealRecognition}
+              onChange={(v) => onChange("useSealRecognition", v)}
+            />
+            <ToggleRow
+              label="图片文字识别"
+              checked={options.useOcrForImageBlock}
+              onChange={(v) => onChange("useOcrForImageBlock", v)}
+            />
+            <ToggleRow
+              label="跨页表格合并"
+              checked={options.mergeTables}
+              onChange={(v) => onChange("mergeTables", v)}
+            />
+            <ToggleRow
+              label="段落标题级别识别"
+              checked={options.relevelTitles}
+              onChange={(v) => onChange("relevelTitles", v)}
+            />
+            <ToggleRow
+              label="页面重排"
+              checked={options.restructurePages}
+              onChange={(v) => onChange("restructurePages", v)}
+            />
+            <ToggleRow
+              label="NMS 后处理"
+              checked={options.layoutNms}
+              onChange={(v) => onChange("layoutNms", v)}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <SelectSetting
+            label="版面检测结果的几何形状"
+            value={options.layoutShapeMode}
+            options={[
+              ["auto", "自动"],
+              ["rectangle", "矩形"],
+              ["quadrilateral", "四边形"],
+              ["polygon", "多边形"],
+            ]}
+            onChange={(v) => onChange("layoutShapeMode", v)}
+          />
+          <SelectSetting
+            label="prompt 类型"
+            value={options.promptLabel}
+            options={[
+              ["ocr", "文本"],
+              ["formula", "公式"],
+              ["table", "表格"],
+              ["chart", "图表"],
+              ["seal", "印章"],
+              ["text_detection_recognition", "文本检测与识别"],
+            ]}
+            onChange={(v) => onChange("promptLabel", v)}
+          />
+          <NumberSetting
+            label="重复抑制强度"
+            value={options.repetitionPenalty}
+            step={0.1}
+            onChange={(v) => onChange("repetitionPenalty", v)}
+          />
+          <NumberSetting
+            label="识别稳定性"
+            value={options.temperature}
+            step={0.1}
+            onChange={(v) => onChange("temperature", v)}
+          />
+          <NumberSetting
+            label="结果可信范围"
+            value={options.topP}
+            step={0.1}
+            onChange={(v) => onChange("topP", v)}
+          />
+          <NumberSetting
+            label="图像最小总像素数"
+            value={options.minPixels}
+            step={1}
+            onChange={(v) => onChange("minPixels", Math.max(1, Math.round(v)))}
+          />
+          <NumberSetting
+            label="图像最大总像素数"
+            value={options.maxPixels}
+            step={1}
+            onChange={(v) => onChange("maxPixels", Math.max(1, Math.round(v)))}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex h-7 items-center justify-between gap-3 text-[12px] text-foreground">
+      <span>{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 accent-primary"
+      />
+    </label>
+  );
+}
+
+function SelectSetting({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<[string, string]>;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-medium text-foreground-muted">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 rounded border border-border bg-background px-2 text-[12px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NumberSetting({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  step: number;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-medium text-foreground-muted">
+        {label}
+      </span>
+      <input
+        type="number"
+        value={value}
+        step={step}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        className="h-8 rounded border border-border bg-background px-2 font-mono text-[12px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+      />
+    </label>
+  );
 }
 
 /** Build the dropdown options. We always include the current value (even if
