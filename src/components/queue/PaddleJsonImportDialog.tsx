@@ -34,8 +34,6 @@ interface DialogState {
   errorMessage?: string;
 }
 
-type Target = "current" | "preflight_only";
-
 /** Static blurb for each preflight bullet. The dialog labels these as
  *  "已确认开启 / 已确认关闭 / 结构存在 / 结构缺失" per plan §9.5. */
 const STRUCTURE_DESCRIPTIONS: Array<{
@@ -64,7 +62,6 @@ export function PaddleJsonImportDialog({
   onClose,
 }: PaddleJsonImportDialogProps) {
   const [state, setState] = useState<DialogState>({ status: "loading" });
-  const [target, setTarget] = useState<Target>("current");
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
 
@@ -109,31 +106,8 @@ export function PaddleJsonImportDialog({
     };
   }, [open, path]);
 
-  // Default target switches based on whether a file is open. The user can
-  // still override (e.g. "preflight_only" against an open PDF) — we just
-  // pick the most useful default.
-  useEffect(() => {
-    if (open) setTarget(currentPdf ? "current" : "preflight_only");
-  }, [open, currentPdf]);
-
-  const pageCount = state.preflight?.pageCount ?? 0;
-  const totalPagesMismatch = useMemo(() => {
-    if (!currentPdf?.pdfTotal || !state.preflight) return false;
-    return state.preflight.pageCount !== currentPdf.pdfTotal;
-  }, [currentPdf?.pdfTotal, state.preflight]);
-
   function commit() {
-    if (state.status !== "ready" || !state.imported) return;
-    if (target === "preflight_only") {
-      onClose();
-      return;
-    }
-    if (!currentFileId) {
-      // Defensive: should be unreachable because the radio disables this
-      // target without a file. Fall through to preflight-only.
-      onClose();
-      return;
-    }
+    if (state.status !== "ready" || !state.imported || !currentFileId) return;
     setState((prev) => ({ ...prev, status: "writing" }));
     try {
       const imported = state.imported;
@@ -258,113 +232,49 @@ export function PaddleJsonImportDialog({
         </div>
 
         {(state.status === "ready" || state.status === "writing") && (
-          <footer className="flex flex-col gap-2 border-t border-border bg-surface-2 px-5 py-3">
-            <fieldset className="flex flex-col gap-1.5 text-[12px]">
-              <legend className="mb-1 text-[11px] text-foreground-muted">
-                导入目标
-              </legend>
-              <label
-                className={`flex cursor-pointer items-start gap-2 ${
-                  currentPdf ? "" : "opacity-50"
-                }`}
+          <footer className="flex items-center justify-between gap-2 border-t border-border bg-surface-2 px-5 py-3">
+            <span
+              className={`min-w-0 flex-1 truncate text-[11px] ${
+                exportMessage?.startsWith("导出失败")
+                  ? "text-destructive"
+                  : "text-foreground-subtle"
+              }`}
+              title={exportMessage ?? undefined}
+            >
+              {exportMessage ?? ""}
+            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
               >
-                <input
-                  type="radio"
-                  name="paddle-json-target"
-                  value="current"
-                  checked={target === "current"}
-                  onChange={() => setTarget("current")}
-                  disabled={!currentPdf}
-                  className="mt-0.5"
-                />
-                <span className="min-w-0">
-                  {currentPdf ? (
-                    <>
-                      关联到当前文件「
-                      <span className="font-medium text-foreground">
-                        {currentPdf.name}
-                      </span>
-                      」
-                      {currentPdf.pdfTotal && currentPdf.pdfTotal > 1 && (
-                        <span className="text-foreground-subtle">
-                          {" "}
-                          · {currentPdf.pdfTotal} 页
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-foreground-subtle">
-                      未打开 PDF，无法关联
-                    </span>
-                  )}
-                  {totalPagesMismatch && currentPdf?.pdfTotal && (
-                    <span className="ml-1 text-[11px] text-amber-500">
-                      （JSON {pageCount} 页与 PDF {currentPdf.pdfTotal} 页不一致）
-                    </span>
-                  )}
-                </span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="radio"
-                  name="paddle-json-target"
-                  value="preflight_only"
-                  checked={target === "preflight_only"}
-                  onChange={() => setTarget("preflight_only")}
-                  className="mt-0.5"
-                />
-                <span>仅查看预检结果，不写入识别文本</span>
-              </label>
-            </fieldset>
-
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void exportLayoutPdf()}
-                  disabled={
-                    exportingPdf ||
-                    state.status !== "ready" ||
-                    !state.imported?.document.pages.length
-                  }
-                  className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-2.5 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  {exportingPdf ? "导出中…" : "导出版式 PDF"}
-                </button>
-                {exportMessage && (
-                  <span
-                    className={`truncate text-[11px] ${
-                      exportMessage.startsWith("导出失败")
-                        ? "text-destructive"
-                        : "text-foreground-subtle"
-                    }`}
-                    title={exportMessage}
-                  >
-                    {exportMessage}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
-                >
-                  取消
-                </button>
+                取消
+              </button>
+              {currentPdf && (
                 <button
                   type="button"
                   onClick={commit}
-                  disabled={
-                    state.status !== "ready" ||
-                    (target === "current" && !currentFileId)
-                  }
-                  className="h-7 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={state.status !== "ready" || !currentFileId}
+                  className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  title={`写入到「${currentPdf.name}」`}
                 >
-                  {target === "current" ? "导入并写入按页文本" : "完成"}
+                  写入按页文本
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void exportLayoutPdf()}
+                disabled={
+                  exportingPdf ||
+                  state.status !== "ready" ||
+                  !state.imported?.document.pages.length
+                }
+                className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+                {exportingPdf ? "导出中…" : "导出版式 PDF"}
+              </button>
             </div>
           </footer>
         )}
@@ -410,7 +320,7 @@ function PreflightSummary({
       </div>
 
       {pdfTotal != null && pdfTotal !== preflight.pageCount && (
-        <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200/90">
+        <div className="flex items-start gap-2 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             JSON 为 {preflight.pageCount} 页，当前 PDF 为 {pdfTotal} 页。导入后
@@ -500,7 +410,7 @@ function PreflightSummary({
                 key={idx}
                 className="flex items-start gap-1.5 text-[12px] text-foreground-muted"
               >
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" />
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
                 <span>{warning}</span>
               </li>
             ))}
