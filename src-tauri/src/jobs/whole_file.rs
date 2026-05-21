@@ -38,7 +38,10 @@ use super::page_loader::PageLoader;
 use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
 use crate::events;
-use crate::ocr::{self, paddle_document, OcrRequest, PADDLE_POLL_INTERVAL, PADDLE_POLL_TIMEOUT};
+use crate::ocr::{
+    self, paddle_document, paddle_json::LayoutPage, OcrRequest, PADDLE_POLL_INTERVAL,
+    PADDLE_POLL_TIMEOUT,
+};
 use crate::pdf_chunk::{self, ChunkConfig, ChunkStrategy};
 use crate::secrets;
 use crate::state::AppState;
@@ -74,6 +77,8 @@ struct ProgressEvent {
 struct PageResultPayload {
     page: u32,
     text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout: Option<LayoutPage>,
     /// Set only on the chunked Paddle path. The chunk id is the local
     /// manifest identifier (`chunk-001`, `chunk-002`, ...); the chunk
     /// page is the 1-based position inside that chunk PDF. Both are
@@ -220,6 +225,7 @@ async fn run_page_image(
             PageOutcome::Done { page, text } => results.push(PageResultPayload {
                 page,
                 text,
+                layout: None,
                 chunk_id: None,
                 chunk_page: None,
             }),
@@ -389,7 +395,7 @@ async fn run_paddle_document_direct(
         "application/pdf",
         &file_name,
         Some(page_ranges),
-        paddle_document::default_document_payload(),
+        paddle_document::document_payload(&settings.paddle_document_options),
         pages_sorted.clone(),
         PADDLE_POLL_INTERVAL,
         PADDLE_POLL_TIMEOUT,
@@ -413,6 +419,7 @@ async fn run_paddle_document_direct(
                     results.push(PageResultPayload {
                         page: entry.page,
                         text: entry.text,
+                        layout: entry.layout,
                         chunk_id: None,
                         chunk_page: None,
                     });
@@ -593,7 +600,7 @@ async fn run_paddle_document_chunked(
             "application/pdf",
             &chunk_file_name,
             Some(chunk_page_ranges),
-            paddle_document::default_document_payload(),
+            paddle_document::document_payload(&settings.paddle_document_options),
             chunk_local_pages,
             PADDLE_POLL_INTERVAL,
             PADDLE_POLL_TIMEOUT,
@@ -626,9 +633,14 @@ async fn run_paddle_document_chunked(
                             message: "文档识别未返回该页文本".to_string(),
                         });
                     } else {
+                        let layout = entry.layout.map(|mut layout| {
+                            layout.index = original_page;
+                            layout
+                        });
                         results.push(PageResultPayload {
                             page: original_page,
                             text: entry.text,
+                            layout,
                             chunk_id: Some(manifest.chunk_id.clone()),
                             chunk_page: Some(entry.page),
                         });
@@ -816,7 +828,7 @@ pub fn validate(req: &WholeFileOcrRequest, settings: &config::NonSecretSettings)
     // hands us sorted pages, but enforcing the invariant here turns the
     // implicit coupling into a checked one — the Paddle document path
     // relies on `pages_to_ranges_string`'s sorted output lining up with
-    // `map_lines_to_pages`'s caller-order zip, and a regression to either
+    // `map_jsonl_pages_to_requested`'s caller-order zip, and a regression to either
     // side would have produced silently mis-mapped page numbers without
     // this check.
     if !req.pages.windows(2).all(|w| w[0] < w[1]) {
@@ -849,6 +861,7 @@ mod tests {
             ocr_prompt: String::new(),
             paddle_url: String::new(),
             paddle_model: String::new(),
+            paddle_document_options: config::PaddleDocumentOptions::default(),
             openai_model: String::new(),
             openrouter_model: String::new(),
             openai_compatible_base_url: String::new(),

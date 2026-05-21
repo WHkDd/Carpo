@@ -30,7 +30,9 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::PaddleDocumentOptions;
 use crate::error::{AppError, AppResult};
+use crate::ocr::paddle_json::{self, LayoutPage};
 
 const PROVIDER: &str = "paddleocr";
 
@@ -41,6 +43,7 @@ const PROVIDER: &str = "paddleocr";
 pub struct DocPageResult {
     pub page: u32,
     pub text: String,
+    pub layout: Option<LayoutPage>,
 }
 
 /// Progress callback signature: `(extracted_pages, total_pages, label)`.
@@ -88,29 +91,6 @@ struct ExtractProgress {
     total_pages: Option<u32>,
 }
 
-#[derive(Deserialize)]
-struct JsonlLine {
-    result: JsonlResult,
-}
-
-#[derive(Deserialize)]
-struct JsonlResult {
-    #[serde(rename = "layoutParsingResults", default)]
-    layout_parsing_results: Vec<LayoutItem>,
-}
-
-#[derive(Deserialize)]
-struct LayoutItem {
-    #[serde(default)]
-    markdown: Markdown,
-}
-
-#[derive(Deserialize, Default)]
-struct Markdown {
-    #[serde(default)]
-    text: String,
-}
-
 fn is_api_code_retryable(code: i32) -> bool {
     matches!(code, 500 | 10010)
 }
@@ -131,17 +111,53 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-/// Default optional payload for document-level Paddle OCR. Compared to the
-/// single-block path, this leans on Paddle's layout detection and table /
-/// formula recognition because we *want* the per-page structure for the
-/// right-hand text panel (and, in later phases, the layout-rebuilt PDF
-/// export). Mirrors the defaults the Paddle web demo uses for typical
-/// document submissions.
-pub fn default_document_payload() -> serde_json::Value {
+/// Build the optional payload used by Paddle's document-level OCR endpoint.
+/// This is intentionally not shared with the cropped-block Paddle path:
+/// these controls ask Paddle for richer layout metadata that only the
+/// whole-file PDF flow and layout-PDF exporter consume.
+pub fn document_payload(options: &PaddleDocumentOptions) -> serde_json::Value {
+    let mut markdown_ignore_labels: Vec<&str> = Vec::new();
+    if !options.include_header {
+        markdown_ignore_labels.push("header");
+    }
+    if !options.include_footer {
+        markdown_ignore_labels.push("footer");
+    }
+    if !options.include_page_number {
+        markdown_ignore_labels.push("page_number");
+    }
+    if !options.include_aside_text {
+        markdown_ignore_labels.push("aside_text");
+    }
+    if !options.include_header_image {
+        markdown_ignore_labels.push("header_image");
+    }
+    if !options.include_footer_image {
+        markdown_ignore_labels.push("footer_image");
+    }
+    if !options.include_footnote {
+        markdown_ignore_labels.push("footnote");
+    }
+
     serde_json::json!({
-        "useDocOrientationClassify": false,
-        "useDocUnwarping": false,
-        "useChartRecognition": false,
+        "markdownIgnoreLabels": markdown_ignore_labels,
+        "useDocOrientationClassify": options.use_doc_orientation_classify,
+        "useDocUnwarping": options.use_doc_unwarping,
+        "useLayoutDetection": options.use_layout_detection,
+        "useChartRecognition": options.use_chart_recognition,
+        "useSealRecognition": options.use_seal_recognition,
+        "useOcrForImageBlock": options.use_ocr_for_image_block,
+        "mergeTables": options.merge_tables,
+        "relevelTitles": options.relevel_titles,
+        "layoutShapeMode": options.layout_shape_mode,
+        "promptLabel": options.prompt_label,
+        "repetitionPenalty": options.repetition_penalty,
+        "temperature": options.temperature,
+        "topP": options.top_p,
+        "minPixels": options.min_pixels,
+        "maxPixels": options.max_pixels,
+        "layoutNms": options.layout_nms,
+        "restructurePages": options.restructure_pages,
     })
 }
 
@@ -235,8 +251,8 @@ pub async fn recognize_document(
     )
     .await?;
 
-    let lines = fetch_jsonl(client, &json_url).await?;
-    Ok(map_lines_to_pages(lines, &requested_pages))
+    let pages = fetch_jsonl(client, &json_url).await?;
+    map_jsonl_pages_to_requested(pages, &requested_pages)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,7 +403,10 @@ async fn poll(
     }
 }
 
-async fn fetch_jsonl(client: &reqwest::Client, json_url: &str) -> AppResult<Vec<String>> {
+async fn fetch_jsonl(
+    client: &reqwest::Client,
+    json_url: &str,
+) -> AppResult<Vec<serde_json::Value>> {
     let resp = client.get(json_url).send().await.map_err(|e| {
         ocr_err(
             "result",
@@ -408,37 +427,73 @@ async fn fetch_jsonl(client: &reqwest::Client, json_url: &str) -> AppResult<Vec<
         .await
         .map_err(|e| ocr_err("result", format!("body: {e}"), false))?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut pages: Vec<serde_json::Value> = Vec::new();
     for line in body.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let parsed: JsonlLine = serde_json::from_str(trimmed)
+        let parsed: serde_json::Value = serde_json::from_str(trimmed)
             .map_err(|e| ocr_err("result", format!("jsonl line: {e}"), false))?;
-        let mut parts: Vec<String> = Vec::new();
-        for item in parsed.result.layout_parsing_results {
-            let t = item.markdown.text.trim();
-            if !t.is_empty() {
-                parts.push(t.to_string());
-            }
-        }
-        lines.push(parts.join("\n"));
+        pages.push(parsed);
     }
-    Ok(lines)
+    Ok(pages)
 }
 
-/// Zip JSONL lines back onto the original page numbers. If Paddle returns
-/// fewer lines than requested pages we leave the tail empty rather than
-/// fail outright — the caller decides whether to treat missing pages as
-/// errors (the whole-file runner does, so the UI can show `[未识别]`).
-fn map_lines_to_pages(lines: Vec<String>, requested_pages: &[u32]) -> Vec<DocPageResult> {
+/// Zip JSONL pages back onto the original page numbers. If Paddle returns
+/// fewer pages than requested we leave the tail empty rather than fail
+/// outright — the caller decides whether to treat missing pages as errors
+/// (the whole-file runner does, so the UI can show `[未识别]`). The JSONL
+/// page payload is also normalized through the Paddle JSON importer so the
+/// layout-rebuilt PDF exporter can consume the same `LayoutPage` model as
+/// manual Paddle JSON imports.
+fn map_jsonl_pages_to_requested(
+    pages: Vec<serde_json::Value>,
+    requested_pages: &[u32],
+) -> AppResult<Vec<DocPageResult>> {
+    let page_texts = pages.iter().map(jsonl_page_text).collect::<Vec<_>>();
+    let import = paddle_json::analyze_value(serde_json::Value::Array(pages))?;
     let mut out: Vec<DocPageResult> = Vec::with_capacity(requested_pages.len());
     for (idx, page) in requested_pages.iter().enumerate() {
-        let text = lines.get(idx).cloned().unwrap_or_default();
-        out.push(DocPageResult { page: *page, text });
+        let text = page_texts
+            .get(idx)
+            .filter(|text| !text.is_empty())
+            .cloned()
+            .or_else(|| import.page_texts.get(idx).map(|p| p.text.clone()))
+            .unwrap_or_default();
+        let layout = import.document.pages.get(idx).cloned().map(|mut layout| {
+            layout.index = *page;
+            layout
+        });
+        out.push(DocPageResult {
+            page: *page,
+            text,
+            layout,
+        });
     }
-    out
+    Ok(out)
+}
+
+fn jsonl_page_text(page: &serde_json::Value) -> String {
+    let results = page
+        .get("result")
+        .and_then(|r| r.get("layoutParsingResults"))
+        .or_else(|| page.get("layoutParsingResults"))
+        .and_then(|v| v.as_array());
+    let Some(results) = results else {
+        return String::new();
+    };
+    results
+        .iter()
+        .filter_map(|item| {
+            item.get("markdown")
+                .and_then(|m| m.get("text"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -460,6 +515,10 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(contents).unwrap();
         f
+    }
+
+    fn default_payload() -> serde_json::Value {
+        document_payload(&PaddleDocumentOptions::default())
     }
 
     #[test]
@@ -486,24 +545,60 @@ mod tests {
     }
 
     #[test]
-    fn map_lines_to_pages_zips_lines_with_originals() {
-        let lines = vec!["a".into(), "b".into(), "c".into()];
-        let mapped = map_lines_to_pages(lines, &[1, 5, 8]);
+    fn document_payload_uses_paddle_document_options() {
+        let mut options = PaddleDocumentOptions::default();
+        options.include_header = false;
+        options.include_header_image = false;
+        options.use_chart_recognition = true;
+        options.layout_shape_mode = "polygon".into();
+        options.prompt_label = "table".into();
+        options.temperature = 0.2;
+
+        let payload = document_payload(&options);
+        assert_eq!(payload["useChartRecognition"], true);
+        assert_eq!(payload["layoutShapeMode"], "polygon");
+        assert_eq!(payload["promptLabel"], "table");
+        assert_eq!(payload["temperature"], 0.2);
+        assert_eq!(
+            payload["markdownIgnoreLabels"],
+            json!(["header", "header_image", "footer_image"])
+        );
+    }
+
+    #[test]
+    fn map_jsonl_pages_to_requested_zips_pages_with_originals() {
+        let pages = vec![
+            json!({ "result": { "layoutParsingResults": [
+                { "markdown": { "text": "a" }, "block_bbox": [0, 0, 10, 10] }
+            ]}}),
+            json!({ "result": { "layoutParsingResults": [
+                { "markdown": { "text": "b" }, "block_bbox": [0, 0, 20, 20] }
+            ]}}),
+            json!({ "result": { "layoutParsingResults": [
+                { "markdown": { "text": "c" }, "block_bbox": [0, 0, 30, 30] }
+            ]}}),
+        ];
+        let mapped = map_jsonl_pages_to_requested(pages, &[1, 5, 8]).unwrap();
         assert_eq!(mapped.len(), 3);
         assert_eq!(mapped[0].page, 1);
         assert_eq!(mapped[0].text, "a");
         assert_eq!(mapped[1].page, 5);
         assert_eq!(mapped[1].text, "b");
+        assert_eq!(mapped[1].layout.as_ref().unwrap().index, 5);
+        assert_eq!(mapped[1].layout.as_ref().unwrap().blocks.len(), 1);
         assert_eq!(mapped[2].page, 8);
         assert_eq!(mapped[2].text, "c");
     }
 
     #[test]
-    fn map_lines_to_pages_pads_missing_tail_with_empty() {
-        let lines = vec!["only".into()];
-        let mapped = map_lines_to_pages(lines, &[1, 2, 3]);
+    fn map_jsonl_pages_to_requested_pads_missing_tail_with_empty() {
+        let pages = vec![json!({ "result": { "layoutParsingResults": [
+            { "markdown": { "text": "only" }, "block_bbox": [0, 0, 10, 10] }
+        ]}})];
+        let mapped = map_jsonl_pages_to_requested(pages, &[1, 2, 3]).unwrap();
         assert_eq!(mapped[0].text, "only");
         assert_eq!(mapped[1].text, "");
+        assert!(mapped[1].layout.is_none());
         assert_eq!(mapped[2].text, "");
     }
 
@@ -572,7 +667,7 @@ mod tests {
             "application/pdf",
             "x.pdf",
             Some("1-2,5".to_string()),
-            default_document_payload(),
+            default_payload(),
             vec![1, 2, 5],
             FAST_POLL,
             POLL_CAP,
@@ -628,7 +723,7 @@ mod tests {
             "application/pdf",
             "x.pdf",
             None,
-            default_document_payload(),
+            default_payload(),
             vec![1],
             Duration::from_secs(5),
             Duration::from_secs(30),
@@ -672,7 +767,7 @@ mod tests {
             "application/pdf",
             "x.pdf",
             None,
-            default_document_payload(),
+            default_payload(),
             vec![1],
             FAST_POLL,
             POLL_CAP,
@@ -708,7 +803,7 @@ mod tests {
             "application/pdf",
             "x.pdf",
             None,
-            default_document_payload(),
+            default_payload(),
             vec![1],
             FAST_POLL,
             POLL_CAP,
@@ -734,7 +829,7 @@ mod tests {
             "application/pdf",
             "x.pdf",
             None,
-            default_document_payload(),
+            default_payload(),
             vec![1],
             FAST_POLL,
             POLL_CAP,
