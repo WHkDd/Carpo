@@ -12,7 +12,9 @@ provider 任选，结果导出为 Markdown / 纯文本。
   OpenAI-compatible 自建端点；任意切换不丢失先前识别结果。
 - **结构化导出**：识别后的报道按选择顺序组装成单篇 Markdown，支持复制 / 单篇导出 / 整文档导出。
 - **页码控制**：PDF 支持直接输入页码跳转；全文识别可指定 `1-5,8,10-12` 这类非连续页码范围。
-- **Paddle JSON 复用**：可导入 Paddle 网页版 JSON，预检区块结构，写入按页文本，并按 bbox
+- **Paddle 文档级 OCR**：一次性对整份 PDF 调用 Paddle 批量接口；大文件自动分块分批提交，
+  语言、并发、每批页数均可配置。
+- **Paddle JSON 复用**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，并按 bbox
   重建可复制文字的版式 PDF。
 - **本地凭据**：API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）保管，
   不会写入项目文件，也不会跨设备同步。
