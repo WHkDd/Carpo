@@ -248,6 +248,7 @@ mod tests {
             ocr_prompt: String::new(),
             paddle_url: jobs_url,
             paddle_model: "PaddleOCR-VL-1.5".into(),
+            paddle_document_options: crate::config::PaddleDocumentOptions::default(),
             openai_model: String::new(),
             openrouter_model: String::new(),
             openai_compatible_base_url: String::new(),

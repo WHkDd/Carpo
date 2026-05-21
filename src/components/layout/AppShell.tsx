@@ -170,6 +170,7 @@ function AppShellInner() {
                         status: "done",
                         sourceMode,
                         sourceJobId: job.jobId,
+                        ...(row.layout !== undefined ? { layout: row.layout } : {}),
                         ...(row.chunk_id !== undefined
                           ? { chunkId: row.chunk_id }
                           : {}),
