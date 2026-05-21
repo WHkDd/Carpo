@@ -23,7 +23,7 @@ const isWindows = platform === "win32";
 const script = isWindows
   ? "src-tauri/scripts/fetch_pdfium.ps1"
   : "src-tauri/scripts/fetch_pdfium.sh";
-const command = isWindows ? "powershell" : "bash";
+const command = isWindows ? "pwsh" : "bash";
 const args = isWindows
   ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, target]
   : [script, target];
