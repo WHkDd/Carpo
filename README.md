@@ -3,7 +3,7 @@
 桌面 OCR 工具，专门处理近代中文报刊扫描件。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
 
-跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。由于无Windows设备测试，Windows平台属于理论可用。
+跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。**由于无Windows设备测试，Windows平台属于理论可用。**
 
 ## 特性
 
