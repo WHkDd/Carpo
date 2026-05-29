@@ -37,7 +37,9 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep release builds on a fixed Rust toolchain. Current floating
+      # stable hits a dispatch2/bitflags macro recursion limit on macOS.
+      - uses: dtolnay/rust-toolchain@1.87.0
         with:
           targets: ${{ matrix.target }}
       - uses: swatinem/rust-cache@v2
