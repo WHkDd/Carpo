@@ -13,7 +13,7 @@
 //!    `\n` to match the Python sync-API behaviour callers already rely on.
 //!
 //! Default endpoint: `https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`.
-//! Default model: `PaddleOCR-VL-1.5`.
+//! Default model: `PaddleOCR-VL-1.6`.
 
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ use crate::error::{AppError, AppResult};
 
 const PROVIDER: &str = "paddleocr";
 pub const DEFAULT_JOB_URL: &str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";
-pub const DEFAULT_MODEL: &str = "PaddleOCR-VL-1.5";
+pub const DEFAULT_MODEL: &str = "PaddleOCR-VL-1.6";
 
 #[derive(Deserialize)]
 struct Envelope<T> {
@@ -393,7 +393,7 @@ mod tests {
             &reqwest::Client::new(),
             &format!("{base}/api/v2/ocr/jobs"),
             "tk",
-            "PaddleOCR-VL-1.5",
+            "PaddleOCR-VL-1.6",
             b"PNGBYTES".to_vec(),
             FAST_POLL,
             POLL_CAP,

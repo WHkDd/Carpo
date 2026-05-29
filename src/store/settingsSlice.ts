@@ -24,7 +24,7 @@ export const DEFAULT_SETTINGS: NonSecretSettings = {
   ocr_prompt:
     "请识别并转录图中所有文字。这是一份近代中文报纸的版块图像，文字方向可能为竖排（从上到下，从右到左）或横排。请按原文顺序输出所有文字，不要添加任何解释、标注或格式。",
   paddle_url: "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
-  paddle_model: "PaddleOCR-VL-1.5",
+  paddle_model: "PaddleOCR-VL-1.6",
   paddle_document_options: {
     includeHeader: true,
     includeFooter: true,
