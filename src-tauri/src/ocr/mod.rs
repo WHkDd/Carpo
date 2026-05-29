@@ -146,7 +146,7 @@ pub async fn recognize(
 ///     irregular columns) — the only workload xcvt is built for.
 /// If a future workflow needs a non-VL model, gate it behind a per-model
 /// payload builder rather than just adding the id to this list.
-pub const PADDLE_MODELS: &[&str] = &["PaddleOCR-VL", "PaddleOCR-VL-1.5"];
+pub const PADDLE_MODELS: &[&str] = &["PaddleOCR-VL-1.6", "PaddleOCR-VL"];
 
 /// Fetches the model list for the active provider. Backs the "刷新模型" button
 /// in the settings dialog. Paddle returns a static list because the
@@ -247,7 +247,7 @@ mod tests {
             ocr_profile: OcrProfile::Standard,
             ocr_prompt: String::new(),
             paddle_url: jobs_url,
-            paddle_model: "PaddleOCR-VL-1.5".into(),
+            paddle_model: "PaddleOCR-VL-1.6".into(),
             paddle_document_options: crate::config::PaddleDocumentOptions::default(),
             openai_model: String::new(),
             openrouter_model: String::new(),
@@ -384,7 +384,7 @@ mod tests {
         let models = list_models(&reqwest::Client::new(), &settings, None)
             .await
             .unwrap();
-        assert_eq!(models, vec!["PaddleOCR-VL", "PaddleOCR-VL-1.5"]);
+        assert_eq!(models, vec!["PaddleOCR-VL-1.6", "PaddleOCR-VL"]);
     }
 
     #[tokio::test]

@@ -80,7 +80,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     Partial<Record<SecretKey, boolean>>
   >({});
   const [modelLists, setModelLists] = useState<Partial<Record<Provider, string[]>>>({
-    paddleocr: ["PaddleOCR-VL", "PaddleOCR-VL-1.5"],
+    paddleocr: ["PaddleOCR-VL-1.6", "PaddleOCR-VL"],
   });
   const [refreshing, setRefreshing] = useState<Provider | null>(null);
   const [refreshError, setRefreshError] = useState<Partial<Record<Provider, string>>>({});
@@ -953,7 +953,7 @@ function modelOptions(
   if (current) seeds.push(current);
   switch (provider) {
     case "paddleocr":
-      seeds.push("PaddleOCR-VL", "PaddleOCR-VL-1.5");
+      seeds.push("PaddleOCR-VL-1.6", "PaddleOCR-VL");
       break;
     case "openai":
       seeds.push("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini");
