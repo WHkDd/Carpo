@@ -2,7 +2,7 @@
 //!
 //! Implements `POST {base_url}/chat/completions` with `Authorization: Bearer
 //! {key}`, sending a single user message that pairs the page image (as a
-//! `data:image/png;base64,...` URL) with the OCR prompt. The same shape
+//! `data:image/jpeg;base64,...` URL) with the OCR prompt. The same shape
 //! powers OpenAI proper, OpenRouter, and any OpenAI-compatible endpoint —
 //! the only thing that differs is `base_url`.
 
@@ -80,7 +80,7 @@ pub async fn recognize(
     key: &str,
     model: &str,
     prompt: &str,
-    png_bytes: &[u8],
+    image_bytes: &[u8],
     provider_label: &str,
 ) -> AppResult<String> {
     if key.is_empty() {
@@ -94,7 +94,7 @@ pub async fn recognize(
         )));
     }
 
-    let data_url = format!("data:image/png;base64,{}", STANDARD.encode(png_bytes));
+    let data_url = format!("data:image/jpeg;base64,{}", STANDARD.encode(image_bytes));
     let body = ChatRequest {
         model,
         messages: [Message {
@@ -243,7 +243,7 @@ mod tests {
     async fn image_payload_uses_data_url() {
         let server = MockServer::start().await;
         // base64 of "ABC" is "QUJD"
-        let expected_url = format!("data:image/png;base64,{}", STANDARD.encode(b"ABC"));
+        let expected_url = format!("data:image/jpeg;base64,{}", STANDARD.encode(b"ABC"));
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(body_partial_json(json!({

@@ -53,3 +53,28 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # The pdfium-backed tests in `pdf.rs` are cfg-gated to macOS / Windows, so
+  # the Linux job above never executes the actual render path we ship. This
+  # job covers it on the primary release target (macOS arm64).
+  rust-macos:
+    name: Rust (pdfium tests · macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Cache pdfium
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/pdfium/macos-arm64
+          key: pdfium-${{ hashFiles('src-tauri/pdfium/VERSION') }}-macos-arm64
+      - name: Fetch pdfium
+        run: bash src-tauri/scripts/fetch_pdfium.sh macos-arm64
+      - name: Create frontend dist placeholder
+        run: |
+          mkdir -p dist
+          touch dist/index.html
+      - run: cargo test --manifest-path src-tauri/Cargo.toml

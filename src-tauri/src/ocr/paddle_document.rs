@@ -546,13 +546,15 @@ mod tests {
 
     #[test]
     fn document_payload_uses_paddle_document_options() {
-        let mut options = PaddleDocumentOptions::default();
-        options.include_header = false;
-        options.include_header_image = false;
-        options.use_chart_recognition = true;
-        options.layout_shape_mode = "polygon".into();
-        options.prompt_label = "table".into();
-        options.temperature = 0.2;
+        let options = PaddleDocumentOptions {
+            include_header: false,
+            include_header_image: false,
+            use_chart_recognition: true,
+            layout_shape_mode: "polygon".into(),
+            prompt_label: "table".into(),
+            temperature: 0.2,
+            ..Default::default()
+        };
 
         let payload = document_payload(&options);
         assert_eq!(payload["useChartRecognition"], true);

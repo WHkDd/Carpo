@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
-use image::{DynamicImage, GenericImageView, ImageFormat};
+use image::{DynamicImage, GenericImageView};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
@@ -167,14 +167,18 @@ async fn run(
     let scale = page_scale(&req, ocr_dpi);
 
     // Lazy bitmap loader: pages are rendered on demand and cached in a small
-    // LRU. This caps the resident decoded-page footprint at
-    // `PAGE_LRU_CAPACITY × page_size` regardless of how many pages the
+    // LRU sized to the worker-pool width plus one slack slot, so a full
+    // complement of in-flight workers spread across different pages can't
+    // thrash the cache. This caps the resident decoded-page footprint at
+    // `(concurrency + 1) × page_size` regardless of how many pages the
     // articles span.
+    let concurrency = ocr::concurrency_for(settings.provider);
     let loader = Arc::new(PageLoader::new(
         app.clone(),
         req.kind,
         PathBuf::from(&req.path),
         ocr_dpi,
+        concurrency + 1,
     ));
     let client = app.state::<AppState>().http.clone();
 
@@ -217,7 +221,6 @@ async fn run(
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
 
-    let concurrency = ocr::concurrency_for(settings.provider);
     let outcomes: Vec<BlockOutcome> = stream::iter(items)
         .map(|item| {
             run_one_block(
@@ -303,21 +306,25 @@ async fn run_one_block(
         }
     };
 
-    let cropped = match crop_block(&bitmap, &item.block.rect, scale) {
-        Ok(c) => c,
-        Err(e) => {
-            return BlockOutcome::Failed {
-                article_id: item.article_id,
-                message: format!("block {} 裁切失败: {e}", item.block.block_id),
-            }
-        }
-    };
-    let png_bytes = match encode_png_bytes(&cropped) {
+    // Crop + JPEG encode are pure-CPU work — seconds on a 300-DPI A3 page.
+    // Run them on the blocking pool so `buffer_unordered` workers don't pin
+    // tokio worker threads (which would stall progress events and IPC while
+    // several blocks encode at once).
+    let rect = item.block.rect;
+    let bitmap_for_encode = Arc::clone(&bitmap);
+    let encoded = tokio::task::spawn_blocking(move || {
+        let cropped = crop_block(&bitmap_for_encode, &rect, scale)?;
+        encode_ocr_jpeg(&cropped)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("encode task join: {e}")))
+    .and_then(|inner| inner);
+    let image_bytes = match encoded {
         Ok(b) => b,
         Err(e) => {
             return BlockOutcome::Failed {
                 article_id: item.article_id,
-                message: format!("block {} 编码失败: {e}", item.block.block_id),
+                message: format!("block {} 裁切/编码失败: {e}", item.block.block_id),
             }
         }
     };
@@ -329,7 +336,7 @@ async fn run_one_block(
         &settings,
         secret_ref,
         OcrRequest {
-            png_bytes: &png_bytes,
+            image_bytes: &image_bytes,
             prompt: &prompt,
         },
         &token,
@@ -516,10 +523,25 @@ pub fn crop_block(bitmap: &DynamicImage, rect: &Rect, scale: f32) -> AppResult<D
     Ok(bitmap.crop_imm(raw_x, raw_y, cw, ch))
 }
 
-pub(super) fn encode_png_bytes(img: &DynamicImage) -> AppResult<Vec<u8>> {
+/// JPEG quality for OCR uploads. Newspaper scans are lossy-compressed at the
+/// source already, so q90 is visually lossless for recognition purposes while
+/// cutting the payload ~5-10× vs the previous PNG encode (the OpenAI path
+/// additionally base64-inflates whatever we send by 33%). Kept above
+/// `pdf::PREVIEW_JPEG_QUALITY` (85) to give glyph edges extra headroom.
+pub(super) const OCR_JPEG_QUALITY: u8 = 90;
+
+/// Encodes a bitmap as a JPEG for the OCR upload path. JPEG carries no
+/// alpha channel, so RGBA inputs are flattened to RGB first.
+pub(super) fn encode_ocr_jpeg(img: &DynamicImage) -> AppResult<Vec<u8>> {
+    use image::codecs::jpeg::JpegEncoder;
+
+    let rgb = img.to_rgb8();
+    let (w, h) = rgb.dimensions();
     let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, ImageFormat::Png)
-        .map_err(|e| AppError::Image(format!("crop png encode: {e}")))?;
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, OCR_JPEG_QUALITY);
+    encoder
+        .encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+        .map_err(|e| AppError::Image(format!("ocr jpeg encode: {e}")))?;
     Ok(buf.into_inner())
 }
 
@@ -642,10 +664,11 @@ mod tests {
     }
 
     #[test]
-    fn encode_png_bytes_returns_valid_data() {
+    fn encode_ocr_jpeg_returns_valid_data() {
         let img = flat_image(2, 2);
-        let bytes = encode_png_bytes(&img).unwrap();
-        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let bytes = encode_ocr_jpeg(&img).unwrap();
+        // JPEG SOI marker.
+        assert!(bytes.starts_with(b"\xff\xd8\xff"));
     }
 
     #[test]

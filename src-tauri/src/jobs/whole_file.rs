@@ -33,7 +33,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::grouped::{encode_png_bytes, secret_key_for_provider, FileKind};
+use super::grouped::{encode_ocr_jpeg, secret_key_for_provider, FileKind};
 use super::page_loader::PageLoader;
 use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
@@ -171,14 +171,16 @@ async fn run_page_image(
     // ignored.
     let ocr_dpi = settings.ocr_profile.ocr_dpi();
 
-    // Lazy bitmap loader. With `OCR_CONCURRENCY = 3` and the LRU capacity in
-    // `PageLoader`, peak memory stays at a handful of decoded pages instead
-    // of the full requested range.
+    // Lazy bitmap loader. The LRU capacity tracks the provider's worker-pool
+    // width plus one slack slot, so peak memory stays at a handful of decoded
+    // pages instead of the full requested range.
+    let concurrency = ocr::concurrency_for(settings.provider);
     let loader = Arc::new(PageLoader::new(
         app.clone(),
         req.kind,
         PathBuf::from(&req.path),
         ocr_dpi,
+        concurrency + 1,
     ));
     let client = app.state::<AppState>().http.clone();
 
@@ -196,7 +198,6 @@ async fn run_page_image(
     let secret_arc: Arc<Option<String>> = Arc::new(secret);
     let done_counter = Arc::new(AtomicU32::new(0));
 
-    let concurrency = ocr::concurrency_for(settings.provider);
     let outcomes: Vec<PageOutcome> = stream::iter(req.pages.clone().into_iter().enumerate())
         .map(|(idx, page)| {
             run_one_page(
@@ -727,7 +728,15 @@ async fn run_one_page(
         }
     };
 
-    let png_bytes = match encode_png_bytes(&bitmap) {
+    // JPEG-encoding a full 300-DPI page is pure-CPU work that can take
+    // seconds; run it on the blocking pool so concurrent page workers don't
+    // pin tokio worker threads.
+    let bitmap_for_encode = Arc::clone(&bitmap);
+    let encoded = tokio::task::spawn_blocking(move || encode_ocr_jpeg(&bitmap_for_encode))
+        .await
+        .map_err(|e| AppError::Internal(format!("encode task join: {e}")))
+        .and_then(|inner| inner);
+    let image_bytes = match encoded {
         Ok(b) => b,
         Err(e) => {
             return PageOutcome::Failed {
@@ -744,7 +753,7 @@ async fn run_one_page(
         &settings,
         secret_ref,
         OcrRequest {
-            png_bytes: &png_bytes,
+            image_bytes: &image_bytes,
             prompt: &prompt,
         },
         &token,
