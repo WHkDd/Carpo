@@ -56,7 +56,25 @@ if (-not $checksumLine) {
 }
 
 $expected = ($checksumLine -split "\s+")[0]
-$actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+# Hash via .NET instead of Get-FileHash: when Windows PowerShell 5.1 is
+# spawned from pwsh 7 (e.g. prepare_pdfium.mjs inside a GitHub Actions pwsh
+# step), it inherits a PS7 PSModulePath and can't autoload the Utility
+# module that defines Get-FileHash. The engine-level .NET API needs no
+# module loading and works identically in both editions.
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+  $stream = [System.IO.File]::OpenRead((Resolve-Path $archive).ProviderPath)
+  try {
+    $hashBytes = $sha256.ComputeHash($stream)
+  }
+  finally {
+    $stream.Dispose()
+  }
+}
+finally {
+  $sha256.Dispose()
+}
+$actual = ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
 if ($actual -ne $expected) {
   Remove-Item -Force $archive
   throw "checksum mismatch for ${asset}: expected $expected, got $actual"
