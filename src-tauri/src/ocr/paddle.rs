@@ -108,7 +108,7 @@ pub async fn recognize(
     job_url: &str,
     token: &str,
     model: &str,
-    png_bytes: Vec<u8>,
+    image_bytes: Vec<u8>,
     poll_interval: Duration,
     poll_timeout: Duration,
     cancel: &CancellationToken,
@@ -129,7 +129,7 @@ pub async fn recognize(
         model
     };
 
-    let job_id = submit(client, job_url, token, model, png_bytes).await?;
+    let job_id = submit(client, job_url, token, model, image_bytes).await?;
     let json_url = poll(
         client,
         job_url,
@@ -148,7 +148,7 @@ async fn submit(
     job_url: &str,
     token: &str,
     model: &str,
-    png_bytes: Vec<u8>,
+    image_bytes: Vec<u8>,
 ) -> AppResult<String> {
     let optional_payload = serde_json::json!({
         "useDocOrientationClassify": false,
@@ -157,9 +157,9 @@ async fn submit(
     })
     .to_string();
 
-    let part = reqwest::multipart::Part::bytes(png_bytes)
-        .file_name("page.png")
-        .mime_str("image/png")
+    let part = reqwest::multipart::Part::bytes(image_bytes)
+        .file_name("page.jpg")
+        .mime_str("image/jpeg")
         .map_err(|e| AppError::Internal(format!("multipart mime: {e}")))?;
     let form = reqwest::multipart::Form::new()
         .text("model", model.to_string())

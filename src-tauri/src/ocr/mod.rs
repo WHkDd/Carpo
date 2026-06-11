@@ -52,13 +52,13 @@ pub const PADDLE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Newspaper blocks are typically single-page; 5 min is generous.
 pub const PADDLE_POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// One OCR call's inputs. The image is owned by the caller as raw PNG bytes;
-/// providers that need a different encoding (e.g. OpenAI's `data:` URL) do the
-/// transformation themselves so retries don't repeatedly decode the same
-/// base64 string.
+/// One OCR call's inputs. The image is owned by the caller as encoded JPEG
+/// bytes (see `jobs::grouped::encode_ocr_jpeg`); providers that need a
+/// different wrapping (e.g. OpenAI's `data:` URL) do the transformation
+/// themselves so retries don't repeatedly encode the same base64 string.
 #[derive(Debug, Clone, Copy)]
 pub struct OcrRequest<'a> {
-    pub png_bytes: &'a [u8],
+    pub image_bytes: &'a [u8],
     pub prompt: &'a str,
 }
 
@@ -81,7 +81,7 @@ pub async fn recognize(
                 &settings.paddle_url,
                 token,
                 &settings.paddle_model,
-                req.png_bytes.to_vec(),
+                req.image_bytes.to_vec(),
                 PADDLE_POLL_INTERVAL,
                 PADDLE_POLL_TIMEOUT,
                 cancel,
@@ -96,7 +96,7 @@ pub async fn recognize(
                 key,
                 &settings.openai_model,
                 req.prompt,
-                req.png_bytes,
+                req.image_bytes,
                 "openai",
             )
             .await
@@ -109,7 +109,7 @@ pub async fn recognize(
                 key,
                 &settings.openrouter_model,
                 req.prompt,
-                req.png_bytes,
+                req.image_bytes,
                 "openrouter",
             )
             .await
@@ -127,7 +127,7 @@ pub async fn recognize(
                 key,
                 &settings.openai_compatible_model,
                 req.prompt,
-                req.png_bytes,
+                req.image_bytes,
                 "openai_compatible",
             )
             .await
@@ -296,7 +296,7 @@ mod tests {
 
         let settings = paddle_settings(format!("{base}/api/v2/ocr/jobs"));
         let req = OcrRequest {
-            png_bytes: b"x",
+            image_bytes: b"x",
             prompt: "",
         };
         let cancel = never_cancelled();
@@ -318,7 +318,7 @@ mod tests {
 
         let settings = paddle_settings(format!("{}/api/v2/ocr/jobs", server.uri()));
         let req = OcrRequest {
-            png_bytes: b"x",
+            image_bytes: b"x",
             prompt: "",
         };
         let cancel = never_cancelled();
@@ -336,7 +336,7 @@ mod tests {
         let mut settings = paddle_settings(String::new());
         settings.provider = Provider::OpenaiCompatible;
         let req = OcrRequest {
-            png_bytes: b"x",
+            image_bytes: b"x",
             prompt: "p",
         };
         let cancel = never_cancelled();
@@ -362,7 +362,7 @@ mod tests {
         settings.openai_compatible_base_url = server.uri();
         settings.openai_compatible_model = "my-model".into();
         let req = OcrRequest {
-            png_bytes: b"x",
+            image_bytes: b"x",
             prompt: "p",
         };
         let cancel = never_cancelled();
@@ -410,7 +410,7 @@ mod tests {
             .await;
         let settings = paddle_settings(format!("{}/api/v2/ocr/jobs", server.uri()));
         let req = OcrRequest {
-            png_bytes: b"x",
+            image_bytes: b"x",
             prompt: "",
         };
         let cancel = CancellationToken::new();

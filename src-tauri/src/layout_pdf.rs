@@ -768,10 +768,12 @@ mod tests {
 
     #[test]
     fn block_filter_respects_header_footer_options() {
-        let mut opts = LayoutPdfExportOptions::default();
-        opts.include_header = false;
-        opts.include_footer = false;
-        opts.include_page_number = false;
+        let opts = LayoutPdfExportOptions {
+            include_header: false,
+            include_footer: false,
+            include_page_number: false,
+            ..Default::default()
+        };
         assert!(!should_render_block(
             &block("header", "h", [0.0, 0.0, 1.0, 1.0]),
             &opts
