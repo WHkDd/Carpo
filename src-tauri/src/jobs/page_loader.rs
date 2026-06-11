@@ -13,9 +13,10 @@
 //! - For PDFs: keeps a small LRU of decoded pages plus an in-flight slot
 //!   map. Workers ask for a page on demand; concurrent requests for the
 //!   same page attach to a shared `OnceCell` so PDFium only renders once
-//!   per (page, generation) pair. Cache capacity stays small enough that
-//!   the steady-state footprint is `OCR_CONCURRENCY × page_size` rather
-//!   than `referenced_pages × page_size`.
+//!   per (page, generation) pair. Cache capacity is supplied by the caller
+//!   (provider concurrency + 1) so the steady-state footprint is
+//!   `(concurrency + 1) × page_size` rather than
+//!   `referenced_pages × page_size`.
 //!
 //! Cancellation: every `get()` call accepts a `CancellationToken`. It's
 //! threaded through to `PdfWorker::render_image_cancellable` (so queued
@@ -38,10 +39,10 @@ use super::grouped::FileKind;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-/// Number of decoded PDF pages held in the LRU at any time. Sized to cover
-/// the OCR worker pool (`OCR_CONCURRENCY = 3`) plus a small slack so a worker
-/// switching pages doesn't immediately evict its own bitmap.
-pub const PAGE_LRU_CAPACITY: usize = 4;
+/// Floor for the decoded-page LRU capacity. The real capacity is supplied by
+/// the caller (worker-pool width + 1 slack — see `ocr::concurrency_for`);
+/// the floor only guards against a degenerate value disabling caching.
+pub const MIN_PAGE_LRU_CAPACITY: usize = 2;
 
 pub struct PageLoader {
     app: AppHandle,
@@ -97,14 +98,24 @@ impl LruInner {
 }
 
 impl PageLoader {
-    pub fn new(app: AppHandle, kind: FileKind, path: PathBuf, ocr_dpi: u32) -> Self {
+    /// `lru_capacity` should track the caller's OCR worker-pool width plus
+    /// one slack slot, so a full complement of in-flight workers spread
+    /// across distinct pages can't thrash the cache. Floored at
+    /// [`MIN_PAGE_LRU_CAPACITY`].
+    pub fn new(
+        app: AppHandle,
+        kind: FileKind,
+        path: PathBuf,
+        ocr_dpi: u32,
+        lru_capacity: usize,
+    ) -> Self {
         Self {
             app,
             kind,
             path,
             ocr_dpi,
             image_bitmap: OnceCell::new(),
-            pdf_cache: Mutex::new(LruInner::new(PAGE_LRU_CAPACITY)),
+            pdf_cache: Mutex::new(LruInner::new(lru_capacity.max(MIN_PAGE_LRU_CAPACITY))),
             pdf_in_flight: Mutex::new(HashMap::new()),
         }
     }
