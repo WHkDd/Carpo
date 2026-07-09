@@ -245,7 +245,7 @@ function unassignBlockRefs(
   }
 }
 
-function rebuildDocumentResult(
+export function rebuildDocumentResult(
   state: PageJobState,
   fileId: string,
   doc: DocumentState

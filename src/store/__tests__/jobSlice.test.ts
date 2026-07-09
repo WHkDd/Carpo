@@ -8,6 +8,7 @@ import { createPageStateSlice, type PageStateSlice } from "../pageStateSlice";
 import { createSelectionSlice, type SelectionSlice } from "../selectionSlice";
 import { createSettingsSlice, type SettingsSlice } from "../settingsSlice";
 import { createJobSlice, type JobSlice } from "../jobSlice";
+import type { LayoutPage } from "@/lib/layout-document";
 
 type Store =
   QueueSlice &
@@ -223,5 +224,260 @@ describe("jobSlice", () => {
       status: "done",
       sourceMode: "paddle_document",
     });
+  });
+
+  function addQueuedFile(id: string) {
+    store.getState().addFile({
+      id,
+      path: `/tmp/${id}.pdf`,
+      name: `${id}.pdf`,
+      ext: "pdf",
+      kind: "pdf",
+    });
+  }
+
+  function makeLayout(): LayoutPage {
+    return {
+      index: 1,
+      width: 100,
+      height: 200,
+      blocks: [
+        {
+          label: "text",
+          text: "第一块",
+          bbox: [0, 0, 50, 20],
+          order: 2,
+        },
+        {
+          label: "title",
+          text: "标题块",
+          bbox: [0, 30, 80, 50],
+          order: 1,
+        },
+      ],
+    };
+  }
+
+  it("updateRecognizedPageText edits text but keeps layout/source metadata", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      2: {
+        text: "原始识别",
+        status: "done",
+        sourceMode: "paddle_document",
+        sourceJobId: "job-1",
+      },
+    });
+
+    store.getState().updateRecognizedPageText("file-1", 2, "人工校对后");
+
+    expect(store.getState().recognizedPages["file-1"]?.[2]).toEqual({
+      text: "人工校对后",
+      status: "done",
+      sourceMode: "paddle_document",
+      sourceJobId: "job-1",
+    });
+    expect(store.getState().pageOcrTexts["file-1"]?.[2]).toBe("人工校对后");
+  });
+
+  it("updateRecognizedPageText creates a minimal entry for unseen pages", () => {
+    addQueuedFile("file-1");
+    store.getState().updateRecognizedPageText("file-1", 5, "手动补录");
+
+    expect(store.getState().recognizedPages["file-1"]?.[5]).toEqual({
+      text: "手动补录",
+      status: "done",
+      sourceMode: "page_image",
+    });
+    expect(store.getState().pageOcrTexts["file-1"]?.[5]).toBe("手动补录");
+  });
+
+  it("updateLayoutBlockText edits only the targeted block text and keeps block metadata", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "第一块\n标题块",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    store.getState().updateLayoutBlockText("file-1", 1, 1, "校对标题");
+
+    const blocks =
+      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks;
+    expect(blocks?.[1]).toEqual({
+      label: "title",
+      text: "校对标题",
+      bbox: [0, 30, 80, 50],
+      order: 1,
+    });
+    expect(blocks?.[0]).toEqual({
+      label: "text",
+      text: "第一块",
+      bbox: [0, 0, 50, 20],
+      order: 2,
+    });
+  });
+
+  it("updateLayoutBlockText mirrors a unique old block text into page text and legacy page map", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "前缀 第一块 后缀",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
+
+    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
+      "前缀 校对第一块 后缀"
+    );
+    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+      "前缀 校对第一块 后缀"
+    );
+  });
+
+  it("updateLayoutBlockText does not mirror when old block text appears multiple times", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "第一块 / 第一块",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
+
+    expect(
+      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
+    ).toBe("校对第一块");
+    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
+      "第一块 / 第一块"
+    );
+    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+      "第一块 / 第一块"
+    );
+  });
+
+  it("updateLayoutBlockText does not mirror blank old block text", () => {
+    addQueuedFile("file-1");
+    const layout = makeLayout();
+    layout.blocks[0]!.text = "   ";
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "页面文本",
+        layout,
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
+
+    expect(
+      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
+    ).toBe("校对第一块");
+    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
+      "页面文本"
+    );
+    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe("页面文本");
+  });
+
+  it("updateLayoutBlockText no-ops for invalid targets and removed files", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "第一块",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+      2: {
+        text: "无版面",
+        status: "done",
+        sourceMode: "page_image",
+      },
+    });
+
+    expect(() =>
+      store.getState().updateLayoutBlockText("file-1", 1, 99, "越界")
+    ).not.toThrow();
+    expect(() =>
+      store.getState().updateLayoutBlockText("file-1", 2, 0, "无版面")
+    ).not.toThrow();
+    expect(
+      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
+    ).toBe("第一块");
+    expect(store.getState().recognizedPages["file-1"]?.[2]?.text).toBe(
+      "无版面"
+    );
+
+    store.getState().removeFile("file-1");
+    expect(() =>
+      store.getState().updateLayoutBlockText("file-1", 1, 0, "迟到")
+    ).not.toThrow();
+    expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
+  });
+
+  it("updateLayoutBlockText treats replacement text containing $& literally", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "前缀 第一块 后缀",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对$&第一块");
+
+    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
+      "前缀 校对$&第一块 后缀"
+    );
+    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+      "前缀 校对$&第一块 后缀"
+    );
+  });
+
+  it("updateArticleOcrText edits the article and re-assembles the document", () => {
+    addQueuedFile("file-1");
+    store.getState().addArticle(
+      "file-1",
+      1,
+      { id: "art-1", num: 1, title: "胜利" },
+      ["blk-1"]
+    );
+    store.getState().setArticleOcrTexts("file-1", { "art-1": "原始文本" });
+    store.getState().setDocumentResult("file-1", "旧的组装结果");
+
+    store.getState().updateArticleOcrText("file-1", "art-1", "校对文本");
+
+    expect(store.getState().articleOcrTexts["file-1"]?.["art-1"]).toBe(
+      "校对文本"
+    );
+    expect(store.getState().documentResults["file-1"]).toContain("校对文本");
+    expect(store.getState().documentResults["file-1"]).not.toContain(
+      "原始文本"
+    );
+  });
+
+  it("edit write-backs after removeFile do not resurrect file state", () => {
+    addQueuedFile("file-1");
+    store.getState().removeFile("file-1");
+
+    store.getState().updateRecognizedPageText("file-1", 1, "迟到的写回");
+    store.getState().updateArticleOcrText("file-1", "art-1", "迟到的写回");
+
+    expect(store.getState().pageOcrTexts["file-1"]).toBeUndefined();
+    expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
+    expect(store.getState().articleOcrTexts["file-1"]).toBeUndefined();
   });
 });

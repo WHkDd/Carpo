@@ -1,7 +1,7 @@
 import type { StateCreator } from "zustand";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { QueueSlice } from "./queueSlice";
-import type { PageStateSlice } from "./pageStateSlice";
+import { rebuildDocumentResult, type PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { UiSlice } from "./uiSlice";
@@ -144,6 +144,21 @@ export interface JobSlice {
     fileId: string,
     pages: Record<number, RecognizedPage>
   ) => void;
+  /** Persist a user edit of one page's text. Preserves the recognized page's
+   *  layout / status / source metadata and mirrors into `pageOcrTexts`. */
+  updateRecognizedPageText: (fileId: string, page: number, text: string) => void;
+  /** Persist a user edit of one layout block's text. When the old block text
+   *  appears exactly once in the page text, mirror the edit back to the page
+   *  text as a one-way block -> page sync. */
+  updateLayoutBlockText: (
+    fileId: string,
+    page: number,
+    blockIndex: number,
+    text: string
+  ) => void;
+  /** Persist a user edit of one article's OCR text, then re-assemble the
+   *  document result so bulk copy / export reflect the edit. */
+  updateArticleOcrText: (fileId: string, articleId: string, text: string) => void;
 }
 
 export const createJobSlice: StateCreator<
@@ -269,6 +284,58 @@ export const createJobSlice: StateCreator<
 
       state.recognizedPages[fileId] = nextPages;
       state.pageOcrTexts[fileId] = nextTexts;
+    }),
+  updateRecognizedPageText: (fileId, page, text) =>
+    set((state) => {
+      // A debounced editor write-back can fire after the file was removed
+      // from the queue — don't resurrect state for it.
+      if (!state.files.some((f) => f.id === fileId)) return;
+      const prevTexts = state.pageOcrTexts[fileId] ?? {};
+      state.pageOcrTexts[fileId] = { ...prevTexts, [page]: text };
+
+      const prevPages = state.recognizedPages[fileId] ?? {};
+      const prev = prevPages[page];
+      state.recognizedPages[fileId] = {
+        ...prevPages,
+        [page]: prev
+          ? { ...prev, text }
+          : { text, status: "done", sourceMode: "page_image" },
+      };
+    }),
+  updateLayoutBlockText: (fileId, page, blockIndex, text) =>
+    set((state) => {
+      // A debounced editor write-back can fire after the file was removed
+      // from the queue — don't resurrect state for it.
+      if (!state.files.some((f) => f.id === fileId)) return;
+      const pageResult = state.recognizedPages[fileId]?.[page];
+      const layout = pageResult?.layout;
+      if (!layout || blockIndex < 0 || blockIndex >= layout.blocks.length) {
+        return;
+      }
+
+      const block = layout.blocks[blockIndex];
+      if (!block) return;
+      const oldText = block.text;
+      block.text = text;
+
+      if (oldText.trim().length === 0) return;
+      const pageText = pageResult.text;
+      const index = pageText.indexOf(oldText);
+      if (index === -1 || index !== pageText.lastIndexOf(oldText)) return;
+
+      const nextPageText =
+        pageText.slice(0, index) + text + pageText.slice(index + oldText.length);
+      pageResult.text = nextPageText;
+      const prevTexts = state.pageOcrTexts[fileId] ?? {};
+      state.pageOcrTexts[fileId] = { ...prevTexts, [page]: nextPageText };
+    }),
+  updateArticleOcrText: (fileId, articleId, text) =>
+    set((state) => {
+      if (!state.files.some((f) => f.id === fileId)) return;
+      const prev = state.articleOcrTexts[fileId] ?? {};
+      state.articleOcrTexts[fileId] = { ...prev, [articleId]: text };
+      const doc = state.documentStates[fileId];
+      if (doc) rebuildDocumentResult(state, fileId, doc);
     }),
 });
 
