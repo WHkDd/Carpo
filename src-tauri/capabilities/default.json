@@ -8,6 +8,7 @@
     "core:window:allow-start-dragging",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
     "log:default",
     "store:default",
     "clipboard-manager:allow-write-text"

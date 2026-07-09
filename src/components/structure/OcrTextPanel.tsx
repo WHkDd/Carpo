@@ -9,7 +9,8 @@ import {
   Eye,
   FileDown,
   FileCode,
-  Files,
+  LayoutList,
+  Printer,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -25,6 +26,7 @@ import {
 } from "@/lib/layout-document";
 import { exportLayoutPdf as ipcExportLayoutPdf } from "@/lib/tauri";
 import { PageJumpControl } from "@/components/layout/PageJumpControl";
+import { LayoutBlockList } from "@/components/structure/LayoutBlockList";
 import type { RecognizedPage } from "@/store/jobSlice";
 
 const SAVE_FILTERS = [
@@ -38,6 +40,7 @@ const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
  *  Above ~100 KB, the markdown/math passes start to noticeably block the
  *  main thread on every re-render; the pre view is `O(1)` to update. */
 const MARKDOWN_RENDER_LIMIT_CHARS = 100_000;
+type OcrViewMode = "preview" | "source" | "blocks";
 
 function buildAllPagesText(pageTexts: Record<number, string>): string {
   return Object.entries(pageTexts)
@@ -210,13 +213,20 @@ export function OcrBulkActions() {
   } = useBulkOcrText();
   const [copied, setCopied] = useState(false);
   const [copiedCount, setCopiedCount] = useState(0);
+  const [savedTip, setSavedTip] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [exportingLayoutPdf, setExportingLayoutPdf] = useState(false);
   const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
 
+  const showSavedTip = useCallback((tip: string) => {
+    setSavedTip(tip);
+    setTimeout(() => setSavedTip(null), 2000);
+  }, []);
+
   const onCopyAll = useCallback(async () => {
     const allText = getBulkText();
     if (!allText) return;
+    setSaveError(null);
     try {
       await writeText(allText);
       setCopiedCount(getBulkCount());
@@ -243,10 +253,11 @@ export function OcrBulkActions() {
       });
       if (!target) return;
       await writeTextFile(target, allText);
+      showSavedTip("已导出");
     } catch (e) {
       setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
-  }, [getBulkText, fileLabel, recognitionMode]);
+  }, [getBulkText, fileLabel, recognitionMode, showSavedTip]);
 
   const onExportLayoutPdf = useCallback(async () => {
     const document = getLayoutDocument();
@@ -265,12 +276,13 @@ export function OcrBulkActions() {
         targetPath: target,
         options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
       });
+      showSavedTip("已导出 PDF");
     } catch (e) {
       setSaveError(`导出失败：${appErrorMessage(e)}`);
     } finally {
       setExportingLayoutPdf(false);
     }
-  }, [getLayoutDocument, fileLabel]);
+  }, [getLayoutDocument, fileLabel, showSavedTip]);
 
   if (!hasFile) return null;
 
@@ -285,8 +297,20 @@ export function OcrBulkActions() {
           已复制 {copiedCount} {unitLabel}
         </span>
       )}
+      {savedTip && (
+        <span
+          className="flex items-center gap-1 text-[10px] text-foreground-muted"
+          role="status"
+        >
+          <Check className="h-3 w-3" strokeWidth={1.9} aria-hidden />
+          {savedTip}
+        </span>
+      )}
       {saveError && (
-        <span className="max-w-24 truncate text-[10px] text-destructive">
+        <span
+          className="max-w-48 truncate text-[10px] text-destructive"
+          title={saveError}
+        >
           {saveError}
         </span>
       )}
@@ -300,7 +324,7 @@ export function OcrBulkActions() {
         }
         className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
       >
-        <Files className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
       <button
         type="button"
@@ -322,7 +346,7 @@ export function OcrBulkActions() {
         aria-label="导出版式 PDF"
         className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
       >
-        <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <Printer className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
     </div>
   );
@@ -340,6 +364,9 @@ export function OcrTextPanel() {
   const pageOcrTexts = useStore((s) => s.pageOcrTexts);
   const recognizedPages = useStore((s) => s.recognizedPages);
   const files = useStore((s) => s.files);
+  const updateRecognizedPageText = useStore((s) => s.updateRecognizedPageText);
+  const updateArticleOcrText = useStore((s) => s.updateArticleOcrText);
+  const setDocumentResult = useStore((s) => s.setDocumentResult);
 
   const fileEntry = useMemo(
     () => files.find((f) => f.id === fileId) ?? null,
@@ -369,39 +396,103 @@ export function OcrTextPanel() {
       pageOcrTexts[fileId]?.[currentPage] ??
       ""
     : "";
+  const currentLayout =
+    recognitionMode === "whole_file" && fileId
+      ? recognizedPages[fileId]?.[currentPage]?.layout
+      : undefined;
+  const hasLayout = !!currentLayout;
 
   const text = recognitionMode === "whole_file" ? pageText : articleText;
-  const charCount = text.length;
   const hasText = text.length > 0;
+  const hasContent = hasText || hasLayout;
 
   const [draft, setDraft] = useState(text);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  // Tracks whether the user has typed since the last logical-position reset.
-  // Without this, an OCR write-back to articleOcrTexts would overwrite the
-  // user's in-flight edits in the textarea below.
-  const dirtyRef = useRef(false);
+  // Count the draft, not the store text, so the figure tracks in-flight edits.
+  const charCount = draft.length;
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editMode, setEditMode] = useState(false);
+  const [viewMode, setViewMode] = useState<OcrViewMode>("preview");
+
+  // Debounced write-back of user edits into the store, so edits survive page
+  // switches and flow into the bulk copy / export paths. The pending commit
+  // closure captures its target (file / page / article) at keystroke time;
+  // flushing before a position reset (or on unmount) guarantees a pending
+  // edit lands on the position it was typed on, never the new one.
+  const writeBackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingWriteRef = useRef<(() => void) | null>(null);
+
+  const flushWriteBack = useCallback(() => {
+    if (writeBackTimerRef.current !== null) {
+      clearTimeout(writeBackTimerRef.current);
+      writeBackTimerRef.current = null;
+    }
+    const commit = pendingWriteRef.current;
+    pendingWriteRef.current = null;
+    commit?.();
+  }, []);
+
+  const pinnedArticleId = pinnedArticle?.article.id ?? null;
+  const scheduleWriteBack = useCallback(
+    (value: string) => {
+      if (!fileId) return;
+      const commit =
+        recognitionMode === "whole_file"
+          ? () => updateRecognizedPageText(fileId, currentPage, value)
+          : pinnedArticleId
+            ? () => updateArticleOcrText(fileId, pinnedArticleId, value)
+            : () => setDocumentResult(fileId, value);
+      if (writeBackTimerRef.current !== null) {
+        clearTimeout(writeBackTimerRef.current);
+      }
+      pendingWriteRef.current = commit;
+      writeBackTimerRef.current = setTimeout(() => {
+        writeBackTimerRef.current = null;
+        pendingWriteRef.current = null;
+        commit();
+      }, 400);
+    },
+    [
+      fileId,
+      recognitionMode,
+      currentPage,
+      pinnedArticleId,
+      updateRecognizedPageText,
+      updateArticleOcrText,
+      setDocumentResult,
+    ]
+  );
+
+  // Commit any pending edit if the panel unmounts mid-debounce.
+  useEffect(() => () => flushWriteBack(), [flushWriteBack]);
 
   // Reset draft whenever the *logical* position changes (file / mode / pinned
-  // article / page). Text-content changes do NOT reset — see the next effect.
+  // article / page), committing the previous position's pending edit first.
   useEffect(() => {
+    flushWriteBack();
     setDraft(text);
-    dirtyRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileId, recognitionMode, pinnedArticle?.article.id, currentPage]);
+  }, [fileId, recognitionMode, pinnedArticleId, currentPage]);
 
-  // OCR write-back: if the user hasn't edited since the last reset, follow the
-  // new text. If they're mid-edit, keep their draft.
+  // Store write-back (our own debounced commit, or a fresh OCR run): follow
+  // the store unless an uncommitted edit is pending. After a commit the store
+  // equals the draft, so this is a no-op; after a re-OCR it refreshes the view.
   useEffect(() => {
-    if (!dirtyRef.current) {
+    if (!pendingWriteRef.current) {
       setDraft(text);
     }
   }, [text]);
 
+  useEffect(() => {
+    if (viewMode === "blocks" && !hasLayout) {
+      setViewMode("preview");
+    }
+  }, [hasLayout, viewMode]);
+
   const onCopy = useCallback(async () => {
+    setSaveError(null);
     try {
       await writeText(draftRef.current);
       setCopied(true);
@@ -429,6 +520,8 @@ export function OcrTextPanel() {
       });
       if (!target) return;
       await writeTextFile(target, draftRef.current);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setSaveError(`保存失败：${appErrorMessage(e)}`);
     }
@@ -457,47 +550,78 @@ export function OcrTextPanel() {
               {titleLabel}
             </span>
           )}
-          {hasText && (
+          {(hasText || (viewMode === "blocks" && currentLayout)) && (
             <span className="font-mono text-foreground-subtle tabular-nums">
-              {charCount.toLocaleString()}
+              {viewMode === "blocks" && currentLayout
+                ? `${currentLayout.blocks.length.toLocaleString()} 块`
+                : charCount.toLocaleString()}
             </span>
           )}
         </div>
-        {hasText && (
+        {hasContent && (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
             {copied && (
               <span className="text-[10px] text-foreground-muted">已复制 ✓</span>
             )}
+            {saved && (
+              <span className="text-[10px] text-foreground-muted">已保存 ✓</span>
+            )}
             <button
               type="button"
-              onClick={() => setEditMode((v) => !v)}
-              title={editMode ? "预览" : "编辑源码"}
-              aria-label={editMode ? "切换到预览" : "切换到源码"}
-              className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+              onClick={() => setViewMode("preview")}
+              title="预览"
+              aria-label="切换到预览"
+              disabled={!hasText}
+              className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 ${
+                viewMode === "preview" ? "bg-surface-2 text-foreground" : ""
+              }`}
             >
-              {editMode ? (
-                <Eye className="h-3 w-3" strokeWidth={1.75} />
-              ) : (
-                <FileCode className="h-3 w-3" strokeWidth={1.75} />
-              )}
+              <Eye className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("source")}
+              title="编辑源码"
+              aria-label="切换到源码"
+              disabled={!hasText}
+              className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 ${
+                viewMode === "source" ? "bg-surface-2 text-foreground" : ""
+              }`}
+            >
+              <FileCode className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
+            {hasLayout && (
+              <button
+                type="button"
+                onClick={() => setViewMode("blocks")}
+                title="版面块校对"
+                aria-label="版面块校对"
+                className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground ${
+                  viewMode === "blocks" ? "bg-surface-2 text-foreground" : ""
+                }`}
+              >
+                <LayoutList className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void onCopy()}
               title="复制"
               aria-label="复制"
-              className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+              disabled={!hasText}
+              className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
             >
-              <Copy className="h-3 w-3" strokeWidth={1.75} />
+              <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>
             <button
               type="button"
               onClick={() => void onSave()}
               title="保存"
               aria-label="保存"
-              className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+              disabled={!hasText}
+              className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
             >
-              <Download className="h-3 w-3" strokeWidth={1.75} />
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>
           </div>
         )}
@@ -509,17 +633,31 @@ export function OcrTextPanel() {
         </p>
       )}
 
-      {hasText ? (
-        editMode ? (
-          <textarea
-            value={draft}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              setDraft(e.target.value);
-            }}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-foreground outline-none focus:border-border-strong"
+      {hasContent ? (
+        viewMode === "blocks" && currentLayout && fileId ? (
+          <LayoutBlockList
+            key={`${fileId}:${currentPage}`}
+            fileId={fileId}
+            page={currentPage}
+            layout={currentLayout}
           />
+        ) : viewMode === "source" && hasText ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            {hasLayout && (
+              <p className="mb-1 px-1.5 text-[10px] text-foreground-muted">
+                此处修改不影响版式 PDF，请在"版面块校对"视图逐块修改
+              </p>
+            )}
+            <textarea
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                scheduleWriteBack(e.target.value);
+              }}
+              spellCheck={false}
+              className="min-h-0 flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-foreground outline-none focus:border-border-strong"
+            />
+          </div>
         ) : (
           <div className="prose-ocr min-h-0 flex-1 overflow-auto rounded-md border border-border/40 bg-background px-3 py-2">
             {draft.length > MARKDOWN_RENDER_LIMIT_CHARS ? (
