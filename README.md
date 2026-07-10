@@ -4,6 +4,7 @@
 provider 任选，结果导出为 Markdown / 纯文本。
 
 跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。**由于无Windows设备测试，Windows平台属于理论可用。**
+也提供 Docker/Web 版，适合每个用户在自己的电脑、NAS 或 VPS 上单用户自托管使用。
 
 ## 特性
 
@@ -14,10 +15,10 @@ provider 任选，结果导出为 Markdown / 纯文本。
 - **页码控制**：PDF 支持直接输入页码跳转；全文识别可指定 `1-5,8,10-12` 这类非连续页码范围。
 - **Paddle 文档级 OCR**：一次性对整份 PDF 调用 Paddle 批量接口；大文件自动分块分批提交，
   语言、并发、每批页数均可配置。
-- **Paddle JSON 复用**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，并按 bbox
+- **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，并按 bbox
   重建可复制文字的版式 PDF。
-- **本地凭据**：API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）保管，
-  不会写入项目文件，也不会跨设备同步。
+- **本地凭据**：桌面版 API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）
+  保管；Docker 版写入挂载卷里的 `/data/secrets.json`，不会通过接口回传明文。
 - **细粒度取消**：识别进行中点取消会立刻打断长 poll 与回退退避，不会再继续烧 OCR 配额。
 - **大画布顺滑**：PDFium 渲染走专用线程；图像以二进制 IPC 传给前端，单页 50MB+ 的 A3 报纸也能流畅切页。
 
@@ -41,6 +42,54 @@ provider 任选，结果导出为 Markdown / 纯文本。
 ### Windows 首次启动
 
 SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即可。
+
+## Docker 自托管
+
+Docker/Web 版按“单用户自用”设计：一个容器实例默认只给一个人或一个可信环境使用。不要把未加保护的
+端口直接暴露到公网；VPS 上建议放在 Tailscale、Cloudflare Access、反向代理 Basic Auth 或其它访问
+控制后面。
+
+### docker compose
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+然后打开 `http://localhost:8787`。第一次进入 Settings 填入自己的 Paddle/OpenAI/OpenRouter key；
+这些密钥会保存在 Docker volume `xcvt-data` 对应的 `/data/secrets.json` 中。非密钥设置保存在
+`/data/settings.json`，上传文件保存在 `/data/uploads/`。
+
+升级：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### docker run
+
+```bash
+docker run -d \
+  --name xcvt \
+  --restart unless-stopped \
+  -p 8787:8787 \
+  -v xcvt-data:/data \
+  ghcr.io/whkdd/xcvt:latest
+```
+
+### 本地构建
+
+```bash
+docker buildx build --platform linux/arm64 -t xcvt:local --load .
+docker run -d --name xcvt -p 8787:8787 -v xcvt-data:/data xcvt:local
+```
+
+在 x86_64 Linux 上把 `linux/arm64` 换成 `linux/amd64`。发布镜像支持 `linux/amd64` 和
+`linux/arm64`。
+
+Docker/Web 版保留文件上传、PDF 预览、框选报道 OCR、整页 OCR、任务进度/取消、文本/Markdown
+复制与下载。Paddle JSON 导入和版式 PDF 导出仍是桌面版功能。
 
 ## 本地开发
 
@@ -69,8 +118,9 @@ pnpm tauri build                     # 出发布包到 src-tauri/target/release/
 
 - **框架**：Tauri 2.x
 - **前端**：React 18 · Vite · TypeScript · Zustand · Konva · Tailwind · shadcn/ui
-- **后端**：Rust · `pdfium-render` · `reqwest` · `tokio` · `keyring`
+- **后端**：Rust · `pdfium-render` · `reqwest` · `tokio` · `keyring` · Axum
 - **OCR**：PaddleOCR（异步 jobs）· OpenAI Vision · OpenRouter · OpenAI-compatible
+- **部署**：Tauri 桌面包 · Docker multi-arch (`linux/amd64`, `linux/arm64`)
 
 ## 目录结构
 

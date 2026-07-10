@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { error as logError } from "@tauri-apps/plugin-log";
 import App from "./App";
+import { logError } from "./lib/runtime";
 import "katex/dist/katex.min.css";
 import "./styles/globals.css";
 
@@ -12,7 +12,7 @@ window.addEventListener("error", (event) => {
   const where = event.filename
     ? ` at ${event.filename}:${event.lineno}:${event.colno}`
     : "";
-  void logError(`uncaught error: ${event.message}${where}`).catch(() => {});
+  void logError(`uncaught error: ${event.message}${where}`);
 });
 
 window.addEventListener("unhandledrejection", (event) => {
@@ -22,7 +22,7 @@ window.addEventListener("unhandledrejection", (event) => {
           event.reason.stack ? `\n${event.reason.stack}` : ""
         }`
       : String(event.reason);
-  void logError(`unhandled rejection: ${reason}`).catch(() => {});
+  void logError(`unhandled rejection: ${reason}`);
 });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

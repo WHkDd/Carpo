@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderOpen, RefreshCw, X } from "lucide-react";
-import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useStore } from "@/store";
 import { DEFAULT_SETTINGS } from "@/store/settingsSlice";
+import { isTauriRuntime, logWarn } from "@/lib/runtime";
 import {
   deleteSecret as ipcDeleteSecret,
   getSecret as ipcGetSecret,
@@ -86,6 +86,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [refreshError, setRefreshError] = useState<Partial<Record<Provider, string>>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const desktopRuntime = isTauriRuntime();
 
   // Reset draft + tab + presence whenever the dialog opens.
   useEffect(() => {
@@ -282,27 +283,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             ) : (
               <>
                 <span className="truncate">
-                  Keychain 存 API Key · 其余写入{" "}
+                  {desktopRuntime ? "Keychain 存 API Key" : "服务端配置文件存 API Key"} · 其余写入{" "}
                   <span className="font-mono text-foreground-subtle">
-                    {"${AppConfig}/settings.json"}
+                    {desktopRuntime ? "${AppConfig}/settings.json" : "/data/settings.json"}
                   </span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void ipcOpenLogDir().catch((e) => {
-                      const message = appErrorMessage(e);
-                      void logWarn(`open_log_dir failed: ${message}`).catch(
-                        () => {}
-                      );
-                    });
-                  }}
-                  title="在文件管理器中打开日志目录"
-                  className="flex shrink-0 items-center gap-1 rounded text-foreground-subtle transition-colors hover:text-foreground"
-                >
-                  <FolderOpen className="h-3 w-3" strokeWidth={1.75} />
-                  <span>日志</span>
-                </button>
+                {desktopRuntime && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void ipcOpenLogDir().catch((e) => {
+                        const message = appErrorMessage(e);
+                        void logWarn(`open_log_dir failed: ${message}`);
+                      });
+                    }}
+                    title="在文件管理器中打开日志目录"
+                    className="flex shrink-0 items-center gap-1 rounded text-foreground-subtle transition-colors hover:text-foreground"
+                  >
+                    <FolderOpen className="h-3 w-3" strokeWidth={1.75} />
+                    <span>日志</span>
+                  </button>
+                )}
               </>
             )}
           </div>

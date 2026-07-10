@@ -1,0 +1,24 @@
+[package]
+name = "xcvt-core"
+version = "0.1.4"
+edition = "2021"
+rust-version = "1.78"
+
+[dependencies]
+base64 = "0.22"
+futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
+log = "0.4"
+parking_lot = "0.12"
+pdfium-render = { version = "0.8", features = ["thread_safe"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+wiremock = "0.6"

@@ -6,6 +6,7 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 import { useFileImport } from "@/hooks/useFileImport";
+import { isTauriRuntime } from "@/lib/runtime";
 import { useStore } from "@/store";
 import {
   PaddleJsonImportDialog,
@@ -26,6 +27,7 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
   const toggleQueueCollapsed = useStore((s) => s.toggleQueueCollapsed);
   const { openFiles } = useFileImport();
   const paddleJson = usePaddleJsonImportFlow();
+  const desktopRuntime = isTauriRuntime();
 
   if (queueCollapsed) {
     return (
@@ -42,15 +44,17 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
               >
                 <Plus className="h-3 w-3" strokeWidth={1.8} />
               </button>
-              <button
-                type="button"
-                onClick={() => void paddleJson.open()}
-                aria-label="导入 Paddle JSON"
-                title="导入 Paddle JSON"
-                className="grid h-5 w-5 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <FileJson className="h-3 w-3" strokeWidth={1.8} />
-              </button>
+              {desktopRuntime && (
+                <button
+                  type="button"
+                  onClick={() => void paddleJson.open()}
+                  aria-label="导入 Paddle JSON"
+                  title="导入 Paddle JSON"
+                  className="grid h-5 w-5 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <FileJson className="h-3 w-3" strokeWidth={1.8} />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={toggleQueueCollapsed}
@@ -88,11 +92,13 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
             </button>
           </div>
         </aside>
-        <PaddleJsonImportDialog
-          open={paddleJson.path !== null}
-          path={paddleJson.path}
-          onClose={paddleJson.close}
-        />
+        {desktopRuntime && (
+          <PaddleJsonImportDialog
+            open={paddleJson.path !== null}
+            path={paddleJson.path}
+            onClose={paddleJson.close}
+          />
+        )}
       </>
     );
   }
@@ -118,15 +124,17 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
               >
                 <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
               </button>
-              <button
-                type="button"
-                onClick={() => void paddleJson.open()}
-                aria-label="导入 Paddle JSON"
-                title="导入 Paddle JSON"
-                className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <FileJson className="h-3.5 w-3.5" strokeWidth={1.8} />
-              </button>
+              {desktopRuntime && (
+                <button
+                  type="button"
+                  onClick={() => void paddleJson.open()}
+                  aria-label="导入 Paddle JSON"
+                  title="导入 Paddle JSON"
+                  className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <FileJson className="h-3.5 w-3.5" strokeWidth={1.8} />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={toggleQueueCollapsed}
@@ -176,11 +184,13 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
           </button>
         </div>
       </aside>
-      <PaddleJsonImportDialog
-        open={paddleJson.path !== null}
-        path={paddleJson.path}
-        onClose={paddleJson.close}
-      />
+      {desktopRuntime && (
+        <PaddleJsonImportDialog
+          open={paddleJson.path !== null}
+          path={paddleJson.path}
+          onClose={paddleJson.close}
+        />
+      )}
     </>
   );
 }

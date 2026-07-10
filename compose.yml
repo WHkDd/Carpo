@@ -1,0 +1,22 @@
+services:
+  xcvt:
+    image: ghcr.io/whkdd/xcvt:latest
+    container_name: xcvt
+    restart: unless-stopped
+    ports:
+      - "${XCVT_HOST_PORT:-8787}:8787"
+    volumes:
+      - xcvt-data:/data
+    environment:
+      XCVT_PORT: "8787"
+      XCVT_STATIC_DIR: /app/dist
+      XCVT_DATA_DIR: /data
+      XCVT_PDFIUM_LIBRARY_PATH: /app/libpdfium.so
+      # Optional first-run seeds. Prefer entering keys in Settings after launch.
+      # XCVT_PADDLE_TOKEN: ""
+      # XCVT_OPENAI_KEY: ""
+      # XCVT_OPENROUTER_KEY: ""
+      # XCVT_OPENAI_COMPATIBLE_KEY: ""
+
+volumes:
+  xcvt-data:

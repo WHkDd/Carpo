@@ -1,0 +1,9 @@
+[workspace]
+members = ["src-tauri", "xcvt-core", "xcvt-server"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

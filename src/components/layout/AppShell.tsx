@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { assembleDocument } from "@/lib/format-doc";
+import { isTauriRuntime, logWarn } from "@/lib/runtime";
 import { getSettings } from "@/lib/tauri";
 import {
   appErrorMessage,
@@ -69,7 +68,7 @@ function AppShellInner() {
         if (!cancelled) setSettings(s);
       } catch (e) {
         const message = appErrorMessage(e);
-        void logWarn(`settings hydrate failed: ${message}`).catch(() => {});
+        void logWarn(`settings hydrate failed: ${message}`);
       }
     })();
     return () => {
@@ -81,119 +80,128 @@ function AppShellInner() {
   // by `job_id` so stray events for unrelated jobs are no-ops.
   useEffect(() => {
     let unlistens: Array<() => void> = [];
+    let eventSource: EventSource | null = null;
     let cancelled = false;
+    const handleDone = (payload: JobDone) => {
+      const job = useStore.getState().activeJob;
+      // Take the assembly action only when the done payload matches the
+      // current activeJob and the run wasn't cancelled. Done payloads for
+      // stale or cancelled jobs are not assembled, but the slice still
+      // records terminal status for the progress pill.
+      if (job && job.jobId === payload.job_id && !payload.cancelled) {
+        if (job.kind === "grouped_ocr") {
+          const grouped = payload as GroupedJobDone;
+          // Build a per-article text map for the articles that were part
+          // of *this* run. Errored articles get a sentinel so the slot
+          // exists and the user sees an explicit failure marker.
+          const errorById = new Map(
+            grouped.errors.map((er) => [er.article_id, er.message])
+          );
+          const resultById = new Map(
+            grouped.results.map((r) => [r.article_id, r.text])
+          );
+          const perArticle: Record<string, string> = {};
+          for (const a of job.requestedArticles) {
+            const text = resultById.get(a.id);
+            const errMsg = errorById.get(a.id);
+            perArticle[a.id] = text !== undefined
+              ? text
+              : errMsg
+                ? `[识别失败：${errMsg}]`
+                : "[未识别]";
+          }
+          // Merge into the per-file map first, then re-assemble the full
+          // document from *every* article that has text — including ones
+          // OCR'd in prior partial runs. The article order follows the
+          // current document state so re-ordering after OCR is honored.
+          setArticleOcrTexts(job.fileId, perArticle);
+          const doc = useStore.getState().getDocumentState(job.fileId);
+          const merged =
+            useStore.getState().articleOcrTexts[job.fileId] ?? {};
+          const ordered = doc.articles
+            .map((a) => ({
+              id: a.id,
+              title: a.title,
+              text: merged[a.id] ?? "",
+            }))
+            .filter((a) => a.text.length > 0);
+          const assembled = assembleDocument({
+            newspaperName: job.newspaperName,
+            newspaperDate: job.newspaperDate,
+            articles: ordered,
+          });
+          setDocumentResult(job.fileId, assembled);
+        } else {
+          // whole_file: zip requestedPages with results/errors, then
+          // write normalized page results while keeping legacy page text
+          // in sync for older consumers.
+          const whole = payload as WholeFileJobDone;
+          const sourceMode: RecognizedPageSourceMode =
+            whole.source === "paddle_document_chunk"
+              ? "paddle_document_chunk"
+              : whole.source === "paddle_document"
+                ? "paddle_document"
+                : "page_image";
+          const errorByPage = new Map(
+            whole.errors.map((er) => [er.page, er.message])
+          );
+          const resultByPage = new Map(whole.results.map((r) => [r.page, r]));
+          const perPage: Record<number, RecognizedPage> = {};
+          for (const page of job.requestedPages) {
+            const row = resultByPage.get(page);
+            const errMsg = errorByPage.get(page);
+            perPage[page] =
+              row !== undefined
+                ? {
+                    text: row.text,
+                    status: "done",
+                    sourceMode,
+                    sourceJobId: job.jobId,
+                    ...(row.layout !== undefined ? { layout: row.layout } : {}),
+                    ...(row.chunk_id !== undefined ? { chunkId: row.chunk_id } : {}),
+                    ...(row.chunk_page !== undefined
+                      ? { chunkPage: row.chunk_page }
+                      : {}),
+                  }
+                : {
+                    text:
+                      errMsg !== undefined
+                        ? `[识别失败：${errMsg}]`
+                        : "[未识别]",
+                    status: "failed",
+                    error: errMsg ?? "未返回识别结果",
+                    sourceMode,
+                    sourceJobId: job.jobId,
+                  };
+          }
+          setRecognizedPages(job.fileId, perPage);
+        }
+      }
+      applyJobDone(payload);
+    };
+
     (async () => {
+      if (!isTauriRuntime()) {
+        const source = new EventSource("/api/jobs/events");
+        eventSource = source;
+        source.addEventListener("progress", (event) => {
+          applyProgress(JSON.parse((event as MessageEvent).data) as JobProgress);
+        });
+        source.addEventListener("done", (event) => {
+          handleDone(JSON.parse((event as MessageEvent).data) as JobDone);
+        });
+        source.addEventListener("error", (event) => {
+          const data = (event as MessageEvent).data;
+          if (typeof data === "string" && data.length > 0) {
+            applyJobError(JSON.parse(data) as JobError);
+          }
+        });
+        return;
+      }
+      const { listen } = await import("@tauri-apps/api/event");
       const subs = await Promise.all([
         listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => applyProgress(e.payload)),
-        listen<JobDone>(EVENTS.JOB_DONE, (e) => {
-          const job = useStore.getState().activeJob;
-          // Take the assembly action only when the done payload matches the
-          // current activeJob and the run wasn't cancelled. Done payloads for
-          // stale or cancelled jobs are not assembled, but the slice still
-          // records terminal status for the progress pill.
-          if (job && job.jobId === e.payload.job_id && !e.payload.cancelled) {
-            if (job.kind === "grouped_ocr") {
-              const payload = e.payload as GroupedJobDone;
-              // Build a per-article text map for the articles that were part
-              // of *this* run. Errored articles get a sentinel so the slot
-              // exists and the user sees an explicit failure marker.
-              const errorById = new Map(
-                payload.errors.map((er) => [er.article_id, er.message])
-              );
-              const resultById = new Map(
-                payload.results.map((r) => [r.article_id, r.text])
-              );
-              const perArticle: Record<string, string> = {};
-              for (const a of job.requestedArticles) {
-                const text = resultById.get(a.id);
-                const errMsg = errorById.get(a.id);
-                perArticle[a.id] = text !== undefined
-                  ? text
-                  : errMsg
-                    ? `[识别失败：${errMsg}]`
-                    : "[未识别]";
-              }
-              // Merge into the per-file map first, then re-assemble the full
-              // document from *every* article that has text — including ones
-              // OCR'd in prior partial runs. The article order follows the
-              // current document state so re-ordering after OCR is honored.
-              setArticleOcrTexts(job.fileId, perArticle);
-              const doc = useStore.getState().getDocumentState(job.fileId);
-              const merged =
-                useStore.getState().articleOcrTexts[job.fileId] ?? {};
-              const ordered = doc.articles
-                .map((a) => ({
-                  id: a.id,
-                  title: a.title,
-                  text: merged[a.id] ?? "",
-                }))
-                .filter((a) => a.text.length > 0);
-              const assembled = assembleDocument({
-                newspaperName: job.newspaperName,
-                newspaperDate: job.newspaperDate,
-                articles: ordered,
-              });
-              setDocumentResult(job.fileId, assembled);
-            } else {
-              // whole_file: zip requestedPages with results/errors, then
-              // write normalized page results while keeping legacy page text
-              // in sync for older consumers. `source` tells us whether the
-              // runner used the per-page PNG path or Paddle's document-level
-              // API — propagated to `sourceMode` so the right panel and the
-              // upcoming layout exporter can react accordingly.
-              const payload = e.payload as WholeFileJobDone;
-              const sourceMode: RecognizedPageSourceMode =
-                payload.source === "paddle_document_chunk"
-                  ? "paddle_document_chunk"
-                  : payload.source === "paddle_document"
-                  ? "paddle_document"
-                  : "page_image";
-              const errorByPage = new Map(
-                payload.errors.map((er) => [er.page, er.message])
-              );
-              // Index whole entries (not just text) so the chunked
-              // payload's per-row chunk_id / chunk_page survive onto
-              // the stored RecognizedPage. UI never shows chunk
-              // numbers — they're only there for layout export and
-              // debugging.
-              const resultByPage = new Map(
-                payload.results.map((r) => [r.page, r])
-              );
-              const perPage: Record<number, RecognizedPage> = {};
-              for (const page of job.requestedPages) {
-                const row = resultByPage.get(page);
-                const errMsg = errorByPage.get(page);
-                perPage[page] =
-                  row !== undefined
-                    ? {
-                        text: row.text,
-                        status: "done",
-                        sourceMode,
-                        sourceJobId: job.jobId,
-                        ...(row.layout !== undefined ? { layout: row.layout } : {}),
-                        ...(row.chunk_id !== undefined
-                          ? { chunkId: row.chunk_id }
-                          : {}),
-                        ...(row.chunk_page !== undefined
-                          ? { chunkPage: row.chunk_page }
-                          : {}),
-                      }
-                    : {
-                        text:
-                          errMsg !== undefined
-                            ? `[识别失败：${errMsg}]`
-                            : "[未识别]",
-                        status: "failed",
-                        error: errMsg ?? "未返回识别结果",
-                        sourceMode,
-                        sourceJobId: job.jobId,
-                      };
-              }
-              setRecognizedPages(job.fileId, perPage);
-            }
-          }
-          applyJobDone(e.payload);
-        }),
+        listen<JobDone>(EVENTS.JOB_DONE, (e) => handleDone(e.payload)),
         listen<JobError>(EVENTS.JOB_ERROR, (e) => applyJobError(e.payload)),
       ]);
       if (cancelled) {
@@ -204,6 +212,7 @@ function AppShellInner() {
     })();
     return () => {
       cancelled = true;
+      eventSource?.close();
       unlistens.forEach((u) => u());
     };
   }, [
