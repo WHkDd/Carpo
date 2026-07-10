@@ -66,15 +66,3 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
-[profile.release]
-# Slimmer binaries + smaller download. `lto = "thin"` gives most of the LTO
-# benefit (10-20% size win, faster cross-crate inlining) without the long
-# build times of "fat". `strip = "symbols"` drops symbol tables. `codegen-
-# units = 1` lets rustc do more cross-fn optimisation. `panic = "abort"`
-# removes unwind tables — we don't catch panics anywhere in the worker, so
-# unwinding only adds binary size.
-lto = "thin"
-codegen-units = 1
-strip = "symbols"
-panic = "abort"

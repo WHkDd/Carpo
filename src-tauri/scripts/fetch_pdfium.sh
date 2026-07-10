@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 macos-arm64|windows-x64" >&2
+  echo "usage: $0 macos-arm64|windows-x64|linux-x64|linux-arm64" >&2
 }
 
 if [[ $# -ne 1 ]]; then
@@ -23,6 +23,18 @@ case "$1" in
     lib_path="bin/pdfium.dll"
     output_name="pdfium.dll"
     ;;
+  linux-x64)
+    asset_arch="linux-x64"
+    output_arch="linux-x64"
+    lib_path="lib/libpdfium.so"
+    output_name="libpdfium.so"
+    ;;
+  linux-arm64)
+    asset_arch="linux-arm64"
+    output_arch="linux-arm64"
+    lib_path="lib/libpdfium.so"
+    output_name="libpdfium.so"
+    ;;
   *)
     usage
     exit 2
@@ -33,7 +45,13 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 tauri_dir="$(cd -- "${script_dir}/.." && pwd)"
 pdfium_dir="${tauri_dir}/pdfium"
 version="$(tr -d '[:space:]' < "${pdfium_dir}/VERSION")"
-cache_root="${XCVT_PDFIUM_CACHE_DIR:-${HOME}/Library/Caches/xcvt/pdfium}"
+if [[ -n "${XCVT_PDFIUM_CACHE_DIR:-}" ]]; then
+  cache_root="${XCVT_PDFIUM_CACHE_DIR}"
+elif [[ "$(uname -s)" == "Darwin" ]]; then
+  cache_root="${HOME}/Library/Caches/xcvt/pdfium"
+else
+  cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/xcvt/pdfium"
+fi
 asset="pdfium-${asset_arch}.tgz"
 url="https://github.com/bblanchon/pdfium-binaries/releases/download/${version}/${asset}"
 cache_dir="${cache_root}/${version//\//_}"

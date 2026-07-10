@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   Check,
   Copy,
@@ -19,6 +16,7 @@ import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
+import { copyText, isTauriRuntime, saveTextFile } from "@/lib/runtime";
 import {
   DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
   type LayoutDocument,
@@ -217,6 +215,7 @@ export function OcrBulkActions() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [exportingLayoutPdf, setExportingLayoutPdf] = useState(false);
   const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
+  const canExportLayoutPdf = isTauriRuntime();
 
   const showSavedTip = useCallback((tip: string) => {
     setSavedTip(tip);
@@ -228,7 +227,7 @@ export function OcrBulkActions() {
     if (!allText) return;
     setSaveError(null);
     try {
-      await writeText(allText);
+      await copyText(allText);
       setCopiedCount(getBulkCount());
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -247,12 +246,11 @@ export function OcrBulkActions() {
         recognitionMode === "whole_file"
           ? `${stem}_全文按页.md`
           : `${stem}_全部报道.md`;
-      const target = await save({
-        defaultPath: defaultName,
+      const saved = await saveTextFile(allText, {
+        defaultName,
         filters: SAVE_FILTERS,
       });
-      if (!target) return;
-      await writeTextFile(target, allText);
+      if (!saved) return;
       showSavedTip("已导出");
     } catch (e) {
       setSaveError(`保存失败：${appErrorMessage(e)}`);
@@ -261,10 +259,11 @@ export function OcrBulkActions() {
 
   const onExportLayoutPdf = useCallback(async () => {
     const document = getLayoutDocument();
-    if (!document) return;
+    if (!document || !isTauriRuntime()) return;
     setSaveError(null);
     setExportingLayoutPdf(true);
     try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
       const stem = fileLabel.replace(/\.[^.]+$/, "");
       const target = await save({
         defaultPath: `${stem}_版式重建.pdf`,
@@ -338,16 +337,18 @@ export function OcrBulkActions() {
       >
         <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
-      <button
-        type="button"
-        disabled={!hasLayoutDocument || exportingLayoutPdf}
-        onClick={() => void onExportLayoutPdf()}
-        title="导出版式 PDF"
-        aria-label="导出版式 PDF"
-        className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
-      >
-        <Printer className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </button>
+      {canExportLayoutPdf && (
+        <button
+          type="button"
+          disabled={!hasLayoutDocument || exportingLayoutPdf}
+          onClick={() => void onExportLayoutPdf()}
+          title="导出版式 PDF"
+          aria-label="导出版式 PDF"
+          className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <Printer className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
+      )}
     </div>
   );
 }
@@ -494,7 +495,7 @@ export function OcrTextPanel() {
   const onCopy = useCallback(async () => {
     setSaveError(null);
     try {
-      await writeText(draftRef.current);
+      await copyText(draftRef.current);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
@@ -514,12 +515,11 @@ export function OcrTextPanel() {
           : pinnedArticle
             ? `${stem}_${pinnedArticle.article.title || `报道${pinnedArticle.article.num}`}.md`
             : `${stem}.md`;
-      const target = await save({
-        defaultPath: defaultName,
+      const saved = await saveTextFile(draftRef.current, {
+        defaultName,
         filters: SAVE_FILTERS,
       });
-      if (!target) return;
-      await writeTextFile(target, draftRef.current);
+      if (!saved) return;
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
