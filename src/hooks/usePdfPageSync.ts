@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { error as logError } from "@tauri-apps/plugin-log";
 import { renderPage } from "@/lib/tauri";
+import { logError } from "@/lib/runtime";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
@@ -93,9 +93,7 @@ export function usePdfPageSync(): void {
         if (cancelled) return;
         if (requestTokens.current.get(fileId) !== token) return;
         const message = appErrorMessage(err);
-        void logError(
-          `renderPage failed: ${path} page=${targetPage}: ${message}`
-        ).catch(() => {});
+        void logError(`renderPage failed: ${path} page=${targetPage}: ${message}`);
         setStatusText(`渲染失败 · 第 ${targetPage} 页`);
       }
     })();

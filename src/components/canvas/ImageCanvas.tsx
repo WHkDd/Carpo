@@ -140,6 +140,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       ids: string[];
     } | null>(null);
     const [colorVersion, setColorVersion] = useState(0);
+    const [resizeTargetId, setResizeTargetId] = useState<string | null>(null);
 
     useImperativeHandle(ref, () => controller, [controller]);
 
@@ -261,6 +262,22 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     }, []);
 
     useEffect(() => {
+      if (!manualDrawMode || editingBlockId) {
+        setResizeTargetId(null);
+        return;
+      }
+      if (selectionOrder.length === 0) {
+        setResizeTargetId(null);
+        return;
+      }
+      setResizeTargetId((current) =>
+        current && selectionOrder.includes(current)
+          ? current
+          : selectionOrder[selectionOrder.length - 1]!
+      );
+    }, [editingBlockId, manualDrawMode, selectionOrder]);
+
+    useEffect(() => {
       const transformer = transformerRef.current;
       if (!transformer) return;
       if (!manualDrawMode) {
@@ -268,18 +285,16 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         transformer.getLayer()?.batchDraw();
         return;
       }
-      const nodes: KRect[] = [];
-      for (const id of selectionOrder) {
-        const node = blockRefs.current[id];
-        if (node) nodes.push(node);
-      }
-      if (editingBlockId && !selectionOrder.includes(editingBlockId)) {
-        const node = blockRefs.current[editingBlockId];
-        if (node) nodes.push(node);
-      }
+      const targetId =
+        editingBlockId ??
+        (resizeTargetId && selectionOrder.includes(resizeTargetId)
+          ? resizeTargetId
+          : selectionOrder[selectionOrder.length - 1]);
+      const node = targetId ? blockRefs.current[targetId] : null;
+      const nodes = node ? [node] : [];
       transformer.nodes(nodes);
       transformer.getLayer()?.batchDraw();
-    }, [selectionOrder, manualDrawMode, editingBlockId]);
+    }, [selectionOrder, manualDrawMode, editingBlockId, resizeTargetId]);
 
     const handleBlockMouseDown = useCallback(
       (e: KonvaEventObject<MouseEvent>) => {
@@ -302,6 +317,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
           if (isMulti) return;
           s.clearSelection(fileId, page);
           s.setEditingBlock(fileId, { page, blockId });
+          setResizeTargetId(null);
           return;
         }
 
@@ -313,16 +329,23 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         if (isMulti) {
           if (already) {
             s.removeFromSelection(fileId, page, blockId);
+            if (resizeTargetId === blockId) setResizeTargetId(null);
           } else {
             s.pushSelection(fileId, page, blockId);
+            setResizeTargetId(blockId);
           }
         } else if (!already) {
           s.pushSelection(fileId, page, blockId);
+          setResizeTargetId(blockId);
+        } else {
+          setResizeTargetId(blockId);
         }
         // Already selected, no multi-key: leave selection intact so a group drag
-        // can begin from any member of the group.
+        // can begin from any member of the group. The clicked member becomes
+        // the resize target so multi-selected blocks can still be adjusted
+        // one by one instead of sharing a single group transformer.
       },
-      []
+      [resizeTargetId]
     );
 
     const handleBlockTransformEnd = useCallback((e: KonvaEventObject<Event>) => {
@@ -418,6 +441,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         });
         useStore.getState().setEditingBlock(file.id, null);
         useStore.getState().pushSelection(file.id, page, id);
+        setResizeTargetId(id);
       },
     });
     const {

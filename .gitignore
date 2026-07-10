@@ -3,6 +3,7 @@ node_modules/
 dist/
 dist-node/
 .vite/
+target/
 *.log
 .npm/
 .pnpm-store/
@@ -15,6 +16,8 @@ src-tauri/pdfium/.cache/
 src-tauri/pdfium/macos-arm64/
 src-tauri/pdfium/macos-x64/
 src-tauri/pdfium/windows-x64/
+src-tauri/pdfium/linux-x64/
+src-tauri/pdfium/linux-arm64/
 
 # Editor
 .DS_Store

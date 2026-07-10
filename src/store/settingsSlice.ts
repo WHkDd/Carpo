@@ -1,5 +1,4 @@
 import type { StateCreator } from "zustand";
-import { warn as logWarn } from "@tauri-apps/plugin-log";
 import type { QueueSlice } from "./queueSlice";
 import type { UiSlice } from "./uiSlice";
 import type { FileViewSlice } from "./fileViewSlice";
@@ -7,6 +6,7 @@ import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { JobSlice } from "./jobSlice";
 import { setSettings as ipcSetSettings } from "@/lib/tauri";
+import { logWarn } from "@/lib/runtime";
 import {
   appErrorMessage,
   type NonSecretSettings,
@@ -128,6 +128,6 @@ async function persistSettings(next: NonSecretSettings): Promise<void> {
     await ipcSetSettings(next);
   } catch (e) {
     const message = appErrorMessage(e);
-    void logWarn(`settings persist failed: ${message}`).catch(() => {});
+    void logWarn(`settings persist failed: ${message}`);
   }
 }
