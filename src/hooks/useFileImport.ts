@@ -13,6 +13,7 @@ import { useStore } from "@/store";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
 
 const PDF_PREVIEW_DPI = 150;
+const BROWSER_ACCEPT = ".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf";
 
 function basename(p: string): string {
   const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
@@ -259,15 +260,19 @@ export function useFileImport() {
 
   const openFiles = useCallback(async () => {
     if (!isTauriRuntime()) {
-      const supported = await getSupported();
       const input = document.createElement("input");
       input.type = "file";
       input.multiple = true;
-      input.accept = supported.map((ext) => `.${ext}`).join(",");
+      input.accept = BROWSER_ACCEPT;
+      input.style.display = "none";
       input.onchange = () => {
-        void importFiles(Array.from(input.files ?? []));
+        const files = Array.from(input.files ?? []);
+        input.remove();
+        void importFiles(files);
       };
+      document.body.appendChild(input);
       input.click();
+      window.setTimeout(() => input.remove(), 60_000);
       return;
     }
     const supported = await getSupported();
