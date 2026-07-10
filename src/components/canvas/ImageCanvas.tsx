@@ -17,6 +17,7 @@ import type { Transformer as KTransformer } from "konva/lib/shapes/Transformer";
 import useImage from "use-image";
 import { ImageOff } from "lucide-react";
 import { useStore } from "@/store";
+import type { Block } from "@/store/pageStateSlice";
 import { useElementSize } from "@/hooks/useElementSize";
 import { subscribeArticleColorTokens } from "@/lib/article-color-token";
 import { usePanZoom, type PanZoomController } from "./usePanZoom";
@@ -101,6 +102,14 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         return highlightedArticleSet.has(articleId);
       },
       [highlightedArticleSet]
+    );
+    const isBlockInteractive = useCallback(
+      (block: Block) => {
+        if (!manualDrawMode) return false;
+        if (!block.articleId) return true;
+        return block.id === editingBlockId || isHighlighted(block.articleId);
+      },
+      [editingBlockId, isHighlighted, manualDrawMode]
     );
     const selectedSet = useMemo(
       () => new Set(selectionOrder),
@@ -509,7 +518,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   isSelected={manualDrawMode && selectedSet.has(block.id)}
                   isEditing={manualDrawMode && block.id === editingBlockId}
                   scale={scale}
-                  interactive={manualDrawMode}
+                  interactive={isBlockInteractive(block)}
                   articleNum={
                     block.articleId ? articleNumById.get(block.articleId) : undefined
                   }
