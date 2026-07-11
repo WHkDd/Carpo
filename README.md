@@ -19,6 +19,20 @@ provider 任选，结果导出为 Markdown / 纯文本。
 - **本地凭据**：桌面版 API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）
   保管；Docker 版写入挂载卷里的 `/data/secrets.json`，不会通过接口回传明文。
 
+### 界面预览
+
+**全文识别**
+
+![全文识别界面](docs/screenshots/full-text-ocr.png)
+
+**框选识别**
+
+![框选识别界面](docs/screenshots/selection-ocr.png)
+
+**Paddle JSON 导入**
+
+![Paddle JSON 导入界面](docs/screenshots/paddle-json-import.png)
+
 ## 安装
 
 正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
