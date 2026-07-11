@@ -130,8 +130,28 @@ struct ErrorEvent {
 /// `JobRegistry` and holds the matching id + token. When the task exits it
 /// removes itself from the registry so cancel commands stop seeing a phantom.
 pub fn spawn(state: Arc<AppState>, req: GroupedOcrRequest, job_id: Uuid, token: CancellationToken) {
+    spawn_inner(state, req, job_id, token, None);
+}
+
+pub fn spawn_with_settings(
+    state: Arc<AppState>,
+    req: GroupedOcrRequest,
+    job_id: Uuid,
+    token: CancellationToken,
+    settings: config::NonSecretSettings,
+) {
+    spawn_inner(state, req, job_id, token, Some(settings));
+}
+
+fn spawn_inner(
+    state: Arc<AppState>,
+    req: GroupedOcrRequest,
+    job_id: Uuid,
+    token: CancellationToken,
+    settings: Option<config::NonSecretSettings>,
+) {
     tokio::spawn(async move {
-        let outcome = run(Arc::clone(&state), req, job_id, token).await;
+        let outcome = run(Arc::clone(&state), req, job_id, token, settings).await;
         state.jobs.remove(job_id);
         if let Err(e) = outcome {
             log::error!("grouped ocr job {job_id} crashed: {e}");
@@ -151,8 +171,12 @@ async fn run(
     req: GroupedOcrRequest,
     job_id: Uuid,
     token: CancellationToken,
+    settings: Option<config::NonSecretSettings>,
 ) -> AppResult<()> {
-    let settings = config::load(&state.data_dir)?;
+    let settings = match settings {
+        Some(settings) => settings,
+        None => config::load(&state.data_dir)?,
+    };
     let secret_key = secret_key_for_provider(settings.provider);
     let secret = state.secrets.get(secret_key).await?;
     // Backend owns the OCR-DPI decision now: the request still carries
