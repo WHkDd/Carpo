@@ -77,6 +77,54 @@ describe("jobSlice", () => {
     });
   });
 
+  it("normalizes whole-file progress to the requested page count", () => {
+    store.getState().startJob({
+      jobId: "a",
+      kind: "whole_file",
+      fileId: "f1",
+      newspaperName: "申报",
+      newspaperDate: "1945-08-15",
+      requestedPages: [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41],
+    });
+
+    store.getState().applyProgress({
+      job_id: "a",
+      done: 8,
+      total: 270,
+      label: "识别中 · 已完成 8/270 页",
+    });
+
+    expect(store.getState().activeJob).toMatchObject({
+      done: 8,
+      total: 11,
+      label: "识别中 · 已完成 8/11 页",
+    });
+  });
+
+  it("clamps whole-file progress when provider progress exceeds the requested page count", () => {
+    store.getState().startJob({
+      jobId: "a",
+      kind: "whole_file",
+      fileId: "f1",
+      newspaperName: "申报",
+      newspaperDate: "1945-08-15",
+      requestedPages: [31, 32, 33],
+    });
+
+    store.getState().applyProgress({
+      job_id: "a",
+      done: 8,
+      total: 270,
+      label: "识别中 · 第8/270页",
+    });
+
+    expect(store.getState().activeJob).toMatchObject({
+      done: 3,
+      total: 3,
+      label: "识别中 · 第3/3页",
+    });
+  });
+
   it("applyJobDone pins progress to total on a clean finish", () => {
     store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
     store.getState().applyProgress({
