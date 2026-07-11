@@ -149,9 +149,9 @@ mod tests {
             StatusCode::OK,
         )
         .await;
-        assert_eq!(info["pageCount"], 2);
+        assert_eq!(info["page_count"], 2);
 
-        let page = app
+        let page1 = app
             .clone()
             .oneshot(
                 Request::builder()
@@ -161,14 +161,29 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(page.status(), StatusCode::OK);
-        let bytes = to_bytes(page.into_body(), usize::MAX).await.unwrap();
-        assert!(bytes.len() > 11);
-        let width = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        assert_eq!(page1.status(), StatusCode::OK);
+        let bytes1 = to_bytes(page1.into_body(), usize::MAX).await.unwrap();
+        assert!(bytes1.len() > 11);
+        let width = u32::from_le_bytes(bytes1[0..4].try_into().unwrap());
+        let height = u32::from_le_bytes(bytes1[4..8].try_into().unwrap());
         assert!(width > 0);
         assert!(height > 0);
-        assert_eq!(&bytes[8..11], b"\xff\xd8\xff");
+        assert_eq!(&bytes1[8..11], b"\xff\xd8\xff");
+
+        let page2 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/files/{file_id}/pages/2?dpi=72"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page2.status(), StatusCode::OK);
+        let bytes2 = to_bytes(page2.into_body(), usize::MAX).await.unwrap();
+        assert!(bytes2.len() > 11);
+        assert_eq!(&bytes2[8..11], b"\xff\xd8\xff");
 
         let deleted = request_json(
             app.clone(),

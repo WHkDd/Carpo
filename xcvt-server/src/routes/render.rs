@@ -14,7 +14,6 @@ use xcvt_core::{error::AppError, jobs::grouped::FileKind, pdf::encode_preview_jp
 use crate::{app_state::ServerState, error::ServerResult};
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PdfInfo {
     pub page_count: u32,
     pub title: Option<String>,

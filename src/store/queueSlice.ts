@@ -44,14 +44,15 @@ export const createQueueSlice: StateCreator<
   currentPage: 1,
   addFile: (entry) =>
     set((state) => {
-      const exists = state.files.some((file) => file.id === entry.id);
+      const normalized = normalizeFileEntry(entry);
+      const existing = state.files.find((file) => file.id === entry.id);
+      const exists = existing !== undefined;
       if (!exists) {
-        state.files.push(normalizeFileEntry(entry));
+        state.files.push(normalized);
       }
-      if (state.currentFileId === null) {
-        state.currentFileId = entry.id;
-        syncCurrentPageFields(state, normalizeFileEntry(entry));
-      }
+      const activeFile = existing ?? normalized;
+      state.currentFileId = activeFile.id;
+      syncCurrentPageFields(state, activeFile);
     }),
   removeFile: (id) =>
     set((state) => {
