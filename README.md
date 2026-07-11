@@ -83,8 +83,17 @@ docker run -d \
   ghcr.io/whkdd/xcvt:latest
 ```
 
-Docker/Web 版保留文件上传、PDF 预览、框选报道 OCR、整页 OCR、任务进度/取消、文本/Markdown
-复制与下载。Paddle JSON 导入和版式 PDF 导出仍是桌面版功能。
+## 桌面版与 Docker/Web 版功能对比
+
+| 能力 | 桌面版 | Docker/Web 版 |
+|---|---:|---:|
+| 文件导入、PDF 预览、页码跳转 | ✅ | ✅ |
+| 框选报道 OCR | ✅ | ✅ |
+| 全文按页 OCR | ✅ | ✅ |
+| PaddleOCR / OpenAI / OpenRouter / OpenAI-compatible | ✅ | ✅ |
+| Paddle 文档级批量 OCR | ✅ | ✅ |
+| Paddle 网页版 JSON 导入 | ✅ | — |
+| 导出可复制文字的版式 PDF | ✅ | — |
 
 
 ## 待做
