@@ -6,16 +6,22 @@ mod render;
 mod settings;
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
     Router,
 };
 
 use crate::app_state::ServerState;
 
+const MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
+
 pub fn router() -> Router<ServerState> {
     Router::new()
         .route("/healthz", get(health::healthz))
-        .route("/api/files", post(files::upload_file))
+        .route(
+            "/api/files",
+            post(files::upload_file).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+        )
         .route("/api/files/:file_id", delete(files::delete_file))
         .route("/api/files/:file_id/pdf-info", get(render::pdf_info))
         .route("/api/files/:file_id/pages/:page", get(render::render_page))
