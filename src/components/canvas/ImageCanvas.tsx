@@ -204,11 +204,8 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
     const contextTargetIds = useMemo(() => {
       if (!ctxMenu || !blockById.has(ctxMenu.blockId)) return [];
-      if (selectedSet.has(ctxMenu.blockId) && selectionOrder.length > 1) {
-        return selectionOrder.filter((id) => blockById.has(id));
-      }
       return [ctxMenu.blockId];
-    }, [blockById, ctxMenu, selectedSet, selectionOrder]);
+    }, [blockById, ctxMenu]);
 
     // Live refs so the context-menu listener (mounted once per stage) can
     // read the latest geometry / block index without resubscribing on every

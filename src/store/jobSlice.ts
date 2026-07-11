@@ -80,6 +80,32 @@ function mergeRecognizedPage(
   return merged;
 }
 
+function normalizeWholeFileProgress(
+  job: WholeFileActiveJob,
+  progress: JobProgress
+): Pick<JobProgress, "done" | "total" | "label"> {
+  const requestedTotal = job.requestedPages.length;
+  if (requestedTotal === 0) {
+    return {
+      done: progress.done,
+      total: progress.total,
+      label: progress.label,
+    };
+  }
+
+  const total = requestedTotal;
+  const done = Math.min(Math.max(0, progress.done), total);
+  const label = progress.label
+    .replace(/共\s+\d+\s+页/g, `共 ${total} 页`)
+    .replace(/已完成\s+\d+\s*\/\s*\d+\s+页/g, `已完成 ${done}/${total} 页`)
+    .replace(/第(\d+)\s*\/\s*\d+页/g, (_match, pageIndex: string) => {
+      const current = Math.min(Math.max(1, Number(pageIndex)), total);
+      return `第${current}/${total}页`;
+    });
+
+  return { done, total, label };
+}
+
 export type StartJobInfo =
   | {
       jobId: string;
@@ -207,9 +233,11 @@ export const createJobSlice: StateCreator<
     set((state) => {
       const job = state.activeJob;
       if (!job || job.jobId !== p.job_id) return;
-      job.done = p.done;
-      job.total = p.total;
-      job.label = p.label;
+      const progress =
+        job.kind === "whole_file" ? normalizeWholeFileProgress(job, p) : p;
+      job.done = progress.done;
+      job.total = progress.total;
+      job.label = progress.label;
     }),
   markCancelling: () =>
     set((state) => {
