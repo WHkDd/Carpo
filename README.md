@@ -69,16 +69,6 @@ docker run -d \
   ghcr.io/whkdd/xcvt:latest
 ```
 
-### 本地构建
-
-```bash
-docker buildx build --platform linux/arm64 -t xcvt:local --load .
-docker run -d --name xcvt -p 8787:8787 -v xcvt-data:/data xcvt:local
-```
-
-在 x86_64 Linux 上把 `linux/arm64` 换成 `linux/amd64`。发布镜像支持 `linux/amd64` 和
-`linux/arm64`。
-
 Docker/Web 版保留文件上传、PDF 预览、框选报道 OCR、整页 OCR、任务进度/取消、文本/Markdown
 复制与下载。Paddle JSON 导入和版式 PDF 导出仍是桌面版功能。
 
