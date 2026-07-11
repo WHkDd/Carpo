@@ -21,12 +21,14 @@ pub struct JobStarted {
 
 #[tauri::command]
 pub async fn start_grouped_ocr(
+    app: AppHandle,
     req: GroupedOcrRequest,
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<JobStarted> {
     grouped::validate(&req)?;
+    let settings = crate::config::load(&app)?;
     let (id, token) = state.jobs.register(JobKind::GroupedOcr);
-    grouped::spawn(state.inner().clone(), req, id, token);
+    grouped::spawn_with_settings(state.inner().clone(), req, id, token, settings);
     Ok(JobStarted {
         job_id: id.to_string(),
     })
@@ -39,12 +41,12 @@ pub async fn start_whole_file_ocr(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<JobStarted> {
     // Validation depends on the active provider (per-(provider, kind)
-    // page caps), so we load settings once here and hand them to
-    // `validate`. The runner reloads its own copy inside `run`.
+    // page caps), so load settings once through the desktop store backend
+    // and pass the same snapshot into the runner.
     let settings = crate::config::load(&app)?;
     whole_file::validate(&req, &settings)?;
     let (id, token) = state.jobs.register(JobKind::WholeFile);
-    whole_file::spawn(state.inner().clone(), req, id, token);
+    whole_file::spawn_with_settings(state.inner().clone(), req, id, token, settings);
     Ok(JobStarted {
         job_id: id.to_string(),
     })
