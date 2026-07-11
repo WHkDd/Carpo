@@ -37,8 +37,8 @@ use super::{page_loader::PageLoader, JobEventKind};
 use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
 use crate::ocr::{
-    self, paddle_document, paddle_json::LayoutPage, OcrRequest, PADDLE_POLL_INTERVAL,
-    PADDLE_POLL_TIMEOUT,
+    self, document_poll_timeout, paddle_document, paddle_json::LayoutPage, OcrRequest,
+    PADDLE_POLL_INTERVAL,
 };
 use crate::pdf_chunk::{self, ChunkConfig, ChunkStrategy};
 use crate::state::AppState;
@@ -394,7 +394,7 @@ async fn run_paddle_document_direct(
         paddle_document::document_payload(&settings.paddle_document_options),
         pages_sorted.clone(),
         PADDLE_POLL_INTERVAL,
-        PADDLE_POLL_TIMEOUT,
+        document_poll_timeout(pages_sorted.len()),
         &token,
         &mut on_progress,
     )
@@ -598,7 +598,7 @@ async fn run_paddle_document_chunked(
             paddle_document::document_payload(&settings.paddle_document_options),
             chunk_local_pages,
             PADDLE_POLL_INTERVAL,
-            PADDLE_POLL_TIMEOUT,
+            document_poll_timeout(chunk_len as usize),
             &token,
             &mut on_progress,
         )

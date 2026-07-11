@@ -10,6 +10,7 @@ import type {
   JobError,
   JobProgress,
 } from "@/lib/ipc-types";
+import { clearPendingJob, savePendingJob } from "@/lib/job-persistence";
 import type { LayoutPage } from "@/lib/layout-document";
 
 export type JobStatus =
@@ -73,7 +74,18 @@ function mergeRecognizedPage(
   prev: RecognizedPage | undefined,
   next: RecognizedPage
 ): RecognizedPage {
-  const merged = { ...prev, ...next };
+  // `next` only carries `layout` / `chunkId` / `chunkPage` when its own
+  // pipeline produced them (see AppShell's conditional spread from
+  // `WholeFileJobDone`). A `{ ...prev, ...next }` merge would otherwise let
+  // a prior paddle_document run's layout survive underneath a fresh
+  // page_image (or any other-mode) result, pairing new text with stale
+  // layout metadata that no longer describes it. Once the source mode
+  // changes, the old pipeline's page-shape fields are meaningless — drop
+  // them before merging.
+  const base = prev && prev.sourceMode !== next.sourceMode
+    ? { ...prev, layout: undefined, chunkId: undefined, chunkPage: undefined }
+    : prev;
+  const merged = { ...base, ...next };
   if (merged.status !== "failed") {
     delete merged.error;
   }
@@ -206,6 +218,7 @@ export const createJobSlice: StateCreator<
   recognizedPages: {},
   startJob: (info) =>
     set((state) => {
+      savePendingJob(info);
       const base: BaseActiveJob = {
         jobId: info.jobId,
         status: "running",
@@ -253,6 +266,7 @@ export const createJobSlice: StateCreator<
       job.result = d;
       // Pin the bar to full on a clean finish so the user sees 100%.
       if (!d.cancelled && job.total > 0) job.done = job.total;
+      clearPendingJob();
     }),
   applyJobError: (e) =>
     set((state) => {
@@ -260,6 +274,7 @@ export const createJobSlice: StateCreator<
       if (!job || job.jobId !== e.job_id) return;
       job.status = "error";
       job.error = e.error;
+      clearPendingJob();
     }),
   clearActiveJob: () =>
     set((state) => {

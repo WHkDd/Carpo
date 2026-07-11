@@ -1,20 +1,18 @@
 mod commands;
 mod config;
-mod error;
 mod events;
-mod image;
-mod jobs;
 mod layout_pdf;
-mod ocr;
-mod pdf;
-mod pdf_chunk;
 mod secrets;
-mod state;
+
+use std::sync::Arc;
 
 use tauri::Manager;
+use xcvt_core::{error::AppError, state::AppState};
+
+use crate::secrets::KeychainSecretProvider;
 
 #[tauri::command]
-async fn ping() -> Result<&'static str, error::AppError> {
+async fn ping() -> Result<&'static str, AppError> {
     Ok("pong")
 }
 
@@ -58,7 +56,12 @@ pub fn run() {
             commands::system::open_log_dir
         ])
         .setup(|app| {
-            app.manage(state::AppState::new()?);
+            let data_dir = app.path().app_data_dir()?;
+            let secrets = Arc::new(KeychainSecretProvider);
+            let core = Arc::new(AppState::new(data_dir, secrets.clone())?);
+            events::bridge(app.handle().clone(), &core.events);
+            app.manage(core);
+            app.manage(secrets);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -72,7 +75,7 @@ pub fn run() {
         // race the process teardown. Fire-and-forget — we don't `await`
         // job teardown so quit stays snappy.
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            if let Some(state) = handle.try_state::<state::AppState>() {
+            if let Some(state) = handle.try_state::<Arc<AppState>>() {
                 for entry in state.jobs.list() {
                     if let Ok(uuid) = uuid::Uuid::parse_str(&entry.job_id) {
                         state.jobs.cancel(uuid);

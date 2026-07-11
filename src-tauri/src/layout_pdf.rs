@@ -19,7 +19,7 @@ use printpdf::{
 use serde::{Deserialize, Serialize};
 use ttf_parser::Face;
 
-use crate::{
+use xcvt_core::{
     error::{AppError, AppResult},
     ocr::paddle_json::{LayoutBlock, LayoutDocument, LayoutPage},
 };

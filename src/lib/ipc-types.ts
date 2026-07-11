@@ -249,6 +249,16 @@ export interface WholeFileOcrRequest {
   newspaper_date: string;
 }
 
+/** Wire shape of a cached terminal job event, returned by
+ *  `GET /api/jobs/:job_id/result`. Mirrors Rust `JobEvent` /
+ *  `JobEventKind::as_sse_name`. Only `"done"` and `"error"` are ever cached
+ *  (see `EventBus::recent`); `payload` is `JobDone` or `JobError`
+ *  respectively — narrow on `kind` before reading it. */
+export interface JobEventEnvelope {
+  kind: "progress" | "done" | "error";
+  payload: unknown;
+}
+
 export const EVENTS = {
   JOB_PROGRESS: "xcvt://job/progress",
   JOB_DONE: "xcvt://job/done",
@@ -284,11 +294,29 @@ export interface ParsedAppError {
   provider?: string;
 }
 
+/** Wraps a JSON `AppErrorPayload` body from a failed `fetch()` (web/Docker
+ *  runtime) so callers always get a real `Error` to throw/catch — a bare
+ *  `{kind, data}` object satisfies `parseAppError`'s duck-typed branch below
+ *  but fails `instanceof Error` checks anywhere else in the call chain.
+ *  `parseAppError` unwraps `.payload` back to the structured shape, so
+ *  nothing downstream needs to know this wrapper exists. */
+export class HttpAppError extends Error {
+  payload: unknown;
+  constructor(payload: unknown) {
+    super(typeof payload === "string" ? payload : JSON.stringify(payload));
+    this.name = "HttpAppError";
+    this.payload = payload;
+  }
+}
+
 /** Normalises whatever an `invoke()` rejection (or generic JS error) handed us
  *  back into a single, ergonomic shape. The Tauri 2 IPC bridge delivers
  *  AppError as a structured `{kind, data}` object; older code paths may pass
  *  a string or an `Error`. */
 export function parseAppError(value: unknown): ParsedAppError {
+  if (value instanceof HttpAppError) {
+    return parseAppError(value.payload);
+  }
   if (value && typeof value === "object" && "kind" in value) {
     const p = value as AppErrorPayload;
     if (p.kind === "Ocr" && typeof p.data === "object" && p.data !== null) {

@@ -6,42 +6,31 @@
 //! and prompts the user for a password. All public functions therefore wrap
 //! the call in `tokio::task::spawn_blocking` so they never wedge a tokio
 //! worker thread.
+//!
+//! Implements [`xcvt_core::secrets::SecretProvider`] so a single
+//! `KeychainSecretProvider` instance can back both the job runners (via
+//! `AppState::secrets`, `.get` only) and the settings commands (`set` /
+//! `delete`, kept as inherent methods since they're outside the trait's
+//! read-only contract that `xcvt-server`'s file-backed `SecretsStore` also
+//! implements).
 
 use keyring::Entry;
-use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
+use xcvt_core::error::{AppError, AppResult};
+pub use xcvt_core::secrets::SecretKey;
+use xcvt_core::secrets::{SecretFuture, SecretProvider};
 
 const SERVICE: &str = "local.kai.xcvt";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SecretKey {
-    PaddleToken,
-    OpenaiKey,
-    OpenrouterKey,
-    OpenaiCompatibleKey,
-}
-
-impl SecretKey {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecretKey::PaddleToken => "paddle_token",
-            SecretKey::OpenaiKey => "openai_key",
-            SecretKey::OpenrouterKey => "openrouter_key",
-            SecretKey::OpenaiCompatibleKey => "openai_compatible_key",
-        }
-    }
-}
-
-impl From<keyring::Error> for AppError {
-    fn from(e: keyring::Error) -> Self {
-        AppError::Config(format!("keyring: {e}"))
-    }
+// `AppError` and `keyring::Error` are both foreign to this crate now that
+// `AppError` lives in `xcvt-core` — the orphan rule forbids a `From` impl
+// bridging them here, so map explicitly at each call site instead.
+fn keyring_err(e: keyring::Error) -> AppError {
+    AppError::Config(format!("keyring: {e}"))
 }
 
 fn entry(key: SecretKey) -> AppResult<Entry> {
-    Entry::new(SERVICE, key.as_str()).map_err(AppError::from)
+    Entry::new(SERVICE, key.as_str()).map_err(keyring_err)
 }
 
 async fn run_blocking<T, F>(f: F) -> AppResult<T>
@@ -54,24 +43,30 @@ where
         .map_err(|e| AppError::Internal(format!("keyring blocking join: {e}")))?
 }
 
-pub async fn get(key: SecretKey) -> AppResult<Option<String>> {
-    run_blocking(move || match entry(key)?.get_password() {
-        Ok(v) => Ok(Some(v)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(AppError::from(e)),
-    })
-    .await
+#[derive(Debug, Default)]
+pub struct KeychainSecretProvider;
+
+impl KeychainSecretProvider {
+    pub async fn set(&self, key: SecretKey, value: String) -> AppResult<()> {
+        run_blocking(move || entry(key)?.set_password(&value).map_err(keyring_err)).await
+    }
+
+    pub async fn delete(&self, key: SecretKey) -> AppResult<()> {
+        run_blocking(move || match entry(key)?.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(keyring_err(e)),
+        })
+        .await
+    }
 }
 
-pub async fn set(key: SecretKey, value: String) -> AppResult<()> {
-    run_blocking(move || entry(key)?.set_password(&value).map_err(AppError::from)).await
-}
-
-pub async fn delete(key: SecretKey) -> AppResult<()> {
-    run_blocking(move || match entry(key)?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::from(e)),
-    })
-    .await
+impl SecretProvider for KeychainSecretProvider {
+    fn get<'a>(&'a self, key: SecretKey) -> SecretFuture<'a> {
+        Box::pin(run_blocking(move || match entry(key)?.get_password() {
+            Ok(v) => Ok(Some(v)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(keyring_err(e)),
+        }))
+    }
 }

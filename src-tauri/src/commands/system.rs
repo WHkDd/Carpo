@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tauri::Manager;
 
-use crate::error::{AppError, AppResult};
+use xcvt_core::error::{AppError, AppResult};
 
 /// Reveal the app log directory in the OS file manager.
 ///

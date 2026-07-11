@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tauri::ipc::Response;
 
-use crate::{
+use xcvt_core::{
     error::{AppError, AppResult},
     image::{load_from_disk, supported_extensions},
     pdf::encode_preview_jpeg,

@@ -6367,15 +6367,9 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 name = "xcvt"
 version = "0.1.7"
 dependencies = [
- "base64 0.22.1",
- "futures",
- "image",
  "keyring",
  "log",
- "parking_lot",
- "pdfium-render",
  "printpdf",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -6386,12 +6380,10 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-store",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
- "tokio-util",
  "ttf-parser",
  "uuid",
- "wiremock",
+ "xcvt-core",
 ]
 
 [[package]]

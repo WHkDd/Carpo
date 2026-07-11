@@ -51,13 +51,32 @@ pub struct DocPageResult {
 /// usually equal to `requested_pages.len()` but the API is authoritative.
 pub type ProgressFn<'a> = &'a mut (dyn FnMut(u32, u32) + Send);
 
+/// `data` is `Option` because Baidu's error responses (e.g. `10010` "queue
+/// full") sometimes omit it or send `null` — with a required `T` those
+/// responses fail JSON deserialization *before* we get a chance to read
+/// `code`, turning a retryable API error into an opaque non-retryable
+/// "parse: ..." error.
 #[derive(Deserialize)]
 struct Envelope<T> {
     #[serde(default)]
     code: i32,
     #[serde(default)]
     msg: Option<String>,
-    data: T,
+    data: Option<T>,
+}
+
+impl<T> Envelope<T> {
+    fn into_data(self, stage: &str) -> AppResult<T> {
+        if self.code != 0 {
+            return Err(ocr_err(
+                stage,
+                format!("code {} {}", self.code, self.msg.unwrap_or_default()),
+                is_api_code_retryable(self.code),
+            ));
+        }
+        self.data
+            .ok_or_else(|| ocr_err(stage, "response missing data", false))
+    }
 }
 
 #[derive(Deserialize)]
@@ -281,10 +300,18 @@ async fn submit(
         }
     }
 
+    // The document endpoint can carry a 50 MB PDF; the shared `AppState`
+    // client's 120s default timeout covers the whole request including body
+    // upload, which is too tight on anything but a fast connection. Override
+    // it per-request rather than raising the shared default (which would
+    // also mask genuine hangs on the much smaller cropped-block calls).
+    const SUBMIT_TIMEOUT: Duration = Duration::from_secs(600);
+
     let resp = client
         .post(job_url)
         .header("Authorization", format!("Bearer {token}"))
         .multipart(form)
+        .timeout(SUBMIT_TIMEOUT)
         .send()
         .await
         .map_err(|e| {
@@ -309,14 +336,7 @@ async fn submit(
         .json()
         .await
         .map_err(|e| ocr_err("submit", format!("parse: {e}"), false))?;
-    if env.code != 0 {
-        return Err(ocr_err(
-            "submit",
-            format!("code {} {}", env.code, env.msg.unwrap_or_default()),
-            is_api_code_retryable(env.code),
-        ));
-    }
-    Ok(env.data.job_id)
+    Ok(env.into_data("submit")?.job_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -330,9 +350,16 @@ async fn poll(
     cancel: &CancellationToken,
     on_progress: ProgressFn<'_>,
 ) -> AppResult<String> {
+    // A document job can run for many minutes server-side; a single dropped
+    // connection or transient 5xx on one poll shouldn't discard all that
+    // progress. Tolerate a handful of consecutive transient failures before
+    // giving up — the job is still alive on Paddle's side either way.
+    const MAX_CONSECUTIVE_TRANSIENT_FAILURES: u32 = 5;
+
     let url = format!("{job_url}/{job_id}");
     let start = Instant::now();
     let auth = format!("Bearer {token}");
+    let mut consecutive_failures: u32 = 0;
     loop {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled("paddle document poll".into()));
@@ -340,67 +367,99 @@ async fn poll(
         if start.elapsed() > overall_timeout {
             return Err(ocr_err("poll", "timeout waiting for job to finish", false));
         }
-        let resp = client
-            .get(&url)
-            .header("Authorization", &auth)
-            .send()
-            .await
-            .map_err(|e| {
-                ocr_err(
-                    "poll",
-                    format!("network: {e}"),
-                    e.is_timeout() || e.is_connect(),
-                )
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(ocr_err(
-                "poll",
-                format!("HTTP {status}"),
-                http_retryable(status),
-            ));
-        }
-        let env: Envelope<PollData> = resp
-            .json()
-            .await
-            .map_err(|e| ocr_err("poll", format!("parse: {e}"), false))?;
-        if env.code != 0 {
-            return Err(ocr_err(
-                "poll",
-                format!("code {} {}", env.code, env.msg.unwrap_or_default()),
-                is_api_code_retryable(env.code),
-            ));
-        }
-        if let Some(progress) = env.data.extract_progress.as_ref() {
-            if let (Some(done), Some(total)) = (progress.extracted_pages, progress.total_pages) {
-                on_progress(done, total);
+
+        match poll_once(client, &url, &auth).await {
+            Ok((progress, PollOutcome::Pending)) => {
+                consecutive_failures = 0;
+                if let Some((done, total)) = progress {
+                    on_progress(done, total);
+                }
             }
-        }
-        match env.data.state.as_str() {
-            "done" => {
-                let json_url = env
-                    .data
-                    .result_url
-                    .and_then(|r| r.json_url)
-                    .ok_or_else(|| {
-                        ocr_err("poll", "done state missing resultUrl.jsonUrl", false)
-                    })?;
+            Ok((progress, PollOutcome::Done(json_url))) => {
+                if let Some((done, total)) = progress {
+                    on_progress(done, total);
+                }
                 return Ok(json_url);
             }
-            "failed" => {
-                let msg = env.data.error_msg.unwrap_or_else(|| "unknown error".into());
+            Ok((_, PollOutcome::Failed(msg))) => {
                 return Err(ocr_err("job", format!("job failed: {msg}"), false));
             }
-            _ => {
-                tokio::select! {
-                    _ = tokio::time::sleep(interval) => {}
-                    _ = cancel.cancelled() => {
-                        return Err(AppError::Cancelled("paddle document poll".into()));
-                    }
+            Err(e) if e.is_retryable() => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_TRANSIENT_FAILURES {
+                    return Err(e);
                 }
+            }
+            Err(e) => return Err(e),
+        }
+
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = cancel.cancelled() => {
+                return Err(AppError::Cancelled("paddle document poll".into()));
             }
         }
     }
+}
+
+enum PollOutcome {
+    Pending,
+    Done(String),
+    Failed(String),
+}
+
+async fn poll_once(
+    client: &reqwest::Client,
+    url: &str,
+    auth: &str,
+) -> AppResult<(Option<(u32, u32)>, PollOutcome)> {
+    let resp = client
+        .get(url)
+        .header("Authorization", auth)
+        .send()
+        .await
+        .map_err(|e| {
+            ocr_err(
+                "poll",
+                format!("network: {e}"),
+                e.is_timeout() || e.is_connect(),
+            )
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(ocr_err(
+            "poll",
+            format!("HTTP {status}"),
+            http_retryable(status),
+        ));
+    }
+    let env: Envelope<PollData> = resp
+        .json()
+        .await
+        .map_err(|e| ocr_err("poll", format!("parse: {e}"), false))?;
+    let data = env.into_data("poll")?;
+
+    let progress = data.extract_progress.as_ref().and_then(|progress| {
+        match (progress.extracted_pages, progress.total_pages) {
+            (Some(done), Some(total)) => Some((done, total)),
+            _ => None,
+        }
+    });
+
+    let outcome = match data.state.as_str() {
+        "done" => {
+            let json_url = data
+                .result_url
+                .and_then(|r| r.json_url)
+                .ok_or_else(|| ocr_err("poll", "done state missing resultUrl.jsonUrl", false))?;
+            PollOutcome::Done(json_url)
+        }
+        "failed" => {
+            PollOutcome::Failed(data.error_msg.unwrap_or_else(|| "unknown error".into()))
+        }
+        _ => PollOutcome::Pending,
+    };
+    Ok((progress, outcome))
 }
 
 async fn fetch_jsonl(
@@ -440,17 +499,38 @@ async fn fetch_jsonl(
     Ok(pages)
 }
 
-/// Zip JSONL pages back onto the original page numbers. If Paddle returns
-/// fewer pages than requested we leave the tail empty rather than fail
-/// outright — the caller decides whether to treat missing pages as errors
-/// (the whole-file runner does, so the UI can show `[未识别]`). The JSONL
-/// page payload is also normalized through the Paddle JSON importer so the
-/// layout-rebuilt PDF exporter can consume the same `LayoutPage` model as
-/// manual Paddle JSON imports.
+/// Zip JSONL pages back onto the original page numbers. Paddle's JSONL rows
+/// carry no page identifier of their own — the only documented contract is
+/// "line N corresponds to `requested_pages[N]`" — so a positional zip is the
+/// only mapping available. That makes a **count mismatch** dangerous rather
+/// than merely incomplete: if Paddle silently drops a row from the middle
+/// (as opposed to truncating the tail), every subsequent row would shift
+/// onto the wrong page number, attaching page 4's text to page 3 and so on,
+/// with no empty-text signal to catch it. Since we can't tell a genuine
+/// trailing truncation apart from a middle-of-the-list drop without a page
+/// field to check against, we refuse to zip on any mismatch and fail the
+/// whole batch loudly instead — the caller (the whole-file runner) already
+/// turns such an error into one failed row per requested page, so the user
+/// sees "识别失败" and can retry, rather than getting silently mis-attributed
+/// text on the wrong newspaper page. The JSONL page payload is also
+/// normalized through the Paddle JSON importer so the layout-rebuilt PDF
+/// exporter can consume the same `LayoutPage` model as manual Paddle JSON
+/// imports.
 fn map_jsonl_pages_to_requested(
     pages: Vec<serde_json::Value>,
     requested_pages: &[u32],
 ) -> AppResult<Vec<DocPageResult>> {
+    if pages.len() != requested_pages.len() {
+        return Err(ocr_err(
+            "result",
+            format!(
+                "结果页数（{}）与请求页数（{}）不一致，为避免文本错位到错误页面已中止映射",
+                pages.len(),
+                requested_pages.len()
+            ),
+            false,
+        ));
+    }
     let page_texts = pages.iter().map(jsonl_page_text).collect::<Vec<_>>();
     let import = paddle_json::analyze_value(serde_json::Value::Array(pages))?;
     let mut out: Vec<DocPageResult> = Vec::with_capacity(requested_pages.len());
@@ -593,15 +673,18 @@ mod tests {
     }
 
     #[test]
-    fn map_jsonl_pages_to_requested_pads_missing_tail_with_empty() {
+    fn map_jsonl_pages_to_requested_errors_on_count_mismatch() {
+        // Paddle's JSONL rows carry no page identifier, so a row count that
+        // doesn't match the request could mean a dropped row anywhere in
+        // the list — not necessarily the tail. Zipping positionally anyway
+        // would risk silently attaching page N's text to page N-1's slot.
+        // Failing loudly (surfaced by the caller as one failed row per
+        // requested page) is safer than a plausible-looking wrong answer.
         let pages = vec![json!({ "result": { "layoutParsingResults": [
             { "markdown": { "text": "only" }, "block_bbox": [0, 0, 10, 10] }
         ]}})];
-        let mapped = map_jsonl_pages_to_requested(pages, &[1, 2, 3]).unwrap();
-        assert_eq!(mapped[0].text, "only");
-        assert_eq!(mapped[1].text, "");
-        assert!(mapped[1].layout.is_none());
-        assert_eq!(mapped[2].text, "");
+        let err = map_jsonl_pages_to_requested(pages, &[1, 2, 3]).unwrap_err();
+        assert!(!err.is_retryable());
     }
 
     #[tokio::test]
@@ -815,6 +898,44 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn submit_api_code_10010_with_missing_data_is_retryable() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/ocr/jobs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 10010, "msg": "任务提交队列已满"
+            })))
+            .mount(&server)
+            .await;
+        let pdf = write_temp_pdf(b"%PDF-1.4");
+        let cancel = never_cancelled();
+        let mut on_progress = |_: u32, _: u32| {};
+        let err = recognize_document(
+            &reqwest::Client::new(),
+            &format!("{}/api/v2/ocr/jobs", server.uri()),
+            "tk",
+            "",
+            pdf.path().to_path_buf(),
+            "application/pdf",
+            "x.pdf",
+            None,
+            default_payload(),
+            vec![1],
+            FAST_POLL,
+            POLL_CAP,
+            &cancel,
+            &mut on_progress,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.is_retryable());
+        match err {
+            AppError::Ocr { message, .. } => assert!(message.contains("code 10010")),
+            other => panic!("expected Ocr, got {other:?}"),
+        }
     }
 
     #[tokio::test]

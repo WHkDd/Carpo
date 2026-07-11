@@ -21,10 +21,12 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
 };
 
 export interface WholeFileTriggerState {
-  /** Whether a click would be accepted. False when no file is open, no
-   *  active job slot is free, or the range is malformed. Provider-key
-   *  presence is *not* checked here — that's an async probe done at click
-   *  time. */
+  /** Whether a click would be accepted, based purely on this file/range's
+   *  own state: false when no file is open or the range is malformed.
+   *  Does NOT check whether an OCR job slot is free — callers (e.g.
+   *  `StructureRail`) additionally gate on `activeJob` themselves before
+   *  wiring this into a button's `disabled`. Provider-key presence is also
+   *  *not* checked here — that's an async probe done at click time. */
   ready: boolean;
   /** Most recent validation error, surfaced to the user as an inline note.
    *  Cleared by the next successful trigger. */

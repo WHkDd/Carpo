@@ -52,6 +52,21 @@ pub const PADDLE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Newspaper blocks are typically single-page; 5 min is generous.
 pub const PADDLE_POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Poll timeout for the Paddle *document* endpoint (whole-file / chunk
+/// submissions), which can carry hundreds of pages in one job instead of
+/// the single page `PADDLE_POLL_TIMEOUT` was sized for. `pdf_chunk` targets
+/// ~200 pages per chunk at roughly 5 min of Paddle processing time, so we
+/// scale a per-page allowance off that ratio (with a floor for small
+/// submissions and a ceiling so a runaway job doesn't poll forever).
+pub fn document_poll_timeout(page_count: usize) -> Duration {
+    const MIN_TIMEOUT: Duration = Duration::from_secs(300);
+    const MAX_TIMEOUT: Duration = Duration::from_secs(40 * 60);
+    const SECS_PER_PAGE: u64 = 2;
+
+    let scaled = Duration::from_secs(page_count as u64 * SECS_PER_PAGE);
+    scaled.clamp(MIN_TIMEOUT, MAX_TIMEOUT)
+}
+
 /// One OCR call's inputs. The image is owned by the caller as encoded JPEG
 /// bytes (see `jobs::grouped::encode_ocr_jpeg`); providers that need a
 /// different wrapping (e.g. OpenAI's `data:` URL) do the transformation
@@ -332,7 +347,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unimplemented_provider_returns_config_error() {
+    async fn openai_compatible_without_base_url_returns_config_error() {
         let mut settings = paddle_settings(String::new());
         settings.provider = Provider::OpenaiCompatible;
         let req = OcrRequest {
