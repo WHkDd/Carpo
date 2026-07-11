@@ -108,23 +108,6 @@ docker run -d \
 - **OCR**：PaddleOCR（异步 jobs）· OpenAI Vision · OpenRouter · OpenAI-compatible
 - **部署**：Tauri 桌面包 · Docker multi-arch (`linux/amd64`, `linux/arm64`)
 
-## 目录结构
-
-```
-src/                  React 前端
-  components/         画布、版块、报道列表、设置等组件
-  hooks/              文件导入、PDF 翻页、bitmap LRU 缓存、OCR 触发等
-  store/              Zustand slices
-  lib/                IPC 类型契约 / 工具函数
-src-tauri/            Rust 后端
-  src/
-    commands/         #[tauri::command] handlers
-    jobs/             grouped / whole-file OCR runner
-    ocr/              provider 实现（paddle / openai）
-    pdf.rs            PDFium worker（专用线程 + tokio mpsc）
-.github/workflows/    CI / release
-```
-
 ## License
 
 MIT — 见 [LICENSE](./LICENSE)。
