@@ -91,7 +91,6 @@ docker run -d \
 | 框选报道 OCR | ✅ | ✅ |
 | 全文按页 OCR | ✅ | ✅ |
 | PaddleOCR / OpenAI / OpenRouter / OpenAI-compatible | ✅ | ✅ |
-| Paddle 文档级批量 OCR | ✅ | ✅ |
 | Paddle 网页版 JSON 导入 | ✅ | — |
 | 导出可复制文字的版式 PDF | ✅ | — |
 
