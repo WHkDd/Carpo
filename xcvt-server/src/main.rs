@@ -208,6 +208,20 @@ mod tests {
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn upload_accepts_pdf_over_default_body_limit() {
+        let Some((app, _data_dir)) = test_app() else {
+            eprintln!("skipping upload_accepts_pdf_over_default_body_limit: pdfium library is not available");
+            return;
+        };
+
+        let large_pdf = vec![0_u8; 3 * 1024 * 1024];
+        let upload = upload_pdf_bytes(app, "large.pdf", &large_pdf).await;
+        assert_eq!(upload["name"], "large.pdf");
+        assert_eq!(upload["ext"], "pdf");
+        assert_eq!(upload["kind"], "pdf");
+    }
+
     fn test_app() -> Option<(Router, TempDir)> {
         let explicit_pdfium = std::env::var_os("XCVT_PDFIUM_LIBRARY_PATH").is_some();
         if !explicit_pdfium {
@@ -271,17 +285,21 @@ mod tests {
     }
 
     async fn upload_sample_pdf(app: Router) -> Value {
+        upload_pdf_bytes(app, "sample.pdf", SAMPLE_PDF).await
+    }
+
+    async fn upload_pdf_bytes(app: Router, filename: &str, bytes: &[u8]) -> Value {
         const BOUNDARY: &str = "xcvt-test-boundary";
         let mut body = Vec::new();
         body.extend_from_slice(
             format!(
                 "--{BOUNDARY}\r\n\
-                 Content-Disposition: form-data; name=\"file\"; filename=\"sample.pdf\"\r\n\
+                 Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
                  Content-Type: application/pdf\r\n\r\n"
             )
             .as_bytes(),
         );
-        body.extend_from_slice(SAMPLE_PDF);
+        body.extend_from_slice(bytes);
         body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
 
         let response = app
