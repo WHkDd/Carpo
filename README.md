@@ -4,30 +4,27 @@
 provider 任选，结果导出为 Markdown / 纯文本。
 
 跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。**由于无Windows设备测试，Windows平台属于理论可用。**
-也提供 Docker/Web 版，适合每个用户在自己的电脑、NAS 或 VPS 上单用户自托管使用。
+也提供 Docker/Web 版，适合自托管使用。
 
 ## 特性
 
 - **两种识别模式**：框选报道（一篇报道可跨多块、跨多页拼成完整文本）/ 全文按页识别。
 - **多 provider 路由**：PaddleOCR（百度异步 jobs API）、OpenAI Vision、OpenRouter、任意
-  OpenAI-compatible 自建端点；任意切换不丢失先前识别结果。
+  OpenAI-compatible 自建端点。
 - **结构化导出**：识别后的报道按选择顺序组装成单篇 Markdown，支持复制 / 单篇导出 / 整文档导出。
 - **页码控制**：PDF 支持直接输入页码跳转；全文识别可指定 `1-5,8,10-12` 这类非连续页码范围。
 - **Paddle 文档级 OCR**：一次性对整份 PDF 调用 Paddle 批量接口；大文件自动分块分批提交，
   语言、并发、每批页数均可配置。
-- **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，并按 bbox
-  重建可复制文字的版式 PDF。
+- **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，重建为可复制文字的版式 PDF。
 - **本地凭据**：桌面版 API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）
   保管；Docker 版写入挂载卷里的 `/data/secrets.json`，不会通过接口回传明文。
-- **细粒度取消**：识别进行中点取消会立刻打断长 poll 与回退退避，不会再继续烧 OCR 配额。
-- **大画布顺滑**：PDFium 渲染走专用线程；图像以二进制 IPC 传给前端，单页 50MB+ 的 A3 报纸也能流畅切页。
 
 ## 安装
 
 正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
 
 - macOS Apple Silicon：`Xcvt_*_aarch64.dmg`
-- Windows：`Xcvt_*_x64-setup.exe` 或 `Xcvt_*_x64_en-US.msi`
+- Windows：`Xcvt_*_x64-setup.exe` 或 `Xcvt_*_x64_en-US.msi`（Windows版本理论可用，未测试）
 
 ### macOS 首次启动
 
@@ -56,9 +53,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-然后打开 `http://localhost:8787`。第一次进入 Settings 填入自己的 Paddle/OpenAI/OpenRouter key；
-这些密钥会保存在 Docker volume `xcvt-data` 对应的 `/data/secrets.json` 中。非密钥设置保存在
-`/data/settings.json`，上传文件保存在 `/data/uploads/`。
+然后打开 `http://localhost:8787`。第一次进入 Settings 填入自己的 Paddle/OpenAI/OpenRouter key。
 
 升级：
 
@@ -91,23 +86,6 @@ docker run -d --name xcvt -p 8787:8787 -v xcvt-data:/data xcvt:local
 Docker/Web 版保留文件上传、PDF 预览、框选报道 OCR、整页 OCR、任务进度/取消、文本/Markdown
 复制与下载。Paddle JSON 导入和版式 PDF 导出仍是桌面版功能。
 
-## 本地开发
-
-```bash
-pnpm install
-pnpm prepare:pdfium
-pnpm tauri dev
-```
-
-### 常用命令
-
-```bash
-pnpm typecheck                       # tsc --noEmit
-pnpm test                            # vitest
-pnpm lint                            # eslint
-pnpm test:rust                       # 准备 PDFium、构建前端后运行 Rust 测试
-pnpm tauri build                     # 出发布包到 src-tauri/target/release/bundle/
-```
 
 ## 待做
 
