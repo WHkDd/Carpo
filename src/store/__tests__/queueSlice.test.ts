@@ -32,6 +32,34 @@ function makeStore() {
 }
 
 describe("queueSlice", () => {
+  it("selects the most recently added file", () => {
+    const store = makeStore();
+
+    store.getState().addFile({
+      id: "file-1",
+      path: "/tmp/a.pdf",
+      name: "a.pdf",
+      ext: "pdf",
+      kind: "pdf",
+      pdfTotal: 2,
+    });
+    expect(store.getState().currentFileId).toBe("file-1");
+    expect(store.getState().pdfTotal).toBe(2);
+
+    store.getState().addFile({
+      id: "file-2",
+      path: "/tmp/b.pdf",
+      name: "b.pdf",
+      ext: "pdf",
+      kind: "pdf",
+      pdfTotal: 3,
+    });
+
+    expect(store.getState().currentFileId).toBe("file-2");
+    expect(store.getState().pdfTotal).toBe(3);
+    expect(store.getState().currentPage).toBe(1);
+  });
+
   it("removeFile clears file-scoped state and selects the next file", () => {
     const store = makeStore();
 
@@ -49,6 +77,7 @@ describe("queueSlice", () => {
       ext: "pdf",
       kind: "pdf",
     });
+    store.getState().setCurrent("file-1");
     store.getState().setFileZoomAndPan("file-1", 120, 10, 20);
     store.getState().addBlock("file-1", 1, {
       id: "b1",
