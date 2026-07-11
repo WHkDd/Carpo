@@ -42,10 +42,6 @@ SmartScreen 会显示蓝色拦截框。点 **更多信息 → 仍要运行** 即
 
 ## Docker 自托管
 
-Docker/Web 版按“单用户自用”设计：一个容器实例默认只给一个人或一个可信环境使用。不要把未加保护的
-端口直接暴露到公网；VPS 上建议放在 Tailscale、Cloudflare Access、反向代理 Basic Auth 或其它访问
-控制后面。
-
 ### docker compose
 
 ```bash
