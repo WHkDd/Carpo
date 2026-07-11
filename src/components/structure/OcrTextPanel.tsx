@@ -537,7 +537,7 @@ export function OcrTextPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-1.5 px-2 pt-2 pb-1">
       <div className="flex items-center justify-between gap-2 px-1.5">
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[11px]">
           {recognitionMode === "whole_file" && hasMultiplePages ? (
             <PageJumpControl
               fileId={fileId}
@@ -551,10 +551,10 @@ export function OcrTextPanel() {
             </span>
           )}
           {(hasText || (viewMode === "blocks" && currentLayout)) && (
-            <span className="font-mono text-foreground-subtle tabular-nums">
+            <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-subtle tabular-nums">
               {viewMode === "blocks" && currentLayout
                 ? `${currentLayout.blocks.length.toLocaleString()} 块`
-                : charCount.toLocaleString()}
+                : `${charCount.toLocaleString()} 字`}
             </span>
           )}
         </div>

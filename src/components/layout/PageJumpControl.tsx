@@ -55,7 +55,7 @@ export function PageJumpControl({
       : "h-5 w-9 rounded border border-border/60 bg-background/70 px-1 text-center font-mono text-[11px] tabular-nums text-foreground outline-none focus:border-border-strong";
 
   return (
-    <div className={cn("flex items-center gap-1", className)}>
+    <div className={cn("flex shrink-0 items-center gap-1 whitespace-nowrap", className)}>
       <button
         type="button"
         onClick={() => setCurrentPage(fileId, safeCurrent - 1)}
@@ -70,7 +70,7 @@ export function PageJumpControl({
       >
         <ChevronLeft className="h-3.5 w-3.5" strokeWidth={1.8} />
       </button>
-      <label className="flex items-center gap-1 font-mono text-[11px] tabular-nums text-foreground-muted">
+      <label className="flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-[11px] tabular-nums text-foreground-muted">
         <input
           type="text"
           inputMode="numeric"
