@@ -26,13 +26,32 @@ const PROVIDER: &str = "paddleocr";
 pub const DEFAULT_JOB_URL: &str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";
 pub const DEFAULT_MODEL: &str = "PaddleOCR-VL-1.6";
 
+/// `data` is `Option` because Baidu's error responses (e.g. `10010` "queue
+/// full") sometimes omit it or send `null` — with a required `T` those
+/// responses fail JSON deserialization *before* we get a chance to read
+/// `code`, turning a retryable API error into an opaque non-retryable
+/// "parse: ..." error.
 #[derive(Deserialize)]
 struct Envelope<T> {
     #[serde(default)]
     code: i32,
     #[serde(default)]
     msg: Option<String>,
-    data: T,
+    data: Option<T>,
+}
+
+impl<T> Envelope<T> {
+    fn into_data(self, stage: &str) -> AppResult<T> {
+        if self.code != 0 {
+            return Err(ocr_err(
+                stage,
+                format!("code {} {}", self.code, self.msg.unwrap_or_default()),
+                is_api_code_retryable(self.code),
+            ));
+        }
+        self.data
+            .ok_or_else(|| ocr_err(stage, "response missing data", false))
+    }
 }
 
 #[derive(Deserialize)]
@@ -194,14 +213,7 @@ async fn submit(
         .json()
         .await
         .map_err(|e| ocr_err("submit", format!("parse: {e}"), false))?;
-    if env.code != 0 {
-        return Err(ocr_err(
-            "submit",
-            format!("code {} {}", env.code, env.msg.unwrap_or_default()),
-            is_api_code_retryable(env.code),
-        ));
-    }
-    Ok(env.data.job_id)
+    Ok(env.into_data("submit")?.job_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -214,9 +226,16 @@ async fn poll(
     overall_timeout: Duration,
     cancel: &CancellationToken,
 ) -> AppResult<String> {
+    // A single transient network blip or 5xx shouldn't discard the whole
+    // job — `recognize_with_retry` reacting to it would resubmit the image
+    // and re-queue from scratch. Tolerate a handful of consecutive
+    // transient failures before giving up.
+    const MAX_CONSECUTIVE_TRANSIENT_FAILURES: u32 = 5;
+
     let url = format!("{job_url}/{job_id}");
     let start = Instant::now();
     let auth = format!("Bearer {token}");
+    let mut consecutive_failures: u32 = 0;
     loop {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled("paddle poll".into()));
@@ -224,64 +243,81 @@ async fn poll(
         if start.elapsed() > overall_timeout {
             return Err(ocr_err("poll", "timeout waiting for job to finish", false));
         }
-        let resp = client
-            .get(&url)
-            .header("Authorization", &auth)
-            .send()
-            .await
-            .map_err(|e| {
-                ocr_err(
-                    "poll",
-                    format!("network: {e}"),
-                    e.is_timeout() || e.is_connect(),
-                )
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(ocr_err(
-                "poll",
-                format!("HTTP {status}"),
-                http_retryable(status),
-            ));
-        }
-        let env: Envelope<PollData> = resp
-            .json()
-            .await
-            .map_err(|e| ocr_err("poll", format!("parse: {e}"), false))?;
-        if env.code != 0 {
-            return Err(ocr_err(
-                "poll",
-                format!("code {} {}", env.code, env.msg.unwrap_or_default()),
-                is_api_code_retryable(env.code),
-            ));
-        }
-        match env.data.state.as_str() {
-            "done" => {
-                let json_url = env
-                    .data
-                    .result_url
-                    .and_then(|r| r.json_url)
-                    .ok_or_else(|| {
-                        ocr_err("poll", "done state missing resultUrl.jsonUrl", false)
-                    })?;
-                return Ok(json_url);
+
+        match poll_once(client, &url, &auth).await {
+            Ok(PollOutcome::Pending) => {
+                consecutive_failures = 0;
             }
-            "failed" => {
-                let msg = env.data.error_msg.unwrap_or_else(|| "unknown error".into());
+            Ok(PollOutcome::Done(json_url)) => return Ok(json_url),
+            Ok(PollOutcome::Failed(msg)) => {
                 return Err(ocr_err("job", format!("job failed: {msg}"), false));
             }
-            _ => {
-                // pending / running / anything else: keep polling. Race the
-                // sleep against cancellation so a user-driven cancel doesn't
-                // wait out the full interval (or, worse, poll_timeout).
-                tokio::select! {
-                    _ = tokio::time::sleep(interval) => {}
-                    _ = cancel.cancelled() => {
-                        return Err(AppError::Cancelled("paddle poll".into()));
-                    }
+            Err(e) if e.is_retryable() => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_TRANSIENT_FAILURES {
+                    return Err(e);
                 }
             }
+            Err(e) => return Err(e),
         }
+
+        // pending / running / transient failure: keep polling. Race the
+        // sleep against cancellation so a user-driven cancel doesn't wait
+        // out the full interval (or, worse, poll_timeout).
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = cancel.cancelled() => {
+                return Err(AppError::Cancelled("paddle poll".into()));
+            }
+        }
+    }
+}
+
+enum PollOutcome {
+    Pending,
+    Done(String),
+    Failed(String),
+}
+
+async fn poll_once(client: &reqwest::Client, url: &str, auth: &str) -> AppResult<PollOutcome> {
+    let resp = client
+        .get(url)
+        .header("Authorization", auth)
+        .send()
+        .await
+        .map_err(|e| {
+            ocr_err(
+                "poll",
+                format!("network: {e}"),
+                e.is_timeout() || e.is_connect(),
+            )
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(ocr_err(
+            "poll",
+            format!("HTTP {status}"),
+            http_retryable(status),
+        ));
+    }
+    let env: Envelope<PollData> = resp
+        .json()
+        .await
+        .map_err(|e| ocr_err("poll", format!("parse: {e}"), false))?;
+    let data = env.into_data("poll")?;
+
+    match data.state.as_str() {
+        "done" => {
+            let json_url = data
+                .result_url
+                .and_then(|r| r.json_url)
+                .ok_or_else(|| ocr_err("poll", "done state missing resultUrl.jsonUrl", false))?;
+            Ok(PollOutcome::Done(json_url))
+        }
+        "failed" => Ok(PollOutcome::Failed(
+            data.error_msg.unwrap_or_else(|| "unknown error".into()),
+        )),
+        _ => Ok(PollOutcome::Pending),
     }
 }
 
@@ -580,6 +616,37 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn submit_api_code_10010_with_null_data_marks_retryable() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/ocr/jobs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 10010, "msg": "任务提交队列已满", "data": null
+            })))
+            .mount(&server)
+            .await;
+
+        let cancel = never_cancelled();
+        let err = recognize(
+            &reqwest::Client::new(),
+            &format!("{}/api/v2/ocr/jobs", server.uri()),
+            "tk",
+            "",
+            b"x".to_vec(),
+            FAST_POLL,
+            POLL_CAP,
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.is_retryable());
+        match err {
+            AppError::Ocr { message, .. } => assert!(message.contains("code 10010")),
+            other => panic!("expected Ocr, got {other:?}"),
+        }
     }
 
     #[tokio::test]

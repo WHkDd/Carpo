@@ -12,6 +12,7 @@ pub mod page_loader;
 pub mod whole_file;
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -51,21 +52,41 @@ pub struct JobEvent {
     pub payload: Value,
 }
 
+/// How long a terminal (`Done` / `Error`) event stays fetchable via
+/// [`EventBus::recent`] after it fires. Sized for "the web client's
+/// EventSource reconnect happens within a few seconds to a couple of
+/// minutes of the drop" — a `broadcast` channel only replays to receivers
+/// that were already subscribed, so a page refresh or a reconnect gap loses
+/// the event entirely unless something else remembers it.
+const RECENT_RETENTION: Duration = Duration::from_secs(15 * 60);
+
 #[derive(Debug, Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<JobEvent>,
+    recent: std::sync::Arc<Mutex<HashMap<String, (Instant, JobEvent)>>>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(1024);
-        Self { tx }
+        Self {
+            tx,
+            recent: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn emit<T: Serialize>(&self, kind: JobEventKind, payload: T) {
         match serde_json::to_value(payload) {
             Ok(payload) => {
-                let _ = self.tx.send(JobEvent { kind, payload });
+                let event = JobEvent { kind, payload };
+                if matches!(kind, JobEventKind::Done | JobEventKind::Error) {
+                    if let Some(job_id) = event.payload.get("job_id").and_then(Value::as_str) {
+                        let mut recent = self.recent.lock();
+                        recent.retain(|_, (at, _)| at.elapsed() < RECENT_RETENTION);
+                        recent.insert(job_id.to_string(), (Instant::now(), event.clone()));
+                    }
+                }
+                let _ = self.tx.send(event);
             }
             Err(err) => {
                 log::error!("job event serialization failed: {err}");
@@ -75,6 +96,18 @@ impl EventBus {
 
     pub fn subscribe(&self) -> broadcast::Receiver<JobEvent> {
         self.tx.subscribe()
+    }
+
+    /// Looks up the most recent terminal event for `job_id`, if it fired
+    /// within [`RECENT_RETENTION`]. Backs the web client's reconnect
+    /// reconciliation: a lost SSE `done` event can be recovered by polling
+    /// this instead of leaving the UI stuck on "识别中" forever.
+    pub fn recent(&self, job_id: &str) -> Option<JobEvent> {
+        let recent = self.recent.lock();
+        recent
+            .get(job_id)
+            .filter(|(at, _)| at.elapsed() < RECENT_RETENTION)
+            .map(|(_, event)| event.clone())
     }
 }
 

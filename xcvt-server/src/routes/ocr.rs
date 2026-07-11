@@ -1,5 +1,6 @@
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,7 @@ use xcvt_core::{
     jobs::{
         grouped::{ArticleOcrPlan, FileKind, GroupedOcrRequest},
         whole_file::WholeFileOcrRequest,
-        JobKind, JobListEntry,
+        JobEvent, JobKind, JobListEntry,
     },
     ocr,
     secrets::SecretProvider,
@@ -126,6 +127,24 @@ pub async fn cancel_job(State(state): State<ServerState>, Path(job_id): Path<Uui
 
 pub async fn list_jobs(State(state): State<ServerState>) -> Json<Vec<JobListEntry>> {
     Json(state.core.jobs.list())
+}
+
+/// Recovers a job's terminal (`done` / `error`) event after the fact —
+/// backs the web client's reconnect/refresh reconciliation, since a
+/// `broadcast`-channel SSE stream never replays to a receiver that
+/// (re)subscribes after the event already fired. 404 once the job is
+/// neither running nor within the event cache's retention window (see
+/// `EventBus::recent`), which the client treats as "result unrecoverable".
+pub async fn job_result(
+    State(state): State<ServerState>,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<JobEvent>, StatusCode> {
+    state
+        .core
+        .events
+        .recent(&job_id.to_string())
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
 fn file_record(state: &ServerState, file_id: Uuid) -> ServerResult<crate::app_state::FileRecord> {

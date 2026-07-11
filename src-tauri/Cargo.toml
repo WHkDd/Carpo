@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+xcvt-core = { path = "../xcvt-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -25,43 +26,29 @@ tauri-plugin-clipboard-manager = "2"
 # Serde / errors
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 
 # Async
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-futures = "0.3"
 
-# HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
-
-# Imaging / PDF
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
-pdfium-render = { version = "0.8", features = ["thread_safe"] }
+# PDF export
 printpdf = { version = "0.9.1", default-features = false }
 ttf-parser = "0.25"
-base64 = "0.22"
 
 # Secrets
 # keyring v3 ships no backend by default — without these features it falls back
 # to an in-memory mock store that loses data immediately. Enable the native
 # platform backend for each desktop OS we ship to.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-parking_lot = "0.12"
 
 # Logging
 log = "0.4"
 
 # Misc
 uuid = { version = "1", features = ["v4", "serde"] }
-# Auto-cleaned scratch directory for PDF chunk files produced by the
-# Paddle document-level OCR path. Promoted from dev-dep because the
-# chunking runner holds a TempDir for the lifetime of the job.
-tempfile = "3"
 
 [dev-dependencies]
-wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
 
 [features]
 default = ["custom-protocol"]

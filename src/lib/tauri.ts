@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./runtime";
+import { HttpAppError } from "./ipc-types";
 import type {
   GroupedOcrRequest,
+  JobEventEnvelope,
   JobListEntry,
   JobStarted,
   NonSecretSettings,
@@ -213,6 +215,22 @@ export async function listJobs(): Promise<JobListEntry[]> {
   return invoke<JobListEntry[]>("list_jobs");
 }
 
+/** Web/Docker only — recovers a job's cached terminal event after a lost SSE
+ *  `done` (reconnect gap or page refresh). Returns `null` on 404, i.e. the
+ *  job is neither running nor within the server's retention window, which
+ *  callers treat as "unrecoverable, give up". Desktop has no equivalent gap
+ *  (native events don't survive a reload either, but a Tauri window reload
+ *  is not a normal user action), so it always returns `null`. */
+export async function getJobResult(
+  jobId: string
+): Promise<JobEventEnvelope | null> {
+  if (isTauriRuntime()) return null;
+  const res = await fetch(`/api/jobs/${jobId}/result`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw await httpError(res);
+  return (await res.json()) as JobEventEnvelope;
+}
+
 export async function openLogDir(): Promise<string> {
   if (!isTauriRuntime()) {
     throw new Error("日志目录只在桌面版可用");
@@ -302,11 +320,11 @@ async function httpJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function httpError(res: Response): Promise<unknown> {
+async function httpError(res: Response): Promise<Error> {
   const contentType = res.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
     try {
-      return await res.json();
+      return new HttpAppError(await res.json());
     } catch {
       // Fall through to a generic HTTP error.
     }

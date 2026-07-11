@@ -1,9 +1,8 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Response, State};
-
-use crate::{error::AppResult, state::AppState};
+use xcvt_core::{error::AppResult, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct PdfInfo {
@@ -19,7 +18,7 @@ pub enum RenderPurpose {
 }
 
 #[tauri::command]
-pub async fn get_pdf_info(path: String, state: State<'_, AppState>) -> AppResult<PdfInfo> {
+pub async fn get_pdf_info(path: String, state: State<'_, Arc<AppState>>) -> AppResult<PdfInfo> {
     let info = state.pdf.info(PathBuf::from(path)).await?;
     Ok(PdfInfo {
         page_count: info.page_count,
@@ -38,7 +37,7 @@ pub async fn render_page(
     page: u32,
     dpi: u32,
     purpose: RenderPurpose,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> AppResult<Response> {
     log::info!("rendering PDF page {page} at {dpi} dpi for {purpose:?}");
     let rendered = state.pdf.render_png(PathBuf::from(path), page, dpi).await?;

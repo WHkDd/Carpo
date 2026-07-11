@@ -146,3 +146,37 @@ pub fn save(data_dir: &Path, s: &NonSecretSettings) -> AppResult<()> {
     fs::write(&path, raw)
         .map_err(|e| AppError::Config(format!("settings save {}: {e}", path.display())))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ocr_profile_dpi_mapping_matches_frontend_constants() {
+        // Mirror of `src/lib/ocr-profile.ts::PROFILE_DPI[*].ocr`. If either
+        // side moves, this test is the canary so the two stop drifting.
+        assert_eq!(OcrProfile::Standard.ocr_dpi(), 300);
+        assert_eq!(OcrProfile::Fast.ocr_dpi(), 200);
+    }
+
+    #[test]
+    fn settings_without_paddle_document_options_gets_defaults() {
+        let parsed: NonSecretSettings = serde_json::from_value(json!({
+            "provider": "paddleocr",
+            "ocr_profile": "standard",
+            "ocr_prompt": "",
+            "paddle_url": "",
+            "paddle_model": "PaddleOCR-VL-1.6",
+            "openai_model": "",
+            "openrouter_model": "",
+            "openai_compatible_base_url": "",
+            "openai_compatible_model": ""
+        }))
+        .unwrap();
+
+        assert!(parsed.paddle_document_options.use_layout_detection);
+        assert!(!parsed.paddle_document_options.include_header_image);
+        assert_eq!(parsed.paddle_document_options.prompt_label, "ocr");
+    }
+}

@@ -3,7 +3,12 @@ mod error;
 mod routes;
 mod secrets_store;
 
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    env,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use axum::Router;
 use tower_http::{services::ServeDir, trace::TraceLayer};
@@ -31,6 +36,14 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(8787);
 
+    // The upload registry (`ServerState::files`) is in-memory only, so a
+    // restart orphans whatever is still under `uploads/` — no id survives to
+    // reference it, and nothing ever cleans it up. Long-running self-hosted
+    // deployments would otherwise leak disk indefinitely. Uploads are
+    // inherently session-scoped anyway (an OCR job tied to one is gone the
+    // moment the process restarts), so start every run from an empty dir.
+    reset_uploads_dir(&data_dir)?;
+
     let secrets = Arc::new(SecretsStore::open(data_dir.join("secrets.json"))?);
     let core = Arc::new(CoreState::new(data_dir.clone(), secrets.clone())?);
     let state = ServerState::new(core, data_dir, secrets);
@@ -45,6 +58,15 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("xcvt-server listening on http://{addr}");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+fn reset_uploads_dir(data_dir: &Path) -> anyhow::Result<()> {
+    let uploads = data_dir.join("uploads");
+    if uploads.exists() {
+        std::fs::remove_dir_all(&uploads)?;
+    }
+    std::fs::create_dir_all(&uploads)?;
     Ok(())
 }
 
