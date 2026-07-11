@@ -41,5 +41,6 @@ pub fn router() -> Router<ServerState> {
         .route("/api/ocr/models", post(ocr::list_provider_models))
         .route("/api/jobs", get(ocr::list_jobs))
         .route("/api/jobs/:job_id/cancel", post(ocr::cancel_job))
+        .route("/api/jobs/:job_id/result", get(ocr::job_result))
         .route("/api/jobs/events", get(jobs_sse::events))
 }

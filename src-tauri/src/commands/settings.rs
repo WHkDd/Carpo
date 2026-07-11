@@ -1,26 +1,41 @@
-use tauri::{AppHandle, Runtime};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Runtime, State};
+use xcvt_core::{
+    error::AppResult,
+    secrets::{SecretKey, SecretProvider},
+};
 
 use crate::{
     config::{self, NonSecretSettings},
-    error::AppResult,
-    secrets::{self, SecretKey},
+    secrets::KeychainSecretProvider,
 };
 
 /// Returns whether a secret is present in the keychain. Never returns the raw
 /// value — the frontend only needs to know whether the field is configured.
 #[tauri::command]
-pub async fn get_secret(key: SecretKey) -> AppResult<bool> {
-    Ok(secrets::get(key).await?.is_some())
+pub async fn get_secret(
+    key: SecretKey,
+    secrets: State<'_, Arc<KeychainSecretProvider>>,
+) -> AppResult<bool> {
+    Ok(secrets.get(key).await?.is_some())
 }
 
 #[tauri::command]
-pub async fn set_secret(key: SecretKey, value: String) -> AppResult<()> {
-    secrets::set(key, value).await
+pub async fn set_secret(
+    key: SecretKey,
+    value: String,
+    secrets: State<'_, Arc<KeychainSecretProvider>>,
+) -> AppResult<()> {
+    secrets.set(key, value).await
 }
 
 #[tauri::command]
-pub async fn delete_secret(key: SecretKey) -> AppResult<()> {
-    secrets::delete(key).await
+pub async fn delete_secret(
+    key: SecretKey,
+    secrets: State<'_, Arc<KeychainSecretProvider>>,
+) -> AppResult<()> {
+    secrets.delete(key).await
 }
 
 #[tauri::command]

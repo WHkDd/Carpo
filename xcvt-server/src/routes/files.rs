@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 use xcvt_core::{error::AppError, jobs::grouped::FileKind};
 
@@ -26,7 +27,7 @@ pub async fn upload_file(
     State(state): State<ServerState>,
     mut multipart: Multipart,
 ) -> ServerResult<Json<UploadedFile>> {
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::Config(format!("multipart: {e}")))?
@@ -49,11 +50,19 @@ pub async fn upload_file(
         let dir = state.data_dir.join("uploads").join(id.to_string());
         tokio::fs::create_dir_all(&dir).await?;
         let path = dir.join(&name);
-        let bytes = field
-            .bytes()
+        // Stream chunk-by-chunk instead of `field.bytes()`, which buffers the
+        // entire upload (up to `MAX_UPLOAD_BYTES` = 256 MB) in memory before
+        // writing anything to disk. A newspaper PDF batch upload at that size
+        // would otherwise double as a way to pressure the server's RAM.
+        let mut file = tokio::fs::File::create(&path).await?;
+        while let Some(chunk) = field
+            .chunk()
             .await
-            .map_err(|e| AppError::Config(format!("multipart bytes: {e}")))?;
-        tokio::fs::write(&path, &bytes).await?;
+            .map_err(|e| AppError::Config(format!("multipart chunk: {e}")))?
+        {
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
         state.insert_file(
             id,
             FileRecord {

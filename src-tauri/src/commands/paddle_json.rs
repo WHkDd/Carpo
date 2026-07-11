@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use tauri::async_runtime;
 
-use crate::{
+use xcvt_core::{
     error::{AppError, AppResult},
     ocr::paddle_json::{self, PaddleJsonImport, PaddleJsonPreflightReport},
 };

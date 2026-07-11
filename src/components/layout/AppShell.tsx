@@ -5,8 +5,9 @@ import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { assembleDocument } from "@/lib/format-doc";
+import { clearPendingJob, loadPendingJob } from "@/lib/job-persistence";
 import { isTauriRuntime, logWarn } from "@/lib/runtime";
-import { getSettings } from "@/lib/tauri";
+import { getJobResult, getSettings, listJobs } from "@/lib/tauri";
 import {
   appErrorMessage,
   EVENTS,
@@ -48,6 +49,7 @@ function AppShellInner() {
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
   const setSettings = useStore((s) => s.setSettings);
+  const startJob = useStore((s) => s.startJob);
   const applyProgress = useStore((s) => s.applyProgress);
   const applyJobDone = useStore((s) => s.applyJobDone);
   const applyJobError = useStore((s) => s.applyJobError);
@@ -180,10 +182,55 @@ function AppShellInner() {
       applyJobDone(payload);
     };
 
+    // Web/Docker only: a `broadcast`-channel SSE stream never replays past
+    // events to a receiver that (re)subscribes after they fired, and a page
+    // refresh wipes `activeJob` outright (it's in-memory zustand state).
+    // Either way the job keeps running server-side regardless — it doesn't
+    // know its browser tab went away. Reconcile against a session-persisted
+    // record of the last started job so a lost `done`/`error` event can
+    // still be recovered instead of leaving the UI stuck on "识别中" (or
+    // silently discarding a finished result) forever. Runs once up front
+    // and again on every SSE `open` (which also fires on reconnect after a
+    // dropped connection, the other event-loss window).
+    const reconcile = async () => {
+      const pending = loadPendingJob();
+      if (!pending) return;
+      try {
+        const running = await listJobs();
+        const stillRunning = running.some((j) => j.job_id === pending.jobId);
+        const alreadyTracked =
+          useStore.getState().activeJob?.jobId === pending.jobId;
+        if (stillRunning) {
+          if (!alreadyTracked) startJob(pending);
+          return;
+        }
+        const cached = await getJobResult(pending.jobId);
+        if (!cached) {
+          // Neither running nor within the server's result cache window —
+          // genuinely unrecoverable (e.g. the server restarted).
+          clearPendingJob();
+          return;
+        }
+        if (!alreadyTracked) startJob(pending);
+        if (cached.kind === "done") {
+          handleDone(cached.payload as JobDone);
+        } else if (cached.kind === "error") {
+          applyJobError(cached.payload as JobError);
+        }
+      } catch (e) {
+        void logWarn(`job reconcile failed: ${appErrorMessage(e)}`);
+      }
+    };
+
     (async () => {
       if (!isTauriRuntime()) {
+        await reconcile();
+        if (cancelled) return;
         const source = new EventSource("/api/jobs/events");
         eventSource = source;
+        source.addEventListener("open", () => {
+          void reconcile();
+        });
         source.addEventListener("progress", (event) => {
           applyProgress(JSON.parse((event as MessageEvent).data) as JobProgress);
         });
@@ -216,6 +263,7 @@ function AppShellInner() {
       unlistens.forEach((u) => u());
     };
   }, [
+    startJob,
     applyProgress,
     applyJobDone,
     applyJobError,

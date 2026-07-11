@@ -1,10 +1,16 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use uuid::Uuid;
-
-use crate::{
+use xcvt_core::{
     error::{AppError, AppResult},
-    jobs::{grouped::GroupedOcrRequest, whole_file::WholeFileOcrRequest, JobKind},
+    jobs::{
+        grouped::{self, GroupedOcrRequest},
+        whole_file::{self, WholeFileOcrRequest},
+        JobKind, JobListEntry,
+    },
+    ocr,
     state::AppState,
 };
 
@@ -15,13 +21,12 @@ pub struct JobStarted {
 
 #[tauri::command]
 pub async fn start_grouped_ocr(
-    app: AppHandle,
     req: GroupedOcrRequest,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> AppResult<JobStarted> {
-    crate::jobs::grouped::validate(&req)?;
+    grouped::validate(&req)?;
     let (id, token) = state.jobs.register(JobKind::GroupedOcr);
-    crate::jobs::grouped::spawn(app, req, id, token);
+    grouped::spawn(state.inner().clone(), req, id, token);
     Ok(JobStarted {
         job_id: id.to_string(),
     })
@@ -31,15 +36,15 @@ pub async fn start_grouped_ocr(
 pub async fn start_whole_file_ocr(
     app: AppHandle,
     req: WholeFileOcrRequest,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> AppResult<JobStarted> {
     // Validation depends on the active provider (per-(provider, kind)
     // page caps), so we load settings once here and hand them to
     // `validate`. The runner reloads its own copy inside `run`.
     let settings = crate::config::load(&app)?;
-    crate::jobs::whole_file::validate(&req, &settings)?;
+    whole_file::validate(&req, &settings)?;
     let (id, token) = state.jobs.register(JobKind::WholeFile);
-    crate::jobs::whole_file::spawn(app, req, id, token);
+    whole_file::spawn(state.inner().clone(), req, id, token);
     Ok(JobStarted {
         job_id: id.to_string(),
     })
@@ -55,7 +60,7 @@ pub async fn start_whole_file_ocr(
 #[tauri::command]
 pub async fn list_provider_models(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     settings: Option<crate::config::NonSecretSettings>,
     secret: Option<String>,
 ) -> AppResult<Vec<String>> {
@@ -66,17 +71,10 @@ pub async fn list_provider_models(
     let secret = if let Some(s) = secret {
         Some(s)
     } else {
-        let secret_key = match settings.provider {
-            crate::config::Provider::Paddleocr => crate::secrets::SecretKey::PaddleToken,
-            crate::config::Provider::Openai => crate::secrets::SecretKey::OpenaiKey,
-            crate::config::Provider::Openrouter => crate::secrets::SecretKey::OpenrouterKey,
-            crate::config::Provider::OpenaiCompatible => {
-                crate::secrets::SecretKey::OpenaiCompatibleKey
-            }
-        };
-        crate::secrets::get(secret_key).await?
+        let secret_key = grouped::secret_key_for_provider(settings.provider);
+        state.secrets.get(secret_key).await?
     };
-    crate::ocr::list_models(&state.http, &settings, secret.as_deref()).await
+    ocr::list_models(&state.http, &settings, secret.as_deref()).await
 }
 
 fn parse_job_id(s: &str) -> AppResult<Uuid> {
@@ -84,12 +82,12 @@ fn parse_job_id(s: &str) -> AppResult<Uuid> {
 }
 
 #[tauri::command]
-pub async fn cancel_job(job_id: String, state: State<'_, AppState>) -> AppResult<bool> {
+pub async fn cancel_job(job_id: String, state: State<'_, Arc<AppState>>) -> AppResult<bool> {
     let id = parse_job_id(&job_id)?;
     Ok(state.jobs.cancel(id))
 }
 
 #[tauri::command]
-pub async fn list_jobs(state: State<'_, AppState>) -> AppResult<Vec<crate::jobs::JobListEntry>> {
+pub async fn list_jobs(state: State<'_, Arc<AppState>>) -> AppResult<Vec<JobListEntry>> {
     Ok(state.jobs.list())
 }
