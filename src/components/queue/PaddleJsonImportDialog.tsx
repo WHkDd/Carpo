@@ -344,7 +344,7 @@ function PreflightSummary({
               >
                 <span
                   className={`inline-block h-1.5 w-1.5 rounded-full ${
-                    present ? "bg-emerald-400" : "bg-foreground-subtle/40"
+                    present ? "bg-success" : "bg-foreground-subtle/40"
                   }`}
                 />
                 <span
@@ -424,7 +424,7 @@ function PreflightSummary({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border/40 bg-surface px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-foreground-subtle">
+      <div className="text-[10px] tracking-wide text-foreground-subtle">
         {label}
       </div>
       <div className="font-mono text-[14px] font-medium tabular-nums text-foreground">

@@ -338,7 +338,7 @@ function TabRail({
 }: TabRailProps) {
   return (
     <nav className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border bg-surface-2/50 p-3">
-      <div className="mb-1 px-3 pt-1 text-[11px] font-medium uppercase tracking-wider text-foreground-subtle">
+      <div className="mb-1 px-3 pt-1 text-[11px] font-medium tracking-wider text-foreground-subtle">
         OCR 服务商
       </div>
       {PROVIDER_ORDER.map((p) => {
@@ -357,7 +357,7 @@ function TabRail({
         );
       })}
       <div className="my-2 h-px bg-border" />
-      <div className="mb-1 px-3 pt-1 text-[11px] font-medium uppercase tracking-wider text-foreground-subtle">
+      <div className="mb-1 px-3 pt-1 text-[11px] font-medium tracking-wider text-foreground-subtle">
         通用
       </div>
       <TabButton
