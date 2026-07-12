@@ -38,7 +38,7 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
         className="contents text-left"
         aria-current={active ? "true" : undefined}
       >
-        <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-[hsl(45_10%_96%)]">
+        <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-surface-2">
           <Icon className="h-4 w-4 text-foreground-subtle" strokeWidth={1.5} />
         </span>
         <span className="min-w-0">
