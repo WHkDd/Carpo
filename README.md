@@ -98,6 +98,7 @@ docker run -d \
 ## 待做
 
 - 更多服务商接入（GLM-OCR等）
+- Codex/Claude Code订阅支持
 - 本地模型支持
 
 ## 技术栈
