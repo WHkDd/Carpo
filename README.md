@@ -1,6 +1,6 @@
-# Xcvt — 报刊版面 OCR
+# Xcvt
 
-桌面 OCR 工具，专门处理近代中文报刊扫描件。导入图像或 PDF，框选报道版块或整页识别，多家
+桌面 OCR 工具，专门处理近代中文报刊扫描件以及竖排书籍。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
 
 跨平台桌面应用，覆盖 macOS（Apple Silicon）与 Windows。**由于无Windows设备测试，Windows平台属于理论可用。**
@@ -15,7 +15,7 @@ provider 任选，结果导出为 Markdown / 纯文本。
 - **页码控制**：PDF 支持直接输入页码跳转；全文识别可指定 `1-5,8,10-12` 这类非连续页码范围。
 - **Paddle 文档级 OCR**：一次性对整份 PDF 调用 Paddle 批量接口；大文件自动分块分批提交，
   语言、并发、每批页数均可配置。
-- **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，重建为可复制文字的版式 PDF。
+- **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，重建为可复制文字的版式 PDF。（这一功能适合横排或竖排书籍，而非针对报刊）
 - **本地凭据**：桌面版 API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）
   保管；Docker 版写入挂载卷里的 `/data/secrets.json`，不会通过接口回传明文。
 
