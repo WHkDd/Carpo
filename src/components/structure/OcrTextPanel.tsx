@@ -19,6 +19,7 @@ import { appErrorMessage } from "@/lib/ipc-types";
 import { copyText, isTauriRuntime, saveTextFile } from "@/lib/runtime";
 import {
   DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+  type LayoutBlock,
   type LayoutDocument,
   type LayoutPage,
 } from "@/lib/layout-document";
@@ -77,7 +78,22 @@ function buildLayoutDocumentFromRecognizedPages(
   pages: Record<number, RecognizedPage> | undefined
 ): LayoutDocument | null {
   const layoutPages = Object.values(pages ?? {})
-    .map((entry) => entry.layout)
+    .map((entry) => {
+      if (!entry.layout) return null;
+      if (!entry.textEdited || entry.text.trim().length === 0) {
+        return entry.layout;
+      }
+      const editedBlock: LayoutBlock = {
+        label: "text",
+        text: entry.text,
+        bbox: [0, 0, entry.layout.width, entry.layout.height],
+        order: 1,
+      };
+      return {
+        ...entry.layout,
+        blocks: [editedBlock],
+      };
+    })
     .filter((page): page is LayoutPage => !!page)
     .sort((a, b) => a.index - b.index);
   if (layoutPages.length === 0) return null;
@@ -266,7 +282,7 @@ export function OcrBulkActions() {
       const { save } = await import("@tauri-apps/plugin-dialog");
       const stem = fileLabel.replace(/\.[^.]+$/, "");
       const target = await save({
-        defaultPath: `${stem}_版式重建.pdf`,
+        defaultPath: `${stem}_阅读版.pdf`,
         filters: PDF_FILTERS,
       });
       if (!target) return;
@@ -342,8 +358,8 @@ export function OcrBulkActions() {
           type="button"
           disabled={!hasLayoutDocument || exportingLayoutPdf}
           onClick={() => void onExportLayoutPdf()}
-          title="导出版式 PDF"
-          aria-label="导出版式 PDF"
+          title="导出阅读版 PDF"
+          aria-label="导出阅读版 PDF"
           className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
         >
           <Printer className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -645,7 +661,7 @@ export function OcrTextPanel() {
           <div className="flex min-h-0 flex-1 flex-col">
             {hasLayout && (
               <p className="mb-1 px-1.5 text-[10px] text-foreground-muted">
-                此处修改不影响版式 PDF，请在"版面块校对"视图逐块修改
+                此处修改会作为整页校对文本进入阅读版导出；需要保留细分块结构时请用"版面块校对"
               </p>
             )}
             <textarea

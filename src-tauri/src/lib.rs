@@ -53,6 +53,7 @@ pub fn run() {
             commands::paddle_json::analyze_paddle_json,
             commands::paddle_json::import_paddle_json,
             commands::export::export_layout_pdf,
+            commands::export::export_reading_markdown,
             commands::system::open_log_dir
         ])
         .setup(|app| {
