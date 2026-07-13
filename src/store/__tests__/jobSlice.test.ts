@@ -255,6 +255,7 @@ describe("jobSlice", () => {
         text: "[识别失败：timeout]",
         status: "failed",
         error: "timeout",
+        textEdited: true,
         sourceMode: "page_image",
       },
     });
@@ -324,6 +325,7 @@ describe("jobSlice", () => {
       status: "done",
       sourceMode: "paddle_document",
       sourceJobId: "job-1",
+      textEdited: true,
     });
     expect(store.getState().pageOcrTexts["file-1"]?.[2]).toBe("人工校对后");
   });
@@ -336,6 +338,7 @@ describe("jobSlice", () => {
       text: "手动补录",
       status: "done",
       sourceMode: "page_image",
+      textEdited: true,
     });
     expect(store.getState().pageOcrTexts["file-1"]?.[5]).toBe("手动补录");
   });

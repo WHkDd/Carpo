@@ -612,7 +612,8 @@ fn parse_block(raw: &serde_json::Value) -> Option<LayoutBlock> {
         .get("block_image")
         .or_else(|| obj.get("blockImage"))
         .and_then(|v| v.as_str())
-        .map(String::from);
+        .map(String::from)
+        .or_else(|| extract_img_src(&text));
 
     if label.is_empty()
         && text.trim().is_empty()
@@ -630,6 +631,29 @@ fn parse_block(raw: &serde_json::Value) -> Option<LayoutBlock> {
         order,
         image_ref,
     })
+}
+
+fn extract_img_src(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let img_pos = lower.find("<img")?;
+    let tail = &text[img_pos..];
+    let lower_tail = &lower[img_pos..];
+    let src_pos = lower_tail.find("src=")?;
+    let after_src = &tail[src_pos + 4..];
+    let mut chars = after_src.trim_start().chars();
+    let quote = chars.next()?;
+    if quote == '"' || quote == '\'' {
+        let rest = chars.as_str();
+        let end = rest.find(quote)?;
+        let src = rest[..end].trim();
+        return (!src.is_empty()).then(|| src.to_string());
+    }
+    let rest = after_src.trim_start();
+    let end = rest
+        .find(|c: char| c.is_whitespace() || c == '>')
+        .unwrap_or(rest.len());
+    let src = rest[..end].trim();
+    (!src.is_empty()).then(|| src.to_string())
 }
 
 fn parse_bbox(value: &serde_json::Value) -> Option<[f64; 4]> {
@@ -1011,6 +1035,25 @@ mod tests {
         assert_eq!(polygon.len(), 4);
         assert_eq!(polygon[2], [100.0, 100.0]);
         assert!(import.preflight.has_polygon_points);
+    }
+
+    #[test]
+    fn extracts_image_ref_from_html_img_src() {
+        let root = json!([{
+            "prunedResult": {
+                "page_size": [800, 1000],
+                "parsing_res_list": [
+                    {
+                        "block_label": "image",
+                        "block_content": "<div><img src=\"imgs/photo.jpg\" /></div>",
+                        "block_bbox": [0, 0, 100, 100]
+                    }
+                ]
+            }
+        }]);
+        let import = analyze_value(root).unwrap();
+        let block = &import.document.pages[0].blocks[0];
+        assert_eq!(block.image_ref.as_deref(), Some("imgs/photo.jpg"));
     }
 
     #[test]

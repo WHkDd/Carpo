@@ -20,6 +20,12 @@ export interface LayoutPage {
   blocks: LayoutBlock[];
 }
 
+export interface RecognizedLayoutPage extends LayoutPage {
+  /** True when this page was flattened from a page-level user edit instead of
+   *  Paddle's original block list. */
+  textEdited?: boolean;
+}
+
 export interface LayoutDocument {
   /** Reserved for future GLM-OCR adapter; Paddle is the only producer today. */
   source: LayoutDocumentSource | string;
@@ -49,17 +55,30 @@ export interface LayoutPdfExportRequest {
 
 export interface LayoutPdfExportResult {
   targetPath: string;
+  /** Output pages in the reflowed PDF (not source pages). */
   pageCount: number;
   warningCount: number;
   warnings: string[];
 }
 
+export interface ReadingMarkdownExportResult {
+  targetPath: string;
+  /** Source pages folded into the Markdown file. */
+  pageCount: number;
+  warningCount: number;
+  warnings: string[];
+}
+
+/** Reading-version defaults: running headers/footers and side notes are page
+ *  furniture and dropped; the source-file page index is kept as a citeable
+ *  anchor. `mode` is retained for wire compatibility and ignored by the
+ *  backend (the exporter always reflows). */
 export const DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS: LayoutPdfExportOptions = {
-  mode: "bbox",
-  includeHeader: true,
-  includeFooter: true,
+  mode: "reading",
+  includeHeader: false,
+  includeFooter: false,
   includePageNumber: true,
-  includeAsideText: true,
+  includeAsideText: false,
   includeFootnote: true,
   includeImages: false,
   includeTables: true,
