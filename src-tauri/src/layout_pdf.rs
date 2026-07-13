@@ -1,20 +1,35 @@
-//! Layout-document PDF exporter.
+//! Reading-version exporter for the normalized `LayoutDocument`.
 //!
-//! This turns the normalized `LayoutDocument` produced by Paddle JSON import
-//! into a rebuilt, selectable-text PDF. It intentionally does not put the
-//! original scan underneath an invisible text layer: each block is drawn at
-//! its Paddle bbox position, with tables/images represented by visible
-//! placeholders in the first version.
+//! Earlier versions tried to *reconstruct the original page* by drawing every
+//! Paddle block at its bbox position. For research use that was the wrong
+//! target: the pruned web-export JSON only carries block-level boxes and a
+//! concatenated `block_content`, so a faithful facsimile is impossible and
+//! vertical books came out unreadable.
+//!
+//! Instead this module produces a **clean, reflowed reading version**:
+//! - Blocks are emitted in reading order (`block_order`), flowing across as
+//!   many A4 pages as the text needs.
+//! - Page furniture (running headers/footers, bare page numbers, side notes)
+//!   is filtered out; the source page index is kept as a stable anchor so
+//!   passages stay citeable even when OCR page-number blocks are wrong.
+//! - Vertical text needs no special handling: Paddle's `block_content` is
+//!   already a horizontal reading-order string.
+//! - Headings are re-styled from the block *label*, so stray Markdown markers
+//!   (`#`, `####`) never leak into the output.
+//!
+//! Two outputs share the same block processing: a reflowed PDF
+//! ([`export_layout_pdf_to_path`]) and a Markdown file
+//! ([`export_reading_markdown_to_path`]).
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs,
+    env, fs, mem,
     path::PathBuf,
 };
 
 use printpdf::{
-    Color, FontId, FontMetrics, Mm, Op, PaintMode, ParsedFont, PdfDocument, PdfFontHandle, PdfPage,
-    PdfSaveOptions, Point, Pt, Rect, Rgb, TextItem,
+    Color, FontId, FontMetrics, Mm, Op, ParsedFont, PdfDocument, PdfFontHandle, PdfPage,
+    PdfSaveOptions, Point, Pt, Rgb, TextItem,
 };
 use serde::{Deserialize, Serialize};
 use ttf_parser::Face;
@@ -24,12 +39,11 @@ use xcvt_core::{
     ocr::paddle_json::{LayoutBlock, LayoutDocument, LayoutPage},
 };
 
-const A4_PORTRAIT_W_PT: f32 = 595.28;
-const A4_PORTRAIT_H_PT: f32 = 841.89;
-const PAGE_MARGIN_PT: f32 = 18.0;
-const BLOCK_PADDING_PT: f32 = 2.5;
-const MIN_FONT_PT: f32 = 5.5;
-const LINE_HEIGHT: f32 = 1.18;
+const A4_W_PT: f32 = 595.28;
+const A4_H_PT: f32 = 841.89;
+const MARGIN_X_PT: f32 = 56.0;
+const MARGIN_TOP_PT: f32 = 60.0;
+const MARGIN_BOTTOM_PT: f32 = 56.0;
 const MAX_RETURNED_WARNINGS: usize = 50;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,16 +59,29 @@ pub struct LayoutPdfExportRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LayoutPdfExportResult {
     pub target_path: String,
+    /// Number of output pages in the PDF (reading flow, not source pages).
     pub page_count: u32,
     pub warning_count: u32,
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingMarkdownExportResult {
+    pub target_path: String,
+    /// Number of source pages folded into the Markdown file.
+    pub page_count: u32,
+    pub warning_count: u32,
+    pub warnings: Vec<String>,
+}
+
+/// Retained for wire compatibility with the frontend request type. The reading
+/// exporter no longer has a bbox mode; the field is accepted and ignored.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutPdfExportMode {
-    #[default]
     Bbox,
+    #[default]
     Reading,
 }
 
@@ -63,18 +90,18 @@ pub enum LayoutPdfExportMode {
 pub struct LayoutPdfExportOptions {
     #[serde(default)]
     pub mode: LayoutPdfExportMode,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub include_header: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub include_footer: bool,
     #[serde(default = "default_true")]
     pub include_page_number: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub include_aside_text: bool,
     #[serde(default = "default_true")]
     pub include_footnote: bool,
-    /// First version does not embed image assets. When true, image blocks are
-    /// still placeholders, but the result warning tells the user why.
+    /// Image embedding is not implemented yet: image blocks always render as a
+    /// visible placeholder so the reader knows a figure sat there.
     #[serde(default)]
     pub include_images: bool,
     #[serde(default = "default_true")]
@@ -88,11 +115,11 @@ pub struct LayoutPdfExportOptions {
 impl Default for LayoutPdfExportOptions {
     fn default() -> Self {
         Self {
-            mode: LayoutPdfExportMode::Bbox,
-            include_header: true,
-            include_footer: true,
+            mode: LayoutPdfExportMode::Reading,
+            include_header: false,
+            include_footer: false,
             include_page_number: true,
-            include_aside_text: true,
+            include_aside_text: false,
             include_footnote: true,
             include_images: false,
             include_tables: true,
@@ -110,92 +137,444 @@ const fn default_scale() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Copy)]
-struct PageMetrics {
-    width_pt: f32,
-    height_pt: f32,
-    margin_pt: f32,
-    scale: f32,
+// ---------------------------------------------------------------------------
+// Block roles
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockRole {
+    DocTitle,
+    Heading,
+    FigureCaption,
+    Body,
+    Footnote,
+    Table,
+    Image,
+    Header,
+    Footer,
+    PageNumber,
+    Aside,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct PdfRect {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-}
-
-struct TextBlockRender<'a> {
-    page_index: u32,
-    label: &'a str,
-    text: &'a str,
-    rect: PdfRect,
-    font_id: &'a FontId,
-    options: &'a LayoutPdfExportOptions,
-}
-
-#[derive(Debug)]
-struct FontCandidate {
-    path: PathBuf,
-    index: u32,
-}
-
-struct LoadedFont {
-    font: ParsedFont,
-    path: PathBuf,
-    missing_chars: Vec<char>,
-}
-
-pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<LayoutPdfExportResult> {
-    if req.target_path.trim().is_empty() {
-        return Err(AppError::Config("缺少导出路径".into()));
-    }
-    if req.document.pages.is_empty() {
-        return Err(AppError::Config("没有可导出的版式页面".into()));
-    }
-
-    let target_path = PathBuf::from(&req.target_path);
-    if let Some(parent) = target_path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(AppError::FileNotFound(parent.display().to_string()));
+fn classify(label: &str) -> BlockRole {
+    let label = label.trim().to_ascii_lowercase();
+    match label.as_str() {
+        "doc_title" => BlockRole::DocTitle,
+        "paragraph_title" | "title" => BlockRole::Heading,
+        "figure_title" | "chart_title" | "table_title" => BlockRole::FigureCaption,
+        "header" | "doc_header" | "header_image" => BlockRole::Header,
+        "footer" | "doc_footer" | "footer_image" => BlockRole::Footer,
+        "number" | "page_number" | "page_no" | "page_num" => BlockRole::PageNumber,
+        "aside_text" | "aside" => BlockRole::Aside,
+        _ => {
+            if label.contains("footnote") {
+                BlockRole::Footnote
+            } else if label.contains("table") {
+                BlockRole::Table
+            } else if label.contains("image") || label == "figure" {
+                BlockRole::Image
+            } else {
+                // text, content, vertical_text, display_formula, algorithm, …
+                BlockRole::Body
+            }
         }
     }
+}
 
-    let mut warnings = Vec::new();
-    if req.options.mode != LayoutPdfExportMode::Bbox {
-        warnings.push("reading 模式尚未实现，已按 bbox 近似版式导出".to_string());
+/// Whether a block participates in the reading flow. Page numbers never do
+/// (they become the page anchor instead).
+fn include_in_reading(role: BlockRole, options: &LayoutPdfExportOptions) -> bool {
+    match role {
+        BlockRole::Header => options.include_header,
+        BlockRole::Footer => options.include_footer,
+        BlockRole::Aside => options.include_aside_text,
+        BlockRole::Footnote => options.include_footnote,
+        BlockRole::Table => options.include_tables,
+        BlockRole::PageNumber => false,
+        // Images always show a placeholder so the reader knows one was there.
+        BlockRole::Image
+        | BlockRole::DocTitle
+        | BlockRole::Heading
+        | BlockRole::FigureCaption
+        | BlockRole::Body => true,
     }
-    if req.options.include_images {
-        warnings.push("图片嵌入尚未实现，图片区块已用占位框表示".to_string());
-    }
+}
 
-    let chars = collect_required_chars(&req.document, &req.options);
-    let loaded_font = load_cjk_font(&chars)?;
-    if !loaded_font.missing_chars.is_empty() {
-        let preview: String = loaded_font.missing_chars.iter().take(12).collect();
-        warnings.push(format!(
-            "字体 {} 缺少 {} 个字符（{}{}），缺字会显示为空白或替代字形",
-            loaded_font.path.display(),
-            loaded_font.missing_chars.len(),
-            preview,
-            if loaded_font.missing_chars.len() > 12 {
-                "…"
+/// Blocks sorted into reading order for a page. `block_order` is authoritative
+/// when present; otherwise fall back to top-to-bottom, then right-to-left so
+/// vertical books (columns read right first) come out roughly right.
+fn ordered_blocks(page: &LayoutPage) -> Vec<&LayoutBlock> {
+    let mut blocks: Vec<&LayoutBlock> = page.blocks.iter().collect();
+    let any_order = blocks.iter().any(|b| b.order.is_some());
+    if any_order {
+        blocks.sort_by(|a, b| {
+            a.order
+                .unwrap_or(u32::MAX)
+                .cmp(&b.order.unwrap_or(u32::MAX))
+        });
+    } else {
+        blocks.sort_by(|a, b| {
+            a.bbox[1]
+                .total_cmp(&b.bbox[1])
+                .then_with(|| b.bbox[0].total_cmp(&a.bbox[0]))
+        });
+    }
+    blocks
+}
+
+/// The page anchor text uses the sequential source page index, not OCR's
+/// printed-page guess. Real exports showed `number` blocks picking up table of
+/// contents entries and cover noise, which made anchors jump or repeat. Source
+/// page indices are less pretty but reliable for citation back to the PDF.
+fn page_anchor_label(page: &LayoutPage) -> String {
+    format!("源文件第 {} 页", page.index)
+}
+
+/// Strip leading Markdown block markers (`#`, `>`, `-`, `*`, list bullets) and
+/// surrounding bold/italic emphasis so headings can be re-styled from the label
+/// and body text never shows a stray `####`.
+fn clean_block_text(text: &str) -> String {
+    let mut out_lines = Vec::new();
+    for raw in text.replace("\r\n", "\n").split('\n') {
+        let mut line = raw.trim_end();
+        // Leading heading / quote markers.
+        line = line.trim_start();
+        let mut chars = line.char_indices().peekable();
+        let mut strip_to = 0usize;
+        while let Some(&(idx, c)) = chars.peek() {
+            if c == '#' || c == '>' {
+                strip_to = idx + c.len_utf8();
+                chars.next();
+            } else if c == ' ' && strip_to > 0 {
+                strip_to = idx + 1;
+                chars.next();
             } else {
-                ""
+                break;
             }
+        }
+        let mut s = line[strip_to..].to_string();
+        // Symmetric emphasis wrappers.
+        for marker in ["***", "**", "*", "`"] {
+            if s.len() >= marker.len() * 2 && s.starts_with(marker) && s.ends_with(marker) {
+                s = s[marker.len()..s.len() - marker.len()].to_string();
+                break;
+            }
+        }
+        out_lines.push(s);
+    }
+    out_lines.join("\n").trim().to_string()
+}
+
+/// Remove HTML tags (and collapse whitespace) — used to salvage any caption
+/// text from an image block's `<div><img .../></div>` wrapper.
+fn strip_html(text: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0u32;
+    for c in text.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// ---------------------------------------------------------------------------
+// Reading items (shared intermediate for PDF + Markdown)
+// ---------------------------------------------------------------------------
+
+struct ReadingItem {
+    role: BlockRole,
+    /// `None` marks a page anchor; `Some(text)` is a renderable block.
+    text: Option<String>,
+    /// For anchors, the page label.
+    anchor: Option<String>,
+}
+
+fn build_reading_items(
+    document: &LayoutDocument,
+    options: &LayoutPdfExportOptions,
+    warnings: &mut Vec<String>,
+) -> Vec<ReadingItem> {
+    let mut items = Vec::new();
+    let inferred_furniture = infer_repeated_furniture_texts(document);
+    let mut image_notice = false;
+    let mut empty_table_notice = false;
+    let mut inferred_furniture_count = 0usize;
+    let mut scanner_artifact_count = 0usize;
+    for page in &document.pages {
+        let mut page_items = Vec::new();
+        for block in ordered_blocks(page) {
+            let role = classify(&block.label);
+            if !include_in_reading(role, options) {
+                continue;
+            }
+            if should_skip_inferred_furniture(page, block, &inferred_furniture, options) {
+                inferred_furniture_count += 1;
+                continue;
+            }
+            let mut cleaned = clean_block_text(&block.text);
+            if is_known_scanner_artifact(&cleaned) {
+                scanner_artifact_count += 1;
+                continue;
+            }
+            if should_strip_html_for_role(role) {
+                cleaned = clean_block_text(&strip_html(&cleaned));
+            }
+            if should_repair_short_lines(role) {
+                cleaned = repair_short_vertical_lines(&cleaned);
+            }
+            let text = match role {
+                BlockRole::Image => {
+                    image_notice = true;
+                    // Image blocks usually carry an HTML `<div><img .../></div>`
+                    // wrapper, not reading text. Strip tags; keep only a caption
+                    // if one survives.
+                    let placeholder = image_placeholder(block.image_ref.as_deref());
+                    if cleaned.is_empty() {
+                        placeholder
+                    } else {
+                        format!("{placeholder} {cleaned}")
+                    }
+                }
+                BlockRole::Table => {
+                    if cleaned.is_empty() {
+                        empty_table_notice = true;
+                        "［表格］".to_string()
+                    } else {
+                        cleaned
+                    }
+                }
+                _ => {
+                    if cleaned.is_empty() {
+                        continue;
+                    }
+                    cleaned
+                }
+            };
+            page_items.push(ReadingItem {
+                role,
+                text: Some(text),
+                anchor: None,
+            });
+        }
+        if !page_items.is_empty() {
+            if options.include_page_number {
+                items.push(ReadingItem {
+                    role: BlockRole::PageNumber,
+                    text: None,
+                    anchor: Some(page_anchor_label(page)),
+                });
+            }
+            items.extend(page_items);
+        }
+    }
+    if image_notice {
+        if options.include_images {
+            warnings.push("图片内嵌尚未实现，图片区块已用占位说明表示".to_string());
+        } else {
+            warnings.push("图片区块未嵌入，已用占位说明表示".to_string());
+        }
+    }
+    if empty_table_notice {
+        warnings.push("部分表格无文本内容，已用占位说明表示".to_string());
+    }
+    if inferred_furniture_count > 0 {
+        warnings.push(format!(
+            "已过滤 {inferred_furniture_count} 个重复页眉/页脚块"
         ));
     }
+    if scanner_artifact_count > 0 {
+        warnings.push(format!(
+            "已过滤 {scanner_artifact_count} 个扫描/封装元数据块"
+        ));
+    }
+    items
+}
 
-    let mut doc = PdfDocument::new("Xcvt layout export");
-    let font_id = doc.add_font(&loaded_font.font);
-    let pages = req
-        .document
-        .pages
-        .iter()
-        .map(|page| render_page(page, &font_id, &req.options, &mut warnings))
+fn image_placeholder(image_ref: Option<&str>) -> String {
+    match image_ref.and_then(display_image_ref) {
+        Some(source) => format!("［图片：未嵌入：{source}］"),
+        None => "［图片：未嵌入］".to_string(),
+    }
+}
+
+fn display_image_ref(image_ref: &str) -> Option<String> {
+    let trimmed = image_ref.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let display = if trimmed.contains("://") {
+        trimmed
+            .split('?')
+            .next()
+            .unwrap_or(trimmed)
+            .rsplit('/')
+            .find(|part| !part.is_empty())
+            .unwrap_or(trimmed)
+    } else {
+        trimmed
+    };
+    if display.chars().count() > 80 {
+        Some(format!("{}…", display.chars().take(79).collect::<String>()))
+    } else {
+        Some(display.to_string())
+    }
+}
+
+fn is_known_scanner_artifact(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.starts_with("Document generated by Anna's Archive around")
+        || trimmed.starts_with("Images have been losslessly embedded.")
+}
+
+fn infer_repeated_furniture_texts(document: &LayoutDocument) -> BTreeSet<String> {
+    let mut by_text: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+    for page in &document.pages {
+        for block in &page.blocks {
+            if classify(&block.label) != BlockRole::Body {
+                continue;
+            }
+            if inferred_furniture_kind(page, block).is_none() {
+                continue;
+            }
+            if let Some(key) = furniture_text_key(&block.text) {
+                by_text.entry(key).or_default().insert(page.index);
+            }
+        }
+    }
+    by_text
+        .into_iter()
+        .filter_map(|(text, pages)| (pages.len() >= 3).then_some(text))
+        .collect()
+}
+
+fn should_skip_inferred_furniture(
+    page: &LayoutPage,
+    block: &LayoutBlock,
+    repeated_texts: &BTreeSet<String>,
+    options: &LayoutPdfExportOptions,
+) -> bool {
+    if classify(&block.label) != BlockRole::Body {
+        return false;
+    }
+    let Some(key) = furniture_text_key(&block.text) else {
+        return false;
+    };
+    if !repeated_texts.contains(&key) {
+        return false;
+    }
+    match inferred_furniture_kind(page, block) {
+        Some(BlockRole::Header) => !options.include_header,
+        Some(BlockRole::Footer) => !options.include_footer,
+        _ => false,
+    }
+}
+
+fn furniture_text_key(text: &str) -> Option<String> {
+    let cleaned = repair_short_vertical_lines(&clean_block_text(&strip_html(text)));
+    let key = cleaned
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let len = key.chars().count();
+    (3..=40).contains(&len).then_some(key)
+}
+
+fn inferred_furniture_kind(page: &LayoutPage, block: &LayoutBlock) -> Option<BlockRole> {
+    let page_w = page.width.max(1.0);
+    let page_h = page.height.max(1.0);
+    let (x1, y1, x2, y2, w, h) = bbox_parts(block.bbox);
+    let near_top = y1 <= page_h * 0.12 && h <= page_h * 0.10;
+    let near_bottom = y2 >= page_h * 0.88 && h <= page_h * 0.10;
+    let near_side =
+        (x1 <= page_w * 0.13 || x2 >= page_w * 0.87) && w <= page_w * 0.12 && h <= page_h * 0.50;
+    if near_bottom {
+        Some(BlockRole::Footer)
+    } else if near_top || near_side {
+        Some(BlockRole::Header)
+    } else {
+        None
+    }
+}
+
+fn bbox_parts(bbox: [f64; 4]) -> (f64, f64, f64, f64, f64, f64) {
+    let x1 = bbox[0].min(bbox[2]);
+    let y1 = bbox[1].min(bbox[3]);
+    let x2 = bbox[0].max(bbox[2]);
+    let y2 = bbox[1].max(bbox[3]);
+    (x1, y1, x2, y2, x2 - x1, y2 - y1)
+}
+
+fn should_strip_html_for_role(role: BlockRole) -> bool {
+    matches!(
+        role,
+        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption | BlockRole::Image
+    )
+}
+
+fn should_repair_short_lines(role: BlockRole) -> bool {
+    matches!(
+        role,
+        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption | BlockRole::Body
+    )
+}
+
+/// Paddle keeps some vertical title / directory fragments as one short line
+/// per printed column segment, e.g. `新聞\n\n之\n\n採\n\n集`. When every
+/// non-empty line is very short, join them back into one reading phrase.
+fn repair_short_vertical_lines(text: &str) -> String {
+    let lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let page_count = pages.len() as u32;
+    if lines.len() < 2 {
+        return text.to_string();
+    }
+    if lines.iter().all(|line| line.chars().count() <= 4) {
+        return lines.join("");
+    }
+    text.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// PDF export
+// ---------------------------------------------------------------------------
+
+pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<LayoutPdfExportResult> {
+    let target_path = validate_target(&req.target_path, &req.document)?;
+    let mut warnings = Vec::new();
+    if req.options.mode == LayoutPdfExportMode::Bbox {
+        warnings.push("bbox 版式重建已改为阅读版导出".to_string());
+    }
+    let items = build_reading_items(&req.document, &req.options, &mut warnings);
+
+    let chars = collect_item_chars(&items);
+    let loaded_font = load_cjk_font(&chars)?;
+    push_missing_char_warning(&loaded_font, &mut warnings);
+
+    let mut doc = PdfDocument::new("Xcvt reading export");
+    let font_id = doc.add_font(&loaded_font.font);
+    let font_scale = req.options.font_scale.clamp(0.5, 2.0);
+    let margin_scale = req.options.margin_scale.clamp(0.5, 2.0);
+
+    let mut flow = Flow::new(&font_id, margin_scale);
+    for item in &items {
+        match (&item.text, &item.anchor) {
+            (None, Some(label)) => flow.emit_anchor(label, font_scale),
+            (Some(text), _) => flow.emit_block(item.role, text, font_scale),
+            _ => {}
+        }
+    }
+    let pages_ops = flow.finish();
+    let page_count = pages_ops.len() as u32;
+    let pages: Vec<PdfPage> = pages_ops
+        .into_iter()
+        .map(|ops| PdfPage::new(pt_to_mm(A4_W_PT), pt_to_mm(A4_H_PT), ops))
+        .collect();
     doc.with_pages(pages);
 
     let mut pdf_warnings = Vec::new();
@@ -207,221 +586,224 @@ pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<Layou
         .map_err(|e| AppError::Internal(format!("write {}: {e}", target_path.display())))?;
 
     let warning_count = warnings.len() as u32;
-    let returned = warnings.into_iter().take(MAX_RETURNED_WARNINGS).collect();
     Ok(LayoutPdfExportResult {
         target_path: target_path.display().to_string(),
         page_count,
         warning_count,
-        warnings: returned,
+        warnings: warnings.into_iter().take(MAX_RETURNED_WARNINGS).collect(),
     })
 }
 
-fn render_page(
-    page: &LayoutPage,
-    font_id: &FontId,
-    options: &LayoutPdfExportOptions,
-    warnings: &mut Vec<String>,
-) -> PdfPage {
-    let metrics = page_metrics(page, options);
-    let mut ops = Vec::new();
-    let mut blocks = page
-        .blocks
-        .iter()
-        .filter(|block| should_render_block(block, options))
-        .collect::<Vec<_>>();
-    blocks.sort_by(|a, b| {
-        a.order
-            .unwrap_or(u32::MAX)
-            .cmp(&b.order.unwrap_or(u32::MAX))
-            .then_with(|| a.bbox[1].total_cmp(&b.bbox[1]))
-            .then_with(|| a.bbox[0].total_cmp(&b.bbox[0]))
-    });
+/// Per-role visual style for the flowing PDF.
+#[derive(Clone)]
+struct RoleStyle {
+    size: f32,
+    line_height: f32,
+    gap_before: f32,
+    gap_after: f32,
+    indent: f32,
+    color: Color,
+}
 
-    for block in blocks {
-        let rect = map_bbox(block.bbox, metrics);
-        let label = normalized_label(&block.label);
-        let placeholder = placeholder_text(&label);
-        if placeholder.is_some() {
-            draw_placeholder(&mut ops, rect);
+fn role_style(role: BlockRole, font_scale: f32) -> RoleStyle {
+    let near_black = Color::Rgb(Rgb::new(0.09, 0.09, 0.11, None));
+    let muted = Color::Rgb(Rgb::new(0.42, 0.44, 0.48, None));
+    let s = |v: f32| v * font_scale;
+    match role {
+        BlockRole::DocTitle => RoleStyle {
+            size: s(17.0),
+            line_height: 1.3,
+            gap_before: 18.0,
+            gap_after: 12.0,
+            indent: 0.0,
+            color: near_black,
+        },
+        BlockRole::Heading => RoleStyle {
+            size: s(13.5),
+            line_height: 1.3,
+            gap_before: 13.0,
+            gap_after: 5.0,
+            indent: 0.0,
+            color: near_black,
+        },
+        BlockRole::FigureCaption => RoleStyle {
+            size: s(10.0),
+            line_height: 1.35,
+            gap_before: 4.0,
+            gap_after: 6.0,
+            indent: 0.0,
+            color: muted,
+        },
+        BlockRole::Body | BlockRole::Header | BlockRole::Footer => RoleStyle {
+            size: s(10.5),
+            line_height: 1.5,
+            gap_before: 0.0,
+            gap_after: 6.0,
+            indent: s(10.5) * 2.0,
+            color: near_black,
+        },
+        BlockRole::Footnote | BlockRole::Aside => RoleStyle {
+            size: s(9.0),
+            line_height: 1.4,
+            gap_before: 2.0,
+            gap_after: 4.0,
+            indent: 0.0,
+            color: muted,
+        },
+        BlockRole::Table | BlockRole::Image => RoleStyle {
+            size: s(9.5),
+            line_height: 1.4,
+            gap_before: 4.0,
+            gap_after: 6.0,
+            indent: 0.0,
+            color: Color::Rgb(Rgb::new(0.3, 0.32, 0.36, None)),
+        },
+        BlockRole::PageNumber => RoleStyle {
+            size: s(9.0),
+            line_height: 1.3,
+            gap_before: 14.0,
+            gap_after: 8.0,
+            indent: 0.0,
+            color: muted,
+        },
+    }
+}
+
+struct Flow<'a> {
+    font_id: &'a FontId,
+    margin_x: f32,
+    margin_top: f32,
+    margin_bottom: f32,
+    pages: Vec<Vec<Op>>,
+    cur: Vec<Op>,
+    y: f32,
+    started: bool,
+}
+
+impl<'a> Flow<'a> {
+    fn new(font_id: &'a FontId, margin_scale: f32) -> Self {
+        let margin_x = MARGIN_X_PT * margin_scale;
+        let margin_top = MARGIN_TOP_PT * margin_scale;
+        let margin_bottom = MARGIN_BOTTOM_PT * margin_scale;
+        Flow {
+            font_id,
+            margin_x,
+            margin_top,
+            margin_bottom,
+            pages: Vec::new(),
+            cur: Vec::new(),
+            y: A4_H_PT - margin_top,
+            started: false,
         }
-        let text = export_text_for_block(block, placeholder);
-        if text.trim().is_empty() {
-            continue;
+    }
+
+    fn content_width(&self) -> f32 {
+        (A4_W_PT - self.margin_x * 2.0).max(72.0)
+    }
+
+    fn new_page(&mut self) {
+        self.pages.push(mem::take(&mut self.cur));
+        self.y = A4_H_PT - self.margin_top;
+    }
+
+    /// Ensure at least `line_h` fits; break to a new page if not.
+    fn ensure(&mut self, line_h: f32) {
+        if self.started && self.y - line_h < self.margin_bottom {
+            self.new_page();
         }
-        render_text_block(
-            &mut ops,
-            warnings,
-            TextBlockRender {
-                page_index: page.index,
-                label: &block.label,
-                text: &text,
-                rect,
+    }
+
+    fn emit_anchor(&mut self, label: &str, font_scale: f32) {
+        let style = role_style(BlockRole::PageNumber, font_scale);
+        self.emit_paragraph(&format!("〔{label}〕"), style);
+    }
+
+    fn emit_block(&mut self, role: BlockRole, text: &str, font_scale: f32) {
+        let style = role_style(role, font_scale);
+        let pdf_text = pdf_text_for_role(role, text);
+        self.emit_paragraph(&pdf_text, style);
+    }
+
+    fn emit_paragraph(&mut self, text: &str, style: RoleStyle) {
+        let line_h = style.size * style.line_height;
+        // Gap before (skipped at the very top of the document / a fresh page).
+        if self.started && self.y < A4_H_PT - self.margin_top - 0.01 {
+            self.y -= style.gap_before;
+        }
+        let first_width = (self.content_width() - style.indent).max(style.size);
+        let font_id = self.font_id;
+        // Wrap the first line against the indented width, the rest full width.
+        let lines = wrap_paragraph(text, self.content_width(), first_width, style.size);
+        for (idx, line) in lines.iter().enumerate() {
+            self.ensure(line_h);
+            self.started = true;
+            let baseline = self.y - style.size;
+            let x = self.margin_x + if idx == 0 { style.indent } else { 0.0 };
+            draw_line(
+                &mut self.cur,
                 font_id,
-                options,
-            },
-        );
+                line,
+                x,
+                baseline,
+                style.size,
+                style.color.clone(),
+            );
+            self.y -= line_h;
+        }
+        self.y -= style.gap_after;
     }
 
-    PdfPage::new(pt_to_mm(metrics.width_pt), pt_to_mm(metrics.height_pt), ops)
-}
-
-fn page_metrics(page: &LayoutPage, options: &LayoutPdfExportOptions) -> PageMetrics {
-    let source_w = page.width.max(1.0) as f32;
-    let source_h = page.height.max(1.0) as f32;
-    let landscape = source_w > source_h;
-    let (max_w, max_h) = if landscape {
-        (A4_PORTRAIT_H_PT, A4_PORTRAIT_W_PT)
-    } else {
-        (A4_PORTRAIT_W_PT, A4_PORTRAIT_H_PT)
-    };
-    let margin_pt = PAGE_MARGIN_PT * options.margin_scale.clamp(0.0, 3.0);
-    let available_w = (max_w - margin_pt * 2.0).max(72.0);
-    let available_h = (max_h - margin_pt * 2.0).max(72.0);
-    let scale = (available_w / source_w)
-        .min(available_h / source_h)
-        .max(0.01);
-    PageMetrics {
-        width_pt: source_w * scale + margin_pt * 2.0,
-        height_pt: source_h * scale + margin_pt * 2.0,
-        margin_pt,
-        scale,
+    fn finish(mut self) -> Vec<Vec<Op>> {
+        if !self.cur.is_empty() || self.pages.is_empty() {
+            self.pages.push(mem::take(&mut self.cur));
+        }
+        self.pages
     }
 }
 
-fn map_bbox(bbox: [f64; 4], metrics: PageMetrics) -> PdfRect {
-    let x0 = bbox[0].min(bbox[2]).max(0.0) as f32;
-    let y0 = bbox[1].min(bbox[3]).max(0.0) as f32;
-    let x1 = bbox[0].max(bbox[2]).max(0.0) as f32;
-    let y1 = bbox[1].max(bbox[3]).max(0.0) as f32;
-    let x = metrics.margin_pt + x0 * metrics.scale;
-    let y = metrics.height_pt - metrics.margin_pt - y1 * metrics.scale;
-    PdfRect {
-        x,
-        y,
-        w: ((x1 - x0) * metrics.scale).max(1.0),
-        h: ((y1 - y0) * metrics.scale).max(1.0),
-    }
-}
-
-fn render_text_block(ops: &mut Vec<Op>, warnings: &mut Vec<String>, block: TextBlockRender<'_>) {
-    let TextBlockRender {
-        page_index,
-        label,
-        text,
-        rect,
-        font_id,
-        options,
-    } = block;
-    let mut font_size = font_size_for(label, rect, options);
-    let max_w = (rect.w - BLOCK_PADDING_PT * 2.0).max(font_size);
-    let max_h = (rect.h - BLOCK_PADDING_PT * 2.0).max(font_size);
-    let mut lines = wrap_text(text, max_w, font_size);
-    let mut needed_h = lines.len() as f32 * font_size * LINE_HEIGHT;
-    if needed_h > max_h && needed_h > 0.0 {
-        let shrink = (max_h / needed_h * 0.95).clamp(0.35, 1.0);
-        font_size = (font_size * shrink).max(MIN_FONT_PT);
-        lines = wrap_text(text, max_w, font_size);
-        needed_h = lines.len() as f32 * font_size * LINE_HEIGHT;
-    }
-    if needed_h > max_h + font_size {
-        warnings.push(format!(
-            "第 {} 页 {} 区块文本超过 bbox，高度 {:.1}pt / {:.1}pt，已继续写出未截断",
-            page_index, label, needed_h, max_h
-        ));
-    }
-
-    let color = color_for_label(label);
+fn draw_line(
+    ops: &mut Vec<Op>,
+    font_id: &FontId,
+    text: &str,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: Color,
+) {
     ops.push(Op::StartTextSection);
     ops.push(Op::SetFillColor { col: color });
     ops.push(Op::SetFont {
         font: PdfFontHandle::External(font_id.clone()),
-        size: Pt(font_size),
-    });
-    ops.push(Op::SetLineHeight {
-        lh: Pt(font_size * LINE_HEIGHT),
+        size: Pt(size),
     });
     ops.push(Op::SetTextCursor {
-        pos: Point {
-            x: Pt(rect.x + BLOCK_PADDING_PT),
-            y: Pt(rect.y + rect.h - BLOCK_PADDING_PT - font_size),
-        },
+        pos: Point { x: Pt(x), y: Pt(y) },
     });
-    for (idx, line) in lines.iter().enumerate() {
-        ops.push(Op::ShowText {
-            items: vec![TextItem::Text(line.clone())],
-        });
-        if idx + 1 < lines.len() {
-            ops.push(Op::AddLineBreak);
-        }
-    }
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(text.to_string())],
+    });
     ops.push(Op::EndTextSection);
 }
 
-fn draw_placeholder(ops: &mut Vec<Op>, rect: PdfRect) {
-    ops.push(Op::SetOutlineColor {
-        col: Color::Rgb(Rgb::new(0.62, 0.66, 0.7, None)),
-    });
-    ops.push(Op::SetOutlineThickness { pt: Pt(0.55) });
-    ops.push(Op::DrawRectangle {
-        rectangle: Rect {
-            x: Pt(rect.x),
-            y: Pt(rect.y),
-            width: Pt(rect.w),
-            height: Pt(rect.h),
-            mode: Some(PaintMode::Stroke),
-            winding_order: None,
-        },
-    });
-}
-
-fn font_size_for(label: &str, rect: PdfRect, options: &LayoutPdfExportOptions) -> f32 {
-    let label = normalized_label(label);
-    let base = if label == "doc_title" {
-        15.0
-    } else if label == "paragraph_title" || label == "title" {
-        12.0
-    } else if is_header_label(&label) || is_footer_label(&label) || is_page_number_label(&label) {
-        7.0
-    } else if is_aside_label(&label) || is_footnote_label(&label) {
-        7.5
-    } else if is_table_label(&label) {
-        8.2
-    } else {
-        9.2
-    };
-    let scaled = base * options.font_scale.clamp(0.5, 2.0);
-    scaled
-        .min((rect.h * 0.65).max(MIN_FONT_PT))
-        .max(MIN_FONT_PT)
-}
-
-fn color_for_label(label: &str) -> Color {
-    let label = normalized_label(label);
-    if is_header_label(&label) || is_footer_label(&label) || is_page_number_label(&label) {
-        Color::Rgb(Rgb::new(0.45, 0.47, 0.5, None))
-    } else if is_image_label(&label) || is_table_label(&label) {
-        Color::Rgb(Rgb::new(0.32, 0.35, 0.38, None))
-    } else {
-        Color::Rgb(Rgb::new(0.08, 0.08, 0.09, None))
-    }
-}
-
-fn wrap_text(text: &str, max_width_pt: f32, font_size_pt: f32) -> Vec<String> {
+/// Wrap a paragraph where the first visual line has `first_width` available
+/// (to leave room for an indent) and subsequent lines have `full_width`.
+fn wrap_paragraph(text: &str, full_width: f32, first_width: f32, font_size: f32) -> Vec<String> {
     let mut out = Vec::new();
-    for paragraph in text.replace("\r\n", "\n").split('\n') {
-        if paragraph.trim().is_empty() {
-            if !out.last().is_some_and(String::is_empty) {
-                out.push(String::new());
-            }
+    for source_line in text.split('\n') {
+        if source_line.trim().is_empty() {
             continue;
         }
         let mut line = String::new();
         let mut width = 0.0_f32;
-        for ch in paragraph.chars() {
-            let ch_width = estimated_char_width(ch) * font_size_pt;
-            if !line.is_empty() && width + ch_width > max_width_pt {
-                out.push(line);
-                line = String::new();
+        for ch in source_line.chars() {
+            let limit = if out.is_empty() {
+                first_width
+            } else {
+                full_width
+            };
+            let ch_width = estimated_char_width(ch) * font_size;
+            if !line.is_empty() && width + ch_width > limit {
+                out.push(mem::take(&mut line));
                 width = 0.0;
             }
             line.push(ch);
@@ -437,11 +819,99 @@ fn wrap_text(text: &str, max_width_pt: f32, font_size_pt: f32) -> Vec<String> {
     out
 }
 
+fn pdf_text_for_role(role: BlockRole, text: &str) -> String {
+    if role == BlockRole::Table && looks_like_html_table(text) {
+        let plain = html_table_to_plain_text(text);
+        if !plain.trim().is_empty() {
+            return plain;
+        }
+    }
+    text.to_string()
+}
+
+fn looks_like_html_table(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("<table") || lower.contains("<tr") || lower.contains("<td")
+}
+
+fn html_table_to_plain_text(text: &str) -> String {
+    let mut out = String::new();
+    let mut tag = String::new();
+    let mut in_tag = false;
+
+    for ch in text.chars() {
+        if in_tag {
+            if ch == '>' {
+                apply_html_table_tag(&mut out, &tag);
+                tag.clear();
+                in_tag = false;
+            } else {
+                tag.push(ch);
+            }
+            continue;
+        }
+        if ch == '<' {
+            in_tag = true;
+        } else {
+            out.push(ch);
+        }
+    }
+
+    normalize_table_text(&decode_basic_html_entities(&out))
+}
+
+fn apply_html_table_tag(out: &mut String, raw_tag: &str) {
+    let tag = raw_tag
+        .trim()
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match tag.as_str() {
+        "tr" => {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        "td" | "th" => {
+            if !out.ends_with('|') && !out.ends_with('\n') {
+                out.push('|');
+            }
+        }
+        "br" => out.push('\n'),
+        _ => {}
+    }
+}
+
+fn normalize_table_text(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            line.split('|')
+                .map(str::trim)
+                .filter(|cell| !cell.is_empty())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_basic_html_entities(text: &str) -> String {
+    text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
 fn estimated_char_width(ch: char) -> f32 {
     if ch.is_ascii_whitespace() {
-        0.35
+        0.3
     } else if ch.is_ascii() {
-        0.55
+        0.52
     } else if is_full_width_char(ch) {
         1.0
     } else {
@@ -461,116 +931,146 @@ fn is_full_width_char(ch: char) -> bool {
     )
 }
 
-fn should_render_block(block: &LayoutBlock, options: &LayoutPdfExportOptions) -> bool {
-    let label = normalized_label(&block.label);
-    if is_header_label(&label) && !options.include_header {
-        return false;
-    }
-    if is_footer_label(&label) && !options.include_footer {
-        return false;
-    }
-    if is_page_number_label(&label) && !options.include_page_number {
-        return false;
-    }
-    if is_aside_label(&label) && !options.include_aside_text {
-        return false;
-    }
-    if is_footnote_label(&label) && !options.include_footnote {
-        return false;
-    }
-    if is_table_label(&label) && !options.include_tables {
-        return false;
-    }
-    true
-}
+// ---------------------------------------------------------------------------
+// Markdown export
+// ---------------------------------------------------------------------------
 
-fn export_text_for_block(block: &LayoutBlock, placeholder: Option<&'static str>) -> String {
-    let trimmed = block.text.trim();
-    match placeholder {
-        Some(prefix) if trimmed.is_empty() => prefix.to_string(),
-        Some(prefix) => format!("{prefix}\n{trimmed}"),
-        None => {
-            if should_approximate_vertical_title(block) {
-                trimmed
-                    .chars()
-                    .map(|c| c.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                trimmed.to_string()
+pub fn export_reading_markdown_to_path(
+    req: LayoutPdfExportRequest,
+) -> AppResult<ReadingMarkdownExportResult> {
+    let target_path = validate_target(&req.target_path, &req.document)?;
+    let mut warnings = Vec::new();
+    if req.options.mode == LayoutPdfExportMode::Bbox {
+        warnings.push("bbox 版式重建已改为阅读版导出".to_string());
+    }
+    let items = build_reading_items(&req.document, &req.options, &mut warnings);
+
+    let mut out = String::new();
+    for item in &items {
+        match (&item.text, &item.anchor) {
+            (None, Some(label)) => {
+                push_para(&mut out, &format!("〔{label}〕"));
             }
+            (Some(text), _) => push_markdown_block(&mut out, item.role, text),
+            _ => {}
         }
     }
+    let markdown = out.trim_start_matches('\n').to_string();
+
+    fs::write(&target_path, markdown)
+        .map_err(|e| AppError::Internal(format!("write {}: {e}", target_path.display())))?;
+
+    let warning_count = warnings.len() as u32;
+    Ok(ReadingMarkdownExportResult {
+        target_path: target_path.display().to_string(),
+        page_count: req.document.pages.len() as u32,
+        warning_count,
+        warnings: warnings.into_iter().take(MAX_RETURNED_WARNINGS).collect(),
+    })
 }
 
-fn should_approximate_vertical_title(block: &LayoutBlock) -> bool {
-    let label = normalized_label(&block.label);
-    if label != "doc_title" && label != "paragraph_title" && label != "title" {
-        return false;
+fn push_para(out: &mut String, text: &str) {
+    if !out.is_empty() && !out.ends_with("\n\n") {
+        out.push_str("\n\n");
     }
-    let w = (block.bbox[2] - block.bbox[0]).abs();
-    let h = (block.bbox[3] - block.bbox[1]).abs();
-    h > w * 1.8 && block.text.chars().count() <= 30
+    out.push_str(text);
+    out.push_str("\n\n");
 }
 
-fn placeholder_text(label: &str) -> Option<&'static str> {
-    if is_image_label(label) {
-        Some("[图片占位]")
-    } else if is_table_label(label) {
-        Some("[表格]")
-    } else {
-        None
+fn push_markdown_block(out: &mut String, role: BlockRole, text: &str) {
+    match role {
+        BlockRole::DocTitle => push_para(out, &format!("# {}", one_line(text))),
+        BlockRole::Heading => push_para(out, &format!("## {}", one_line(text))),
+        BlockRole::FigureCaption => push_para(out, &format!("### {}", one_line(text))),
+        BlockRole::Footnote | BlockRole::Aside => {
+            let quoted = text
+                .split('\n')
+                .map(|l| format!("> {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            push_para(out, &quoted);
+        }
+        BlockRole::Table => {
+            // Keep table content verbatim (often already a Markdown/HTML table).
+            push_para(out, text);
+        }
+        BlockRole::Image
+        | BlockRole::Body
+        | BlockRole::Header
+        | BlockRole::Footer
+        | BlockRole::PageNumber => push_para(out, text),
     }
 }
 
-fn normalized_label(label: &str) -> String {
-    label.trim().to_ascii_lowercase()
+fn one_line(text: &str) -> String {
+    text.split('\n')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-fn is_header_label(label: &str) -> bool {
-    label == "header" || label == "doc_header"
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<PathBuf> {
+    if target_path.trim().is_empty() {
+        return Err(AppError::Config("缺少导出路径".into()));
+    }
+    if document.pages.is_empty() {
+        return Err(AppError::Config("没有可导出的版式页面".into()));
+    }
+    let path = PathBuf::from(target_path);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(AppError::FileNotFound(parent.display().to_string()));
+        }
+    }
+    Ok(path)
 }
 
-fn is_footer_label(label: &str) -> bool {
-    label == "footer" || label == "doc_footer"
-}
-
-fn is_page_number_label(label: &str) -> bool {
-    matches!(label, "number" | "page_number" | "page_no" | "page_num")
-}
-
-fn is_aside_label(label: &str) -> bool {
-    label == "aside_text" || label == "aside"
-}
-
-fn is_footnote_label(label: &str) -> bool {
-    label.contains("footnote")
-}
-
-fn is_table_label(label: &str) -> bool {
-    label.contains("table")
-}
-
-fn is_image_label(label: &str) -> bool {
-    label.contains("image") || label == "figure"
-}
-
-fn collect_required_chars(
-    document: &LayoutDocument,
-    options: &LayoutPdfExportOptions,
-) -> BTreeSet<char> {
-    let mut chars: BTreeSet<char> = "Xcvt版式导出图片占位表格".chars().collect();
-    for page in &document.pages {
-        for block in &page.blocks {
-            if !should_render_block(block, options) {
-                continue;
-            }
-            let label = normalized_label(&block.label);
-            let text = export_text_for_block(block, placeholder_text(&label));
+fn collect_item_chars(items: &[ReadingItem]) -> BTreeSet<char> {
+    let mut chars: BTreeSet<char> = "Xcvt源文件第页〔〕［］图表格未嵌入".chars().collect();
+    for item in items {
+        if let Some(text) = &item.text {
             chars.extend(text.chars().filter(|c| !c.is_control()));
+        }
+        if let Some(anchor) = &item.anchor {
+            chars.extend(anchor.chars().filter(|c| !c.is_control()));
         }
     }
     chars
+}
+
+fn push_missing_char_warning(loaded_font: &LoadedFont, warnings: &mut Vec<String>) {
+    if loaded_font.missing_chars.is_empty() {
+        return;
+    }
+    let preview: String = loaded_font.missing_chars.iter().take(12).collect();
+    warnings.push(format!(
+        "字体 {} 缺少 {} 个字符（{}{}），缺字会显示为空白或替代字形",
+        loaded_font.path.display(),
+        loaded_font.missing_chars.len(),
+        preview,
+        if loaded_font.missing_chars.len() > 12 {
+            "…"
+        } else {
+            ""
+        }
+    ));
+}
+
+#[derive(Debug)]
+struct FontCandidate {
+    path: PathBuf,
+    index: u32,
+}
+
+struct LoadedFont {
+    font: ParsedFont,
+    path: PathBuf,
+    missing_chars: Vec<char>,
 }
 
 fn load_cjk_font(required_chars: &BTreeSet<char>) -> AppResult<LoadedFont> {
@@ -740,92 +1240,423 @@ fn pt_to_mm(pt: f32) -> Mm {
 mod tests {
     use super::*;
 
-    fn block(label: &str, text: &str, bbox: [f64; 4]) -> LayoutBlock {
+    fn block(label: &str, text: &str, bbox: [f64; 4], order: Option<u32>) -> LayoutBlock {
         LayoutBlock {
             label: label.into(),
             text: text.into(),
             bbox,
             polygon: None,
-            order: None,
+            order,
             image_ref: None,
         }
     }
 
+    fn doc(pages: Vec<LayoutPage>) -> LayoutDocument {
+        LayoutDocument {
+            source: "paddle".into(),
+            pages,
+        }
+    }
+
     #[test]
-    fn map_bbox_converts_top_left_to_pdf_bottom_left() {
-        let metrics = PageMetrics {
-            width_pt: 220.0,
-            height_pt: 320.0,
-            margin_pt: 10.0,
-            scale: 0.1,
+    fn classifies_labels_into_roles() {
+        assert_eq!(classify("doc_title"), BlockRole::DocTitle);
+        assert_eq!(classify("paragraph_title"), BlockRole::Heading);
+        assert_eq!(classify("vertical_text"), BlockRole::Body);
+        assert_eq!(classify("text"), BlockRole::Body);
+        assert_eq!(classify("number"), BlockRole::PageNumber);
+        assert_eq!(classify("header"), BlockRole::Header);
+        assert_eq!(classify("vision_footnote"), BlockRole::Footnote);
+        assert_eq!(classify("table"), BlockRole::Table);
+        assert_eq!(classify("image"), BlockRole::Image);
+    }
+
+    #[test]
+    fn clean_block_text_strips_heading_markers() {
+        assert_eq!(clean_block_text("#### 颜序"), "颜序");
+        assert_eq!(clean_block_text("# 新聞學"), "新聞學");
+        assert_eq!(clean_block_text("**重点**"), "重点");
+        assert_eq!(clean_block_text("正文无标记"), "正文无标记");
+    }
+
+    #[test]
+    fn short_vertical_lines_are_joined_for_reading() {
+        assert_eq!(
+            repair_short_vertical_lines("新聞\n\n之\n\n採\n\n集"),
+            "新聞之採集"
+        );
+        assert_eq!(
+            repair_short_vertical_lines("第三節\n\n造題時\n\n應注意之\n\n點"),
+            "第三節造題時應注意之點"
+        );
+        assert_eq!(
+            repair_short_vertical_lines("第一章\n\n新聞學之性質與重要"),
+            "第一章\n\n新聞學之性質與重要"
+        );
+    }
+
+    #[test]
+    fn html_table_is_simplified_for_pdf_text() {
+        let html = "<table><tr><td>A&nbsp;1</td><td>B&amp;2</td></tr><tr><td>C</td><td>D</td></tr></table>";
+        assert_eq!(
+            pdf_text_for_role(BlockRole::Table, html),
+            "A 1 | B&2\nC | D"
+        );
+        assert_eq!(pdf_text_for_role(BlockRole::Body, html), html);
+    }
+
+    #[test]
+    fn image_placeholder_keeps_short_reference() {
+        assert_eq!(
+            image_placeholder(Some("imgs/img_in_image_box_309_947_971_1272.jpg")),
+            "［图片：未嵌入：imgs/img_in_image_box_309_947_971_1272.jpg］"
+        );
+        assert_eq!(
+            image_placeholder(Some(
+                "https://example.test/assets/input_img_0.jpg?authorization=secret"
+            )),
+            "［图片：未嵌入：input_img_0.jpg］"
+        );
+        assert_eq!(image_placeholder(None), "［图片：未嵌入］");
+    }
+
+    #[test]
+    fn repeated_edge_body_text_is_filtered_as_running_header() {
+        let d = doc(vec![
+            LayoutPage {
+                index: 1,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![
+                    block("text", "正文一", [200.0, 200.0, 800.0, 900.0], Some(1)),
+                    block(
+                        "vertical_text",
+                        "新聞學第六章新聞之採集",
+                        [40.0, 300.0, 85.0, 780.0],
+                        Some(2),
+                    ),
+                ],
+            },
+            LayoutPage {
+                index: 2,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![
+                    block("text", "正文二", [200.0, 200.0, 800.0, 900.0], Some(1)),
+                    block(
+                        "vertical_text",
+                        "新聞學第六章新聞之採集",
+                        [42.0, 300.0, 87.0, 780.0],
+                        Some(2),
+                    ),
+                ],
+            },
+            LayoutPage {
+                index: 3,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![
+                    block("text", "正文三", [200.0, 200.0, 800.0, 900.0], Some(1)),
+                    block(
+                        "vertical_text",
+                        "新聞學第六章新聞之採集",
+                        [44.0, 300.0, 89.0, 780.0],
+                        Some(2),
+                    ),
+                ],
+            },
+        ]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
+        let texts = items
+            .iter()
+            .filter_map(|item| item.text.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(texts, vec!["正文一", "正文二", "正文三"]);
+        assert!(warnings.iter().any(|w| w.contains("重复页眉/页脚")));
+
+        let mut opts = LayoutPdfExportOptions::default();
+        opts.include_header = true;
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &opts, &mut warnings);
+        let texts = items
+            .iter()
+            .filter_map(|item| item.text.as_deref())
+            .collect::<Vec<_>>();
+        assert!(texts.contains(&"新聞學第六章新聞之採集"));
+    }
+
+    #[test]
+    fn repeated_edge_heading_is_not_inferred_as_furniture() {
+        let page = |index| LayoutPage {
+            index,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![block(
+                "paragraph_title",
+                "第六章新聞之採集",
+                [40.0, 300.0, 85.0, 780.0],
+                Some(1),
+            )],
         };
-        let rect = map_bbox([100.0, 200.0, 300.0, 500.0], metrics);
-        assert!((rect.x - 20.0).abs() < 0.001);
-        assert!((rect.y - 260.0).abs() < 0.001);
-        assert!((rect.w - 20.0).abs() < 0.001);
-        assert!((rect.h - 30.0).abs() < 0.001);
+        let d = doc(vec![page(1), page(2), page(3)]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
+        let heading_count = items
+            .iter()
+            .filter(|item| item.text.as_deref() == Some("第六章新聞之採集"))
+            .count();
+        assert_eq!(heading_count, 3);
+        assert!(!warnings.iter().any(|w| w.contains("重复页眉/页脚")));
     }
 
     #[test]
-    fn block_filter_respects_header_footer_options() {
-        let opts = LayoutPdfExportOptions {
-            include_header: false,
-            include_footer: false,
-            include_page_number: false,
-            ..Default::default()
+    fn scanner_artifact_blocks_are_dropped_without_empty_anchor() {
+        let d = doc(vec![
+            LayoutPage {
+                index: 1,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![block(
+                    "algorithm",
+                    "Images have been losslessly embedded. Information about the original file can be found in PDF attachments.\n{\"filename_decoded\":\"x.zip\",\"pdg_main_pages_found\":1}",
+                    [50.0, 100.0, 950.0, 500.0],
+                    Some(1),
+                )],
+            },
+            LayoutPage {
+                index: 2,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![block("text", "正文", [50.0, 100.0, 950.0, 500.0], Some(1))],
+            },
+        ]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].anchor.as_deref(), Some("源文件第 2 页"));
+        assert_eq!(items[1].text.as_deref(), Some("正文"));
+        assert!(warnings.iter().any(|w| w.contains("扫描/封装元数据")));
+    }
+
+    #[test]
+    fn ordered_blocks_uses_block_order_then_falls_back_to_position() {
+        // With order present.
+        let page = LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block("text", "second", [0.0, 0.0, 10.0, 10.0], Some(2)),
+                block("text", "first", [0.0, 0.0, 10.0, 10.0], Some(1)),
+            ],
         };
-        assert!(!should_render_block(
-            &block("header", "h", [0.0, 0.0, 1.0, 1.0]),
-            &opts
-        ));
-        assert!(!should_render_block(
-            &block("footer", "f", [0.0, 0.0, 1.0, 1.0]),
-            &opts
-        ));
-        assert!(!should_render_block(
-            &block("number", "1", [0.0, 0.0, 1.0, 1.0]),
-            &opts
-        ));
-        assert!(should_render_block(
-            &block("text", "body", [0.0, 0.0, 1.0, 1.0]),
-            &opts
-        ));
+        let ordered = ordered_blocks(&page);
+        assert_eq!(ordered[0].text, "first");
+        assert_eq!(ordered[1].text, "second");
+
+        // Without order: top-to-bottom, then right-to-left (vertical books).
+        let page = LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block("vertical_text", "left", [100.0, 50.0, 200.0, 900.0], None),
+                block("vertical_text", "right", [800.0, 50.0, 900.0, 900.0], None),
+            ],
+        };
+        let ordered = ordered_blocks(&page);
+        assert_eq!(ordered[0].text, "right");
+        assert_eq!(ordered[1].text, "left");
     }
 
     #[test]
-    fn wrap_text_breaks_full_width_text_by_estimated_width() {
-        let lines = wrap_text("中文中文中文", 20.0, 10.0);
-        assert_eq!(lines, vec!["中文", "中文", "中文"]);
+    fn page_anchor_uses_source_index_not_ocr_number() {
+        let page = LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![block("number", "890\n28", [0.0, 0.0, 10.0, 10.0], None)],
+        };
+        assert_eq!(page_anchor_label(&page), "源文件第 1 页");
+
+        let page = LayoutPage {
+            index: 3,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![block("number", "11", [0.0, 0.0, 10.0, 10.0], None)],
+        };
+        assert_eq!(page_anchor_label(&page), "源文件第 3 页");
     }
 
     #[test]
-    fn image_and_table_blocks_get_visible_placeholders() {
-        assert_eq!(placeholder_text("image"), Some("[图片占位]"));
-        assert_eq!(placeholder_text("table"), Some("[表格]"));
-        assert_eq!(placeholder_text("text"), None);
+    fn page_number_becomes_anchor_and_is_dropped_from_flow() {
+        let opts = LayoutPdfExportOptions::default();
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block("number", "七", [0.0, 0.0, 10.0, 10.0], None),
+                block("text", "正文", [0.0, 20.0, 100.0, 200.0], Some(1)),
+            ],
+        }]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &opts, &mut warnings);
+        // source-page anchor, then body "正文" — the bare OCR number is not a body item.
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].anchor.as_deref(), Some("源文件第 1 页"));
+        assert!(items[0].text.is_none());
+        assert_eq!(items[1].text.as_deref(), Some("正文"));
+    }
+
+    #[test]
+    fn header_footer_filtered_by_default() {
+        let opts = LayoutPdfExportOptions::default();
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block("header", "running head", [0.0, 0.0, 10.0, 10.0], Some(1)),
+                block("text", "body", [0.0, 20.0, 100.0, 200.0], Some(2)),
+                block(
+                    "footer",
+                    "running foot",
+                    [0.0, 900.0, 100.0, 950.0],
+                    Some(3),
+                ),
+            ],
+        }]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &opts, &mut warnings);
+        let texts: Vec<_> = items.iter().filter_map(|i| i.text.as_deref()).collect();
+        assert_eq!(texts, vec!["body"]);
+    }
+
+    #[test]
+    fn markdown_export_restyles_headings_from_label() {
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block(
+                    "paragraph_title",
+                    "#### 颜序",
+                    [0.0, 0.0, 10.0, 10.0],
+                    Some(1),
+                ),
+                block("text", "正文段落", [0.0, 20.0, 100.0, 200.0], Some(2)),
+            ],
+        }]);
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("out.md");
+        let req = LayoutPdfExportRequest {
+            document: d,
+            target_path: target.display().to_string(),
+            options: LayoutPdfExportOptions::default(),
+        };
+        let res = export_reading_markdown_to_path(req).unwrap();
+        assert_eq!(res.page_count, 1);
+        let md = std::fs::read_to_string(target).unwrap();
+        assert!(md.contains("## 颜序"), "heading restyled, got: {md}");
+        assert!(!md.contains("####"), "no stray markers, got: {md}");
+        assert!(md.contains("〔源文件第 1 页〕"));
+        assert!(md.contains("正文段落"));
+    }
+
+    #[test]
+    fn html_is_stripped_from_image_captions_and_header_images_are_filtered() {
+        let opts = LayoutPdfExportOptions::default();
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![
+                block(
+                    "figure_title",
+                    r#"<div style="text-align: center;"><div>邵飘萍</div></div>"#,
+                    [0.0, 0.0, 10.0, 10.0],
+                    Some(1),
+                ),
+                block(
+                    "header_image",
+                    r#"<div><img src="header.jpg" /></div>"#,
+                    [0.0, 0.0, 10.0, 10.0],
+                    Some(2),
+                ),
+                block(
+                    "image",
+                    r#"<div><img src="x.jpg" /></div>"#,
+                    [0.0, 0.0, 10.0, 10.0],
+                    Some(3),
+                ),
+            ],
+        }]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &opts, &mut warnings);
+        let texts: Vec<_> = items.iter().filter_map(|i| i.text.as_deref()).collect();
+        assert_eq!(texts, vec!["邵飘萍", "［图片：未嵌入］"]);
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
-    fn exports_selectable_text_pdf_with_system_cjk_font() {
+    fn exports_multi_page_reading_pdf() {
+        // A big block so the reflow spills onto multiple A4 pages.
+        let long = "中文正文测试。".repeat(2000);
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![block("text", &long, [80.0, 120.0, 900.0, 1400.0], Some(1))],
+        }]);
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("layout.pdf");
+        let target = dir.path().join("reading.pdf");
         let req = LayoutPdfExportRequest {
-            document: LayoutDocument {
-                source: "paddle".into(),
-                pages: vec![LayoutPage {
-                    index: 1,
-                    width: 1000.0,
-                    height: 1400.0,
-                    blocks: vec![block("text", "中文正文 ABC", [80.0, 120.0, 600.0, 260.0])],
-                }],
-            },
+            document: d,
             target_path: target.display().to_string(),
             options: LayoutPdfExportOptions::default(),
         };
         let result = export_layout_pdf_to_path(req).unwrap();
-        assert_eq!(result.page_count, 1);
+        assert!(result.page_count > 1, "expected reflow across pages");
         let bytes = std::fs::read(target).unwrap();
         assert!(bytes.starts_with(b"%PDF-"));
+    }
+
+    /// Manual end-to-end check against a real Paddle JSON export. Run with:
+    /// `XCVT_SAMPLE_JSON=/path/book.json cargo test --manifest-path src-tauri/Cargo.toml
+    ///  reading_export_from_real_json -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn reading_export_from_real_json() {
+        let json_path = std::env::var("XCVT_SAMPLE_JSON").expect("set XCVT_SAMPLE_JSON");
+        let import = xcvt_core::ocr::paddle_json::analyze_path(std::path::Path::new(&json_path))
+            .expect("analyze json");
+        let stem = std::path::Path::new(&json_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("sample")
+            .to_string();
+        let out_dir = std::env::var("XCVT_OUT_DIR").unwrap_or_else(|_| "/tmp".into());
+        let pdf = format!("{out_dir}/{stem}_阅读版.pdf");
+        let md = format!("{out_dir}/{stem}_阅读版.md");
+        let pdf_res = export_layout_pdf_to_path(LayoutPdfExportRequest {
+            document: import.document.clone(),
+            target_path: pdf.clone(),
+            options: LayoutPdfExportOptions::default(),
+        })
+        .expect("export pdf");
+        let md_res = export_reading_markdown_to_path(LayoutPdfExportRequest {
+            document: import.document,
+            target_path: md.clone(),
+            options: LayoutPdfExportOptions::default(),
+        })
+        .expect("export md");
+        println!("PDF  -> {pdf} ({} pages)", pdf_res.page_count);
+        println!("MD   -> {md} ({} src pages)", md_res.page_count);
+        for w in pdf_res.warnings.iter().chain(md_res.warnings.iter()) {
+            println!("warn: {w}");
+        }
     }
 }
