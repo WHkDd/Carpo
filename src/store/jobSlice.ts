@@ -62,6 +62,10 @@ export interface RecognizedPage {
   layout?: LayoutPage;
   status: RecognizedPageStatus;
   error?: string;
+  /** True when the user edited the page-level OCR source directly. In that
+   *  case block-level layout text may be stale, so reading exports should
+   *  prefer the page text for this page. */
+  textEdited?: boolean;
   sourceMode: RecognizedPageSourceMode;
   sourceJobId?: string;
   chunkId?: string;
@@ -88,6 +92,9 @@ function mergeRecognizedPage(
   const merged = { ...base, ...next };
   if (merged.status !== "failed") {
     delete merged.error;
+  }
+  if (!next.textEdited) {
+    delete merged.textEdited;
   }
   return merged;
 }
@@ -341,8 +348,8 @@ export const createJobSlice: StateCreator<
       state.recognizedPages[fileId] = {
         ...prevPages,
         [page]: prev
-          ? { ...prev, text }
-          : { text, status: "done", sourceMode: "page_image" },
+          ? { ...prev, text, textEdited: true }
+          : { text, status: "done", sourceMode: "page_image", textEdited: true },
       };
     }),
   updateLayoutBlockText: (fileId, page, blockIndex, text) =>

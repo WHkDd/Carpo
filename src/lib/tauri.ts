@@ -17,6 +17,7 @@ import type {
   LayoutPdfExportResult,
   PaddleJsonImport,
   PaddleJsonPreflightReport,
+  ReadingMarkdownExportResult,
 } from "./layout-document";
 
 /**
@@ -263,6 +264,15 @@ export async function exportLayoutPdf(
     throw new Error("版式 PDF 导出只在桌面版可用");
   }
   return invoke<LayoutPdfExportResult>("export_layout_pdf", { req });
+}
+
+export async function exportReadingMarkdown(
+  req: LayoutPdfExportRequest
+): Promise<ReadingMarkdownExportResult> {
+  if (!isTauriRuntime()) {
+    throw new Error("Markdown 导出只在桌面版可用");
+  }
+  return invoke<ReadingMarkdownExportResult>("export_reading_markdown", { req });
 }
 
 export interface UploadedFile {

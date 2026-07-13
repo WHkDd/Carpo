@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
-import { AlertTriangle, FileDown, FileJson, X } from "lucide-react";
+import { AlertTriangle, FileDown, FileJson, FileText, X } from "lucide-react";
 import { appErrorMessage } from "@/lib/ipc-types";
 import {
   analyzePaddleJson as ipcAnalyzePaddleJson,
   exportLayoutPdf as ipcExportLayoutPdf,
+  exportReadingMarkdown as ipcExportReadingMarkdown,
   importPaddleJson as ipcImportPaddleJson,
 } from "@/lib/tauri";
 import type {
+  LayoutPdfExportOptions,
   PaddleJsonImport,
   PaddleJsonPreflightReport,
 } from "@/lib/layout-document";
@@ -50,10 +52,11 @@ const STRUCTURE_DESCRIPTIONS: Array<{
 ];
 
 const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
+const MD_FILTERS = [{ name: "Markdown", extensions: ["md"] }];
 
-function defaultPdfNameFromPath(path: string): string {
+function defaultExportNameFromPath(path: string, ext: string): string {
   const filename = path.split(/[\\/]/).pop() || "paddle-json";
-  return `${filename.replace(/\.[^.]+$/, "")}_版式重建.pdf`;
+  return `${filename.replace(/\.[^.]+$/, "")}_阅读版.${ext}`;
 }
 
 export function PaddleJsonImportDialog({
@@ -63,7 +66,11 @@ export function PaddleJsonImportDialog({
 }: PaddleJsonImportDialogProps) {
   const [state, setState] = useState<DialogState>({ status: "loading" });
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingMarkdown, setExportingMarkdown] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [exportOptions, setExportOptions] = useState<LayoutPdfExportOptions>(
+    DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS
+  );
 
   const currentFile = useStore((s) =>
     s.currentFileId
@@ -81,6 +88,7 @@ export function PaddleJsonImportDialog({
     let cancelled = false;
     setState({ status: "loading" });
     setExportMessage(null);
+    setExportOptions(DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS);
     // Pull the full import payload up front: the Rust side already does the
     // heavy parse work, and confirming should be instant. If the user
     // cancels, we just throw the parsed payload away.
@@ -144,30 +152,57 @@ export function PaddleJsonImportDialog({
     }
   }
 
-  async function exportLayoutPdf(): Promise<void> {
+  async function exportReadingPdf(): Promise<void> {
     if (state.status !== "ready" || !state.imported || !path) return;
     setExportingPdf(true);
     setExportMessage(null);
     try {
       const targetPath = await saveDialog({
-        defaultPath: defaultPdfNameFromPath(path),
+        defaultPath: defaultExportNameFromPath(path, "pdf"),
         filters: PDF_FILTERS,
       });
       if (!targetPath) return;
       const result = await ipcExportLayoutPdf({
         document: state.imported.document,
         targetPath,
-        options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+        options: exportOptions,
       });
       setExportMessage(
         result.warningCount > 0
-          ? `已导出 ${result.pageCount} 页 · ${result.warningCount} 个提示`
-          : `已导出 ${result.pageCount} 页`
+          ? `已导出 PDF ${result.pageCount} 页 · ${result.warningCount} 个提示`
+          : `已导出 PDF ${result.pageCount} 页`
       );
     } catch (e) {
       setExportMessage(`导出失败：${appErrorMessage(e)}`);
     } finally {
       setExportingPdf(false);
+    }
+  }
+
+  async function exportReadingMarkdown(): Promise<void> {
+    if (state.status !== "ready" || !state.imported || !path) return;
+    setExportingMarkdown(true);
+    setExportMessage(null);
+    try {
+      const targetPath = await saveDialog({
+        defaultPath: defaultExportNameFromPath(path, "md"),
+        filters: MD_FILTERS,
+      });
+      if (!targetPath) return;
+      const result = await ipcExportReadingMarkdown({
+        document: state.imported.document,
+        targetPath,
+        options: exportOptions,
+      });
+      setExportMessage(
+        result.warningCount > 0
+          ? `已导出 Markdown ${result.pageCount} 页 · ${result.warningCount} 个提示`
+          : `已导出 Markdown ${result.pageCount} 页`
+      );
+    } catch (e) {
+      setExportMessage(`导出失败：${appErrorMessage(e)}`);
+    } finally {
+      setExportingMarkdown(false);
     }
   }
 
@@ -224,10 +259,16 @@ export function PaddleJsonImportDialog({
 
           {(state.status === "ready" || state.status === "writing") &&
             state.preflight && (
-              <PreflightSummary
-                preflight={state.preflight}
-                pdfTotal={currentPdf?.pdfTotal}
-              />
+              <div className="flex flex-col gap-4">
+                <PreflightSummary
+                  preflight={state.preflight}
+                  pdfTotal={currentPdf?.pdfTotal}
+                />
+                <ExportOptionsPanel
+                  options={exportOptions}
+                  onChange={setExportOptions}
+                />
+              </div>
             )}
         </div>
 
@@ -264,16 +305,31 @@ export function PaddleJsonImportDialog({
               )}
               <button
                 type="button"
-                onClick={() => void exportLayoutPdf()}
+                onClick={() => void exportReadingMarkdown()}
+                disabled={
+                  exportingMarkdown ||
+                  exportingPdf ||
+                  state.status !== "ready" ||
+                  !state.imported?.document.pages.length
+                }
+                className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
+                {exportingMarkdown ? "导出中…" : "导出 Markdown"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void exportReadingPdf()}
                 disabled={
                   exportingPdf ||
+                  exportingMarkdown ||
                   state.status !== "ready" ||
                   !state.imported?.document.pages.length
                 }
                 className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
-                {exportingPdf ? "导出中…" : "导出版式 PDF"}
+                {exportingPdf ? "导出中…" : "导出阅读版 PDF"}
               </button>
             </div>
           </footer>
@@ -418,6 +474,84 @@ function PreflightSummary({
         </div>
       )}
     </div>
+  );
+}
+
+function ExportOptionsPanel({
+  options,
+  onChange,
+}: {
+  options: LayoutPdfExportOptions;
+  onChange: (next: LayoutPdfExportOptions) => void;
+}) {
+  const setOption = <K extends keyof LayoutPdfExportOptions>(
+    key: K,
+    value: LayoutPdfExportOptions[K]
+  ) => onChange({ ...options, [key]: value });
+
+  return (
+    <div className="rounded border border-border/40 bg-surface px-3 py-2">
+      <div className="mb-2 text-[11px] font-medium text-foreground-muted">
+        阅读版导出选项
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        <OptionCheck
+          label="源文件页锚"
+          checked={options.includePageNumber}
+          onChange={(v) => setOption("includePageNumber", v)}
+        />
+        <OptionCheck
+          label="脚注"
+          checked={options.includeFootnote}
+          onChange={(v) => setOption("includeFootnote", v)}
+        />
+        <OptionCheck
+          label="表格"
+          checked={options.includeTables}
+          onChange={(v) => setOption("includeTables", v)}
+        />
+        <OptionCheck
+          label="旁注"
+          checked={options.includeAsideText}
+          onChange={(v) => setOption("includeAsideText", v)}
+        />
+        <OptionCheck
+          label="页眉"
+          checked={options.includeHeader}
+          onChange={(v) => setOption("includeHeader", v)}
+        />
+        <OptionCheck
+          label="页脚"
+          checked={options.includeFooter}
+          onChange={(v) => setOption("includeFooter", v)}
+        />
+      </div>
+      <p className="mt-2 text-[10.5px] text-foreground-subtle">
+        正文图片暂以占位和图注保留，不做联网下载内嵌。
+      </p>
+    </div>
+  );
+}
+
+function OptionCheck({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-[12px] text-foreground-muted">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.currentTarget.checked)}
+        className="h-3.5 w-3.5 accent-primary"
+      />
+      <span>{label}</span>
+    </label>
   );
 }
 
