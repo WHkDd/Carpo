@@ -566,13 +566,6 @@ export function OcrTextPanel() {
               {titleLabel}
             </span>
           )}
-          {(hasText || (viewMode === "blocks" && currentLayout)) && (
-            <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-subtle tabular-nums">
-              {viewMode === "blocks" && currentLayout
-                ? `${currentLayout.blocks.length.toLocaleString()} 块`
-                : `${charCount.toLocaleString()} 字`}
-            </span>
-          )}
         </div>
         {hasContent && (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
@@ -709,6 +702,16 @@ export function OcrTextPanel() {
           className="min-h-0 flex-1 rounded-md border border-dashed border-border/50 bg-background/35"
           aria-hidden
         />
+      )}
+
+      {(hasText || (viewMode === "blocks" && currentLayout)) && (
+        <div className="flex shrink-0 items-center px-1.5">
+          <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-subtle tabular-nums">
+            {viewMode === "blocks" && currentLayout
+              ? `${currentLayout.blocks.length.toLocaleString()} 块`
+              : `${charCount.toLocaleString()} 字`}
+          </span>
+        </div>
       )}
     </div>
   );
