@@ -32,8 +32,8 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
   if (queueCollapsed) {
     return (
       <>
-        <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-surface pb-2">
-          <div className="min-h-0 overflow-hidden px-2 pb-2">
+        <aside className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-surface pb-2">
+          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden px-2 pb-2">
             <div className="mb-2 flex h-7 items-center justify-center">
               <button
                 type="button"
@@ -67,16 +67,18 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
             </div>
 
             {files.length > 0 && (
-              <div className="flex flex-col items-center gap-1 overflow-y-auto pb-3">
-                {files.map((entry) => (
-                  <QueueItemCompact
-                    key={entry.id}
-                    entry={entry}
-                    active={entry.id === currentFileId}
-                    onSelect={setCurrent}
-                    onRemove={removeFile}
-                  />
-                ))}
+              <div className="min-h-0 overflow-y-auto pb-3">
+                <div className="flex flex-col items-center gap-1">
+                  {files.map((entry) => (
+                    <QueueItemCompact
+                      key={entry.id}
+                      entry={entry}
+                      active={entry.id === currentFileId}
+                      onSelect={setCurrent}
+                      onRemove={removeFile}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -105,8 +107,8 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
 
   return (
     <>
-      <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-surface pb-2">
-        <div className="min-h-0 overflow-hidden px-2 pb-2">
+      <aside className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-surface pb-2">
+        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden px-2 pb-2">
           <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5 text-[11px] font-semibold text-foreground-subtle">
             <div className="flex min-w-0 items-center gap-2">
               <span>扫描队列</span>
@@ -158,7 +160,7 @@ export function QueuePanel({ onOpenSettings }: QueuePanelProps) {
               或点此添加文件
             </button>
           ) : (
-            <div className="space-y-1 overflow-y-auto pb-3">
+            <div className="min-h-0 space-y-1 overflow-y-auto pb-3 pr-1">
               {files.map((entry) => (
                 <QueueItem
                   key={entry.id}
