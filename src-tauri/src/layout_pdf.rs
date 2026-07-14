@@ -230,9 +230,9 @@ fn page_anchor_label(page: &LayoutPage) -> String {
     format!("源文件第 {} 页", page.index)
 }
 
-/// Strip leading Markdown block markers (`#`, `>`, `-`, `*`, list bullets) and
-/// surrounding bold/italic emphasis so headings can be re-styled from the label
-/// and body text never shows a stray `####`.
+/// Strip leading Markdown heading/quote markers (`#`, `>`) and a single layer of
+/// surrounding bold/italic/code emphasis (`***`, `**`, `*`, `` ` ``) so headings
+/// can be re-styled from the label and body text never shows a stray `####`.
 fn clean_block_text(text: &str) -> String {
     let mut out_lines = Vec::new();
     for raw in text.replace("\r\n", "\n").split('\n') {
@@ -515,10 +515,15 @@ fn should_strip_html_for_role(role: BlockRole) -> bool {
     )
 }
 
+/// Only title-like blocks get their per-column line fragments joined back into
+/// one phrase. Body blocks are excluded on purpose: a genuine body block whose
+/// lines all happen to be short (a vertical directory column, a couplet, a short
+/// list) would otherwise be collapsed into one run-on line with its entries
+/// silently merged.
 fn should_repair_short_lines(role: BlockRole) -> bool {
     matches!(
         role,
-        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption | BlockRole::Body
+        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption
     )
 }
 
