@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
-import { AlertTriangle, FileDown, FileJson, FileText, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  FileDown,
+  FileJson,
+  FileText,
+  X,
+} from "lucide-react";
 import { appErrorMessage } from "@/lib/ipc-types";
 import {
   analyzePaddleJson as ipcAnalyzePaddleJson,
@@ -36,6 +43,13 @@ interface DialogState {
   errorMessage?: string;
 }
 
+interface ExportFeedback {
+  kind: "success" | "error";
+  summary: string;
+  warningCount: number;
+  warnings: string[];
+}
+
 /** Static blurb for each preflight bullet. The dialog labels these as
  *  "已确认开启 / 已确认关闭 / 结构存在 / 结构缺失" per plan §9.5. */
 const STRUCTURE_DESCRIPTIONS: Array<{
@@ -54,6 +68,45 @@ const STRUCTURE_DESCRIPTIONS: Array<{
 const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
 const MD_FILTERS = [{ name: "Markdown", extensions: ["md"] }];
 
+/** Which raw block labels each label-gated export option governs. Mirrors
+ *  `classify()` in layout_pdf.rs: exact-match roles win over the contains()
+ *  fallbacks (so `table_title` is a caption, not a table). `includePageNumber`
+ *  is absent on purpose — the page anchor is synthesized, not label-based. */
+type LabelGatedOption = "header" | "footer" | "aside" | "footnote" | "table";
+
+const HEADER_LABELS = new Set(["header", "doc_header", "header_image"]);
+const FOOTER_LABELS = new Set(["footer", "doc_footer", "footer_image"]);
+const ASIDE_LABELS = new Set(["aside_text", "aside"]);
+const CAPTION_LABELS = new Set(["figure_title", "chart_title", "table_title"]);
+
+function labelGatedRole(rawLabel: string): LabelGatedOption | null {
+  const label = rawLabel.trim().toLowerCase();
+  if (HEADER_LABELS.has(label)) return "header";
+  if (FOOTER_LABELS.has(label)) return "footer";
+  if (ASIDE_LABELS.has(label)) return "aside";
+  if (CAPTION_LABELS.has(label)) return null;
+  if (label.includes("footnote")) return "footnote";
+  if (label.includes("table")) return "table";
+  return null;
+}
+
+function countLabelGatedBlocks(
+  labelCounts: Record<string, number>
+): Record<LabelGatedOption, number> {
+  const counts: Record<LabelGatedOption, number> = {
+    header: 0,
+    footer: 0,
+    aside: 0,
+    footnote: 0,
+    table: 0,
+  };
+  for (const [label, count] of Object.entries(labelCounts)) {
+    const role = labelGatedRole(label);
+    if (role) counts[role] += count;
+  }
+  return counts;
+}
+
 function defaultExportNameFromPath(path: string, ext: string): string {
   const filename = path.split(/[\\/]/).pop() || "paddle-json";
   return `${filename.replace(/\.[^.]+$/, "")}_阅读版.${ext}`;
@@ -67,7 +120,10 @@ export function PaddleJsonImportDialog({
   const [state, setState] = useState<DialogState>({ status: "loading" });
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportingMarkdown, setExportingMarkdown] = useState(false);
-  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(
+    null
+  );
+  const [exportWarningsOpen, setExportWarningsOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<LayoutPdfExportOptions>(
     DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS
   );
@@ -87,7 +143,8 @@ export function PaddleJsonImportDialog({
     if (!open || !path) return;
     let cancelled = false;
     setState({ status: "loading" });
-    setExportMessage(null);
+    setExportFeedback(null);
+    setExportWarningsOpen(false);
     setExportOptions(DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS);
     // Pull the full import payload up front: the Rust side already does the
     // heavy parse work, and confirming should be instant. If the user
@@ -155,7 +212,8 @@ export function PaddleJsonImportDialog({
   async function exportReadingPdf(): Promise<void> {
     if (state.status !== "ready" || !state.imported || !path) return;
     setExportingPdf(true);
-    setExportMessage(null);
+    setExportFeedback(null);
+    setExportWarningsOpen(false);
     try {
       const targetPath = await saveDialog({
         defaultPath: defaultExportNameFromPath(path, "pdf"),
@@ -167,13 +225,19 @@ export function PaddleJsonImportDialog({
         targetPath,
         options: exportOptions,
       });
-      setExportMessage(
-        result.warningCount > 0
-          ? `已导出 PDF ${result.pageCount} 页 · ${result.warningCount} 个提示`
-          : `已导出 PDF ${result.pageCount} 页`
-      );
+      setExportFeedback({
+        kind: "success",
+        summary: `已导出 PDF ${result.pageCount} 页`,
+        warningCount: result.warningCount,
+        warnings: result.warnings,
+      });
     } catch (e) {
-      setExportMessage(`导出失败：${appErrorMessage(e)}`);
+      setExportFeedback({
+        kind: "error",
+        summary: `导出失败：${appErrorMessage(e)}`,
+        warningCount: 0,
+        warnings: [],
+      });
     } finally {
       setExportingPdf(false);
     }
@@ -182,7 +246,8 @@ export function PaddleJsonImportDialog({
   async function exportReadingMarkdown(): Promise<void> {
     if (state.status !== "ready" || !state.imported || !path) return;
     setExportingMarkdown(true);
-    setExportMessage(null);
+    setExportFeedback(null);
+    setExportWarningsOpen(false);
     try {
       const targetPath = await saveDialog({
         defaultPath: defaultExportNameFromPath(path, "md"),
@@ -194,13 +259,19 @@ export function PaddleJsonImportDialog({
         targetPath,
         options: exportOptions,
       });
-      setExportMessage(
-        result.warningCount > 0
-          ? `已导出 Markdown ${result.pageCount} 页 · ${result.warningCount} 个提示`
-          : `已导出 Markdown ${result.pageCount} 页`
-      );
+      setExportFeedback({
+        kind: "success",
+        summary: `已导出 Markdown ${result.pageCount} 页`,
+        warningCount: result.warningCount,
+        warnings: result.warnings,
+      });
     } catch (e) {
-      setExportMessage(`导出失败：${appErrorMessage(e)}`);
+      setExportFeedback({
+        kind: "error",
+        summary: `导出失败：${appErrorMessage(e)}`,
+        warningCount: 0,
+        warnings: [],
+      });
     } finally {
       setExportingMarkdown(false);
     }
@@ -266,6 +337,7 @@ export function PaddleJsonImportDialog({
                 />
                 <ExportOptionsPanel
                   options={exportOptions}
+                  labelCounts={state.preflight.labelCounts}
                   onChange={setExportOptions}
                 />
               </div>
@@ -273,64 +345,120 @@ export function PaddleJsonImportDialog({
         </div>
 
         {(state.status === "ready" || state.status === "writing") && (
-          <footer className="flex items-center justify-between gap-2 border-t border-border bg-surface-2 px-5 py-3">
-            <span
-              className={`min-w-0 flex-1 truncate text-[11px] ${
-                exportMessage?.startsWith("导出失败")
-                  ? "text-destructive"
-                  : "text-foreground-subtle"
-              }`}
-              title={exportMessage ?? undefined}
-            >
-              {exportMessage ?? ""}
-            </span>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
+          <footer className="flex flex-col gap-2 border-t border-border bg-surface-2 px-5 py-3">
+            {exportFeedback?.kind === "success" &&
+              exportFeedback.warningCount > 0 && (
+                <div
+                  id="paddle-export-warnings"
+                  hidden={!exportWarningsOpen}
+                  className="rounded border border-warning/30 bg-surface px-3 py-2"
+                >
+                  <div className="mb-1 text-[11px] font-medium text-foreground-muted">
+                    导出提示
+                  </div>
+                  <ul className="flex max-h-28 flex-col gap-1 overflow-y-auto">
+                    {exportFeedback.warnings.map((warning, idx) => (
+                      <li
+                        key={`${idx}-${warning}`}
+                        className="flex items-start gap-1.5 text-[11px] leading-relaxed text-foreground-muted"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
+                        <span>{warning}</span>
+                      </li>
+                    ))}
+                    {exportFeedback.warningCount >
+                      exportFeedback.warnings.length && (
+                      <li className="text-[11px] text-foreground-subtle">
+                        另有 {exportFeedback.warningCount - exportFeedback.warnings.length}{" "}
+                        条提示未返回详细内容。
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className={`flex min-w-0 flex-1 items-center gap-1.5 text-[11px] ${
+                  exportFeedback?.kind === "error"
+                    ? "text-destructive"
+                    : "text-foreground-subtle"
+                }`}
               >
-                取消
-              </button>
-              {currentPdf && (
+                <span
+                  className="truncate"
+                  title={exportFeedback?.summary}
+                >
+                  {exportFeedback?.summary ?? ""}
+                </span>
+                {exportFeedback?.kind === "success" &&
+                  exportFeedback.warningCount > 0 && (
+                    <button
+                      type="button"
+                      aria-expanded={exportWarningsOpen}
+                      aria-controls="paddle-export-warnings"
+                      onClick={() => setExportWarningsOpen((open) => !open)}
+                      className="inline-flex shrink-0 items-center gap-0.5 font-medium text-foreground-muted hover:text-foreground"
+                    >
+                      {exportWarningsOpen ? "收起" : "查看"}{" "}
+                      {exportFeedback.warningCount} 条导出提示
+                      <ChevronDown
+                        className={`h-3 w-3 transition-transform ${
+                          exportWarningsOpen ? "rotate-180" : ""
+                        }`}
+                        strokeWidth={1.75}
+                      />
+                    </button>
+                  )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  onClick={commit}
-                  disabled={state.status !== "ready" || !currentFileId}
-                  className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  title={`写入到「${currentPdf.name}」`}
+                  onClick={onClose}
+                  className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
                 >
-                  写入按页文本
+                  取消
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void exportReadingMarkdown()}
-                disabled={
-                  exportingMarkdown ||
-                  exportingPdf ||
-                  state.status !== "ready" ||
-                  !state.imported?.document.pages.length
-                }
-                className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
-                {exportingMarkdown ? "导出中…" : "导出 Markdown"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void exportReadingPdf()}
-                disabled={
-                  exportingPdf ||
-                  exportingMarkdown ||
-                  state.status !== "ready" ||
-                  !state.imported?.document.pages.length
-                }
-                className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
-                {exportingPdf ? "导出中…" : "导出阅读版 PDF"}
-              </button>
+                {currentPdf && (
+                  <button
+                    type="button"
+                    onClick={commit}
+                    disabled={state.status !== "ready" || !currentFileId}
+                    className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    title={`写入到「${currentPdf.name}」`}
+                  >
+                    写入按页文本
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void exportReadingMarkdown()}
+                  disabled={
+                    exportingMarkdown ||
+                    exportingPdf ||
+                    state.status !== "ready" ||
+                    !state.imported?.document.pages.length
+                  }
+                  className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  {exportingMarkdown ? "导出中…" : "导出 Markdown"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportReadingPdf()}
+                  disabled={
+                    exportingPdf ||
+                    exportingMarkdown ||
+                    state.status !== "ready" ||
+                    !state.imported?.document.pages.length
+                  }
+                  className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  {exportingPdf ? "导出中…" : "导出阅读版 PDF"}
+                </button>
+              </div>
             </div>
           </footer>
         )}
@@ -458,7 +586,7 @@ function PreflightSummary({
       {preflight.warnings.length > 0 && (
         <div>
           <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-            提示
+            导入检查提示
           </div>
           <ul className="flex flex-col gap-1">
             {preflight.warnings.map((warning, idx) => (
@@ -479,15 +607,21 @@ function PreflightSummary({
 
 function ExportOptionsPanel({
   options,
+  labelCounts,
   onChange,
 }: {
   options: LayoutPdfExportOptions;
+  labelCounts: Record<string, number>;
   onChange: (next: LayoutPdfExportOptions) => void;
 }) {
   const setOption = <K extends keyof LayoutPdfExportOptions>(
     key: K,
     value: LayoutPdfExportOptions[K]
   ) => onChange({ ...options, [key]: value });
+  const blockCounts = useMemo(
+    () => countLabelGatedBlocks(labelCounts),
+    [labelCounts]
+  );
 
   return (
     <div className="rounded border border-border/40 bg-surface px-3 py-2">
@@ -502,26 +636,31 @@ function ExportOptionsPanel({
         />
         <OptionCheck
           label="脚注"
+          count={blockCounts.footnote}
           checked={options.includeFootnote}
           onChange={(v) => setOption("includeFootnote", v)}
         />
         <OptionCheck
           label="表格"
+          count={blockCounts.table}
           checked={options.includeTables}
           onChange={(v) => setOption("includeTables", v)}
         />
         <OptionCheck
           label="旁注"
+          count={blockCounts.aside}
           checked={options.includeAsideText}
           onChange={(v) => setOption("includeAsideText", v)}
         />
         <OptionCheck
           label="页眉"
+          count={blockCounts.header}
           checked={options.includeHeader}
           onChange={(v) => setOption("includeHeader", v)}
         />
         <OptionCheck
           label="页脚"
+          count={blockCounts.footer}
           checked={options.includeFooter}
           onChange={(v) => setOption("includeFooter", v)}
         />
@@ -537,20 +676,36 @@ function OptionCheck({
   label,
   checked,
   onChange,
+  count,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  /** Block count for label-gated options; omit for options that always
+   *  apply (e.g. the synthesized page anchor). Zero disables the checkbox. */
+  count?: number;
 }) {
+  const disabled = count === 0;
   return (
-    <label className="flex items-center gap-1.5 text-[12px] text-foreground-muted">
+    <label
+      className={`flex items-center gap-1.5 text-[12px] ${
+        disabled ? "cursor-not-allowed text-foreground-subtle" : "text-foreground-muted"
+      }`}
+      title={disabled ? "此文件中没有该类区块，选项不生效" : undefined}
+    >
       <input
         type="checkbox"
-        checked={checked}
+        checked={checked && !disabled}
+        disabled={disabled}
         onChange={(e) => onChange(e.currentTarget.checked)}
-        className="h-3.5 w-3.5 accent-primary"
+        className="h-3.5 w-3.5 accent-primary disabled:cursor-not-allowed"
       />
       <span>{label}</span>
+      {count != null && (
+        <span className="text-[10.5px] tabular-nums text-foreground-subtle">
+          {count > 0 ? count.toLocaleString() : "无"}
+        </span>
+      )}
     </label>
   );
 }
