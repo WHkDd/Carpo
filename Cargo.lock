@@ -6365,7 +6365,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xcvt"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "keyring",
  "log",
@@ -6388,7 +6388,7 @@ dependencies = [
 
 [[package]]
 name = "xcvt-core"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -6409,7 +6409,7 @@ dependencies = [
 
 [[package]]
 name = "xcvt-server"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "axum",
