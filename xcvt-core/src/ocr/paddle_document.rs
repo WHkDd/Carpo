@@ -233,11 +233,21 @@ pub async fn recognize_document(
 ) -> AppResult<Vec<DocPageResult>> {
     if token.is_empty() {
         return Err(AppError::Config(
-            "PaddleOCR：尚未配置 Token，请在设置中填入。".into(),
+            crate::tr!(
+                "PaddleOCR：尚未配置 Token，请在设置中填入。",
+                "PaddleOCR: no token configured — set one in Settings."
+            )
+            .into(),
         ));
     }
     if requested_pages.is_empty() {
-        return Err(AppError::Config("文档级 OCR 没有可识别的页面".into()));
+        return Err(AppError::Config(
+            crate::tr!(
+                "文档级 OCR 没有可识别的页面",
+                "Document-level OCR has no pages to recognize"
+            )
+            .into(),
+        ));
     }
     let job_url = job_url.trim_end_matches('/');
 
@@ -454,9 +464,7 @@ async fn poll_once(
                 .ok_or_else(|| ocr_err("poll", "done state missing resultUrl.jsonUrl", false))?;
             PollOutcome::Done(json_url)
         }
-        "failed" => {
-            PollOutcome::Failed(data.error_msg.unwrap_or_else(|| "unknown error".into()))
-        }
+        "failed" => PollOutcome::Failed(data.error_msg.unwrap_or_else(|| "unknown error".into())),
         _ => PollOutcome::Pending,
     };
     Ok((progress, outcome))
@@ -523,8 +531,9 @@ fn map_jsonl_pages_to_requested(
     if pages.len() != requested_pages.len() {
         return Err(ocr_err(
             "result",
-            format!(
+            crate::trf!(
                 "结果页数（{}）与请求页数（{}）不一致，为避免文本错位到错误页面已中止映射",
+                "The result has {} pages but {} were requested — mapping was aborted so text cannot land on the wrong page",
                 pages.len(),
                 requested_pages.len()
             ),

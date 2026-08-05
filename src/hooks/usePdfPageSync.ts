@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { t } from "@/i18n";
 import { renderPage } from "@/lib/tauri";
 import { logError } from "@/lib/runtime";
 import { appErrorMessage } from "@/lib/ipc-types";
@@ -94,7 +95,7 @@ export function usePdfPageSync(): void {
         if (requestTokens.current.get(fileId) !== token) return;
         const message = appErrorMessage(err);
         void logError(`renderPage failed: ${path} page=${targetPage}: ${message}`);
-        setStatusText(`渲染失败 · 第 ${targetPage} 页`);
+        setStatusText(t("import.renderFailed", { page: targetPage }));
       }
     })();
 

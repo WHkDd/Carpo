@@ -134,7 +134,11 @@ pub async fn recognize(
 ) -> AppResult<String> {
     if token.is_empty() {
         return Err(AppError::Config(
-            "PaddleOCR：尚未配置 Token，请在设置中填入。".into(),
+            crate::tr!(
+                "PaddleOCR：尚未配置 Token，请在设置中填入。",
+                "PaddleOCR: no token configured — set one in Settings."
+            )
+            .into(),
         ));
     }
     let job_url = if job_url.is_empty() {

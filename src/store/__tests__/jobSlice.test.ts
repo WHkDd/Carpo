@@ -92,12 +92,13 @@ describe("jobSlice", () => {
       done: 8,
       total: 270,
       label: "识别中 · 已完成 8/270 页",
+      stage: { kind: "document_running", done: 8, total: 270 },
     });
 
     expect(store.getState().activeJob).toMatchObject({
       done: 8,
       total: 11,
-      label: "识别中 · 已完成 8/11 页",
+      stage: { kind: "document_running", done: 8, total: 11 },
     });
   });
 
@@ -116,12 +117,13 @@ describe("jobSlice", () => {
       done: 8,
       total: 270,
       label: "识别中 · 第8/270页",
+      stage: { kind: "page_running", page: 8, total: 270 },
     });
 
     expect(store.getState().activeJob).toMatchObject({
       done: 3,
       total: 3,
-      label: "识别中 · 第3/3页",
+      stage: { kind: "page_running", page: 3, total: 3 },
     });
   });
 
@@ -271,6 +273,36 @@ describe("jobSlice", () => {
     expect(store.getState().recognizedPages["file-1"]?.[1]).toEqual({
       text: "重跑成功",
       status: "done",
+      sourceMode: "paddle_document",
+    });
+  });
+
+  it("clears stale layout when a same-mode OCR rerun fails", () => {
+    addQueuedFile("file-1");
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "旧版面文本",
+        layout: makeLayout(),
+        status: "done",
+        sourceMode: "paddle_document",
+        chunkId: "chunk-1",
+        chunkPage: 1,
+      },
+    });
+
+    store.getState().setRecognizedPages("file-1", {
+      1: {
+        text: "[识别失败：timeout]",
+        status: "failed",
+        error: "timeout",
+        sourceMode: "paddle_document",
+      },
+    });
+
+    expect(store.getState().recognizedPages["file-1"]?.[1]).toEqual({
+      text: "[识别失败：timeout]",
+      status: "failed",
+      error: "timeout",
       sourceMode: "paddle_document",
     });
   });

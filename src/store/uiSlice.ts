@@ -5,6 +5,7 @@ import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { JobSlice } from "./jobSlice";
+import { t } from "@/i18n";
 
 const MIN_ZOOM_PERCENT = 1;
 const MAX_ZOOM_PERCENT = 800;
@@ -61,7 +62,7 @@ export const createUiSlice: StateCreator<
   [],
   UiSlice
 > = (set) => ({
-  statusText: "就绪",
+  statusText: t("common.ready"),
   queueCollapsed: false,
   recognitionMode: "grouped",
   selectedArticleIds: [],

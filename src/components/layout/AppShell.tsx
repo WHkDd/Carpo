@@ -18,6 +18,8 @@ import {
   type WholeFileJobDone,
 } from "@/lib/ipc-types";
 import { useStore } from "@/store";
+import { getLanguage, t } from "@/i18n";
+import { defaultOcrPrompt } from "@/store/settingsSlice";
 import type { RecognizedPage, RecognizedPageSourceMode } from "@/store/jobSlice";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
@@ -65,9 +67,28 @@ function AppShellInner() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Captured before `setSettings` applies the stored language: on a
+      // first run this is the locale guess.
+      const detected = getLanguage();
       try {
         const s = await getSettings();
-        if (!cancelled) setSettings(s);
+        if (cancelled) return;
+        if (s.language === null) {
+          const isFreshDefaultPrompt = s.ocr_prompt === defaultOcrPrompt("zh");
+          setSettings({
+            ...s,
+            language: detected,
+            ...(isFreshDefaultPrompt
+              ? { ocr_prompt: defaultOcrPrompt(detected) }
+              : {}),
+          });
+          // Nothing was ever chosen (fresh install) — adopt the locale guess
+          // and persist it, so the backend localizes its progress labels and
+          // error messages the same way from here on.
+          useStore.getState().setLanguage(detected);
+        } else {
+          setSettings(s);
+        }
       } catch (e) {
         const message = appErrorMessage(e);
         void logWarn(`settings hydrate failed: ${message}`);
@@ -109,8 +130,8 @@ function AppShellInner() {
             perArticle[a.id] = text !== undefined
               ? text
               : errMsg
-                ? `[识别失败：${errMsg}]`
-                : "[未识别]";
+                ? t("job.recognizeFailed", { message: errMsg })
+                : t("job.notRecognized");
           }
           // Merge into the per-file map first, then re-assemble the full
           // document from *every* article that has text — including ones
@@ -168,10 +189,10 @@ function AppShellInner() {
                 : {
                     text:
                       errMsg !== undefined
-                        ? `[识别失败：${errMsg}]`
-                        : "[未识别]",
+                        ? t("job.recognizeFailed", { message: errMsg })
+                        : t("job.notRecognized"),
                     status: "failed",
-                    error: errMsg ?? "未返回识别结果",
+                    error: errMsg ?? t("job.noResultReturned"),
                     sourceMode,
                     sourceJobId: job.jobId,
                   };

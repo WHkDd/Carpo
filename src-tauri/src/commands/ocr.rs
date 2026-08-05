@@ -25,8 +25,10 @@ pub async fn start_grouped_ocr(
     req: GroupedOcrRequest,
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<JobStarted> {
-    grouped::validate(&req)?;
     let settings = crate::config::load(&app)?;
+    // Load the language before validation so configuration errors from this
+    // entry point use the same catalog as the job that follows.
+    grouped::validate(&req)?;
     let (id, token) = state.jobs.register(JobKind::GroupedOcr);
     grouped::spawn_with_settings(state.inner().clone(), req, id, token, settings);
     Ok(JobStarted {

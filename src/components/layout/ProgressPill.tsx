@@ -4,7 +4,8 @@ import { useStore } from "@/store";
 import { cancelJob as ipcCancelJob } from "@/lib/tauri";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
-import type { JobKind } from "@/lib/ipc-types";
+import { useT, type Translator } from "@/i18n";
+import type { ProgressStage } from "@/lib/ipc-types";
 import type { JobStatus } from "@/store/jobSlice";
 import { PageJumpControl } from "./PageJumpControl";
 
@@ -20,50 +21,72 @@ import { PageJumpControl } from "./PageJumpControl";
  *  clean finish the OCR slot lingers a few seconds then auto-clears; on
  *  cancel/error it persists until the user dismisses it. */
 
-function deriveHeadline(status: JobStatus, label: string): string {
-  if (label.startsWith("准备中")) return "准备中";
-  if (label.startsWith("页面已就绪")) return "已就绪";
-  if (label.startsWith("识别中")) return "正在识别";
-  if (label.startsWith("完成")) return "完成";
+function deriveHeadline(
+  status: JobStatus,
+  stage: ProgressStage | null,
+  t: Translator
+): string {
+  // A terminal status always wins: a late `block_done` event must not make a
+  // cancelled or failed run read as "Done".
+  if (status === "cancelling") return t("progress.cancelling");
+  if (status === "cancelled") return t("progress.cancelled");
+  if (status === "error") return t("progress.error");
+  if (status === "done") return t("progress.finished");
 
-  if (status === "running") return "正在识别";
-  if (status === "cancelling") return "正在取消";
-  if (status === "cancelled") return "已取消";
-  if (status === "error") return "出错";
-  return "完成";
+  switch (stage?.kind) {
+    case "preparing_blocks":
+    case "preparing_pages":
+    case "preparing_articles":
+    case "preparing_chunks":
+      return t("progress.preparing");
+    case "page_done":
+    case "block_done":
+      return t("progress.finished");
+    default:
+      return t("progress.running");
+  }
 }
 
-function deriveDetail(kind: JobKind, label: string): string {
-  const raw = label.trim();
-
-  if (raw.startsWith("准备中")) {
-    const match = raw.match(/共\s+(\d+)\s+(篇|页)/);
-    return match ? `共 ${match[1]} ${match[2]}` : "";
+function deriveDetail(stage: ProgressStage | null, t: Translator): string {
+  if (!stage) return "";
+  switch (stage.kind) {
+    case "preparing_blocks":
+      return t("progress.detail.blocks", { count: stage.total });
+    case "preparing_pages":
+      return t("progress.detail.pages", { count: stage.total });
+    case "preparing_articles":
+      return t("progress.detail.articles", { count: stage.total });
+    case "preparing_chunks":
+      return `${t("progress.detail.chunking")} · ${t("progress.detail.pages", {
+        count: stage.total,
+      })}`;
+    case "submitting_document":
+      return `${t("progress.detail.submitting")} · ${t("progress.detail.pages", {
+        count: stage.total,
+      })}`;
+    case "chunk_submitting":
+      return `${t("progress.detail.chunk", {
+        chunk: stage.chunk,
+        chunks: stage.chunks,
+      })} · ${t("progress.detail.pages", { count: stage.pages })}`;
+    case "chunk_running":
+      return t("progress.detail.chunk", {
+        chunk: stage.chunk,
+        chunks: stage.chunks,
+      });
+    case "document_running":
+      return "";
+    case "page_running":
+    case "page_done":
+      return t("progress.detail.page", { page: stage.page });
+    case "block_running":
+    case "block_done":
+      return t("progress.detail.article", { num: stage.article_num });
   }
-
-  if (raw.startsWith("页面已就绪")) {
-    if (kind === "grouped_ocr") {
-      const match = raw.match(/共\s+(\d+)\s+块待识别/);
-      return match ? `共 ${match[1]} 块` : "";
-    }
-    const match = raw.match(/共\s+(\d+)\s+页待识别/);
-    return match ? `共 ${match[1]} 页` : "";
-  }
-
-  const stripped = raw.replace(/^(识别中|完成)\s*·\s*/, "").trim();
-
-  if (kind === "grouped_ocr") {
-    const articleMatch = stripped.match(/^(报道\d+)\s+第\d+\/\d+块$/);
-    if (articleMatch) return articleMatch[1] ?? "";
-  } else {
-    const pageMatch = stripped.match(/^第(\d+)\/\d+页$/);
-    if (pageMatch) return `第${pageMatch[1] ?? ""}页`;
-  }
-
-  return stripped;
 }
 
 export function ProgressPill() {
+  const t = useT();
   // Page-nav slot: subscribe only to the navigation fields of the current file.
   const isPdf = useStore((s) => {
     if (!s.currentFileId) return false;
@@ -90,10 +113,10 @@ export function ProgressPill() {
   // primitives — a re-subscribe per field collapses no-op rerenders.
   const jobId = useStore((s) => s.activeJob?.jobId ?? null);
   const status = useStore((s) => s.activeJob?.status ?? null);
-  const kind = useStore((s) => s.activeJob?.kind ?? null);
   const total = useStore((s) => s.activeJob?.total ?? 0);
   const done = useStore((s) => s.activeJob?.done ?? 0);
   const label = useStore((s) => s.activeJob?.label ?? "");
+  const stage = useStore((s) => s.activeJob?.stage ?? null);
   const errorMessage = useStore((s) => s.activeJob?.error ?? null);
   const markCancelling = useStore((s) => s.markCancelling);
   const clearActiveJob = useStore((s) => s.clearActiveJob);
@@ -117,8 +140,10 @@ export function ProgressPill() {
   const inFlight = status === "running" || status === "cancelling";
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
-  const headline = status ? deriveHeadline(status, label) : "";
-  const detail = kind ? deriveDetail(kind, label) : "";
+  const headline = status ? deriveHeadline(status, stage, t) : "";
+  // Without a stage we're talking to a pre-i18n backend: show its raw label
+  // rather than dropping the only progress detail we have.
+  const detail = stage ? deriveDetail(stage, t) : label.trim();
 
   async function onCancel() {
     if (!jobId || status !== "running") return;
@@ -169,7 +194,7 @@ export function ProgressPill() {
             {detail && (
               <span
                 className="min-w-0 flex-1 truncate text-foreground-muted"
-                title={label}
+                title={detail}
               >
                 {detail}
               </span>
@@ -184,7 +209,11 @@ export function ProgressPill() {
                 type="button"
                 onClick={() => void onCancel()}
                 disabled={status === "cancelling"}
-                aria-label={status === "cancelling" ? "正在取消" : "取消"}
+                aria-label={
+                  status === "cancelling"
+                    ? t("progress.cancelling")
+                    : t("progress.cancel")
+                }
                 className="grid h-5 w-5 shrink-0 place-items-center rounded text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -193,7 +222,7 @@ export function ProgressPill() {
               <button
                 type="button"
                 onClick={clearActiveJob}
-                aria-label="关闭"
+                aria-label={t("common.close")}
                 className="grid h-5 w-5 shrink-0 place-items-center rounded text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -228,7 +257,9 @@ export function ProgressPill() {
 
       {(status === "error" && errorMessage) || cancelError ? (
         <p className="px-2 pb-1 text-[10px] text-destructive" role="alert">
-          {cancelError ? `取消失败：${cancelError}` : errorMessage}
+          {cancelError
+            ? t("progress.cancelFailed", { message: cancelError })
+            : errorMessage}
         </p>
       ) : null}
     </div>

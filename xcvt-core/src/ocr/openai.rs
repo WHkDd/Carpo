@@ -84,13 +84,17 @@ pub async fn recognize(
     provider_label: &str,
 ) -> AppResult<String> {
     if key.is_empty() {
-        return Err(AppError::Config(format!(
-            "{provider_label}：尚未配置 API Key，请在设置中填入。"
+        return Err(AppError::Config(crate::trf!(
+            "{}：尚未配置 API Key，请在设置中填入。",
+            "{}: no API key configured — set one in Settings.",
+            provider_label
         )));
     }
     if model.is_empty() {
-        return Err(AppError::Config(format!(
-            "{provider_label}：尚未配置模型。"
+        return Err(AppError::Config(crate::trf!(
+            "{}：尚未配置模型。",
+            "{}: no model configured.",
+            provider_label
         )));
     }
 
@@ -157,7 +161,8 @@ pub async fn recognize(
     Ok(text)
 }
 
-/// Fetches the model list from `{base_url}/models`. Used by the "刷新模型" button
+/// Fetches the model list from `{base_url}/models`. Used by the refresh-models
+/// button
 /// in the settings dialog. Sorts ids alphabetically for stable UI.
 pub async fn list_models(
     client: &reqwest::Client,
@@ -166,8 +171,10 @@ pub async fn list_models(
     provider_label: &str,
 ) -> AppResult<Vec<String>> {
     if key.is_empty() {
-        return Err(AppError::Config(format!(
-            "{provider_label}：尚未配置 API Key，请在设置中填入。"
+        return Err(AppError::Config(crate::trf!(
+            "{}：尚未配置 API Key，请在设置中填入。",
+            "{}: no API key configured — set one in Settings.",
+            provider_label
         )));
     }
 

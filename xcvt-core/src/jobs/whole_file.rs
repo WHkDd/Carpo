@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::grouped::{encode_ocr_jpeg, secret_key_for_provider, FileKind};
-use super::{page_loader::PageLoader, JobEventKind};
+use super::{page_loader::PageLoader, JobEventKind, ProgressStage};
 use crate::config::{self, Provider};
 use crate::error::{AppError, AppResult};
 use crate::ocr::{
@@ -68,6 +68,7 @@ struct ProgressEvent {
     done: u32,
     total: u32,
     label: String,
+    stage: ProgressStage,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,6 +143,12 @@ fn spawn_inner(
     token: CancellationToken,
     settings: Option<config::NonSecretSettings>,
 ) {
+    // Progress labels and failure messages emitted below are shown verbatim
+    // in the UI, so pin the language to the settings this job runs with —
+    // a caller-supplied override never went through `config::load`.
+    if let Some(settings) = settings.as_ref() {
+        crate::i18n::set_language(settings.language.unwrap_or_default());
+    }
     tokio::spawn(async move {
         let outcome = run(Arc::clone(&state), req, job_id, token, settings).await;
         state.jobs.remove(job_id);
@@ -214,7 +221,8 @@ async fn run_page_image(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("准备识别 · 共 {} 页", total),
+            label: crate::trf!("准备识别 · 共 {} 页", "Preparing · {} pages", total),
+            stage: ProgressStage::PreparingPages { total },
         },
     );
 
@@ -327,7 +335,12 @@ async fn run_paddle_document(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("提交文档 · 共 {} 页", total),
+            label: crate::trf!(
+                "提交文档 · 共 {} 页",
+                "Submitting document · {} pages",
+                total
+            ),
+            stage: ProgressStage::SubmittingDocument { total },
         },
     );
 
@@ -401,7 +414,16 @@ async fn run_paddle_document_direct(
                 job_id: job_id_for_progress.clone(),
                 done,
                 total: total_pages.max(1),
-                label: format!("识别中 · 已完成 {}/{} 页", done, total_pages),
+                label: crate::trf!(
+                    "识别中 · 已完成 {}/{} 页",
+                    "Recognizing · {}/{} pages done",
+                    done,
+                    total_pages
+                ),
+                stage: ProgressStage::DocumentRunning {
+                    done,
+                    total: total_pages.max(1),
+                },
             },
         );
     };
@@ -433,7 +455,11 @@ async fn run_paddle_document_direct(
                 if entry.text.is_empty() {
                     errors.push(PageErrorPayload {
                         page: entry.page,
-                        message: "文档识别未返回该页文本".to_string(),
+                        message: crate::tr!(
+                            "文档识别未返回该页文本",
+                            "Document OCR returned no text for this page"
+                        )
+                        .to_string(),
                     });
                 } else {
                     results.push(PageResultPayload {
@@ -500,7 +526,8 @@ async fn run_paddle_document_chunked(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("准备分块 · 共 {} 页", total),
+            label: crate::trf!("准备分块 · 共 {} 页", "Preparing chunks · {} pages", total),
+            stage: ProgressStage::PreparingChunks { total },
         },
     );
 
@@ -576,12 +603,18 @@ async fn run_paddle_document_chunked(
                 job_id: job_id_str.clone(),
                 done: completed_so_far,
                 total,
-                label: format!(
+                label: crate::trf!(
                     "提交分块 {}/{} · {} 页",
+                    "Submitting chunk {}/{} · {} pages",
                     chunk_idx + 1,
                     chunk_output.manifests.len(),
                     chunk_len
                 ),
+                stage: ProgressStage::ChunkSubmitting {
+                    chunk: chunk_idx as u32 + 1,
+                    chunks: chunk_output.manifests.len() as u32,
+                    pages: chunk_len,
+                },
             },
         );
 
@@ -602,10 +635,20 @@ async fn run_paddle_document_chunked(
                     job_id: job_id_for_progress.clone(),
                     done: aggregate_done,
                     total,
-                    label: format!(
+                    label: crate::trf!(
                         "分块 {}/{} 识别中 · 已完成 {}/{} 页",
-                        chunk_idx_for_progress, chunk_total_for_progress, chunk_done, chunk_total
+                        "Chunk {}/{} recognizing · {}/{} pages done",
+                        chunk_idx_for_progress,
+                        chunk_total_for_progress,
+                        chunk_done,
+                        chunk_total
                     ),
+                    stage: ProgressStage::ChunkRunning {
+                        chunk: chunk_idx_for_progress as u32,
+                        chunks: chunk_total_for_progress as u32,
+                        done: chunk_done,
+                        total: chunk_total,
+                    },
                 },
             );
         };
@@ -649,7 +692,11 @@ async fn run_paddle_document_chunked(
                     if entry.text.is_empty() {
                         errors.push(PageErrorPayload {
                             page: original_page,
-                            message: "文档识别未返回该页文本".to_string(),
+                            message: crate::tr!(
+                                "文档识别未返回该页文本",
+                                "Document OCR returned no text for this page"
+                            )
+                            .to_string(),
                         });
                     } else {
                         let layout = entry.layout.map(|mut layout| {
@@ -731,7 +778,16 @@ async fn run_one_page(
             job_id: job_id_str.clone(),
             done: cur_done,
             total,
-            label: format!("识别中 · 第{}/{}页", page_idx, total),
+            label: crate::trf!(
+                "识别中 · 第{}/{}页",
+                "Recognizing · page {}/{}",
+                page_idx,
+                total
+            ),
+            stage: ProgressStage::PageRunning {
+                page: page_idx as u32,
+                total,
+            },
         },
     );
 
@@ -741,7 +797,12 @@ async fn run_one_page(
         Err(e) => {
             return PageOutcome::Failed {
                 page,
-                message: format!("page {} 加载失败: {e}", page),
+                message: crate::trf!(
+                    "page {} 加载失败: {}",
+                    "page {} failed to load: {}",
+                    page,
+                    e
+                ),
             }
         }
     };
@@ -759,7 +820,12 @@ async fn run_one_page(
         Err(e) => {
             return PageOutcome::Failed {
                 page,
-                message: format!("page {} 编码失败: {e}", page),
+                message: crate::trf!(
+                    "page {} 编码失败: {}",
+                    "page {} failed to encode: {}",
+                    page,
+                    e
+                ),
             }
         }
     };
@@ -792,7 +858,11 @@ async fn run_one_page(
                     job_id: job_id_str,
                     done: n,
                     total,
-                    label: format!("完成 · 第{}/{}页", page_idx, total),
+                    label: crate::trf!("完成 · 第{}/{}页", "Done · page {}/{}", page_idx, total),
+                    stage: ProgressStage::PageDone {
+                        page: page_idx as u32,
+                        total,
+                    },
                 },
             );
             PageOutcome::Done { page, text }
@@ -800,7 +870,7 @@ async fn run_one_page(
         Err(AppError::Cancelled(_)) => PageOutcome::Cancelled,
         Err(e) => PageOutcome::Failed {
             page,
-            message: format!("page {} OCR 失败: {e}", page),
+            message: crate::trf!("page {} OCR 失败: {}", "page {} OCR failed: {}", page, e),
         },
     }
 }
@@ -834,21 +904,41 @@ fn max_pages_for(provider: Provider, kind: FileKind) -> u32 {
 
 pub fn validate(req: &WholeFileOcrRequest, settings: &config::NonSecretSettings) -> AppResult<()> {
     if req.path.is_empty() {
-        return Err(AppError::Config("缺少文件路径".into()));
+        return Err(AppError::Config(
+            crate::tr!("缺少文件路径", "No file path given").into(),
+        ));
     }
     if req.pages.is_empty() {
-        return Err(AppError::Config("没有可识别的页面".into()));
+        return Err(AppError::Config(
+            crate::tr!("没有可识别的页面", "No pages to recognize").into(),
+        ));
     }
     if req.pages.contains(&0) {
-        return Err(AppError::Config("页码从 1 开始，不能为 0".into()));
+        return Err(AppError::Config(
+            crate::tr!(
+                "页码从 1 开始，不能为 0",
+                "Page numbers start at 1, so 0 is not allowed"
+            )
+            .into(),
+        ));
     }
     if matches!(req.kind, FileKind::Image) && req.pages.iter().any(|page| *page != 1) {
-        return Err(AppError::Config("图片文件只能识别第 1 页".into()));
+        return Err(AppError::Config(
+            crate::tr!(
+                "图片文件只能识别第 1 页",
+                "An image file only has page 1 to recognize"
+            )
+            .into(),
+        ));
     }
     let mut seen = HashSet::with_capacity(req.pages.len());
     for page in &req.pages {
         if !seen.insert(*page) {
-            return Err(AppError::Config(format!("页码重复：{page}")));
+            return Err(AppError::Config(crate::trf!(
+                "页码重复：{}",
+                "Duplicate page number: {}",
+                page
+            )));
         }
     }
     // Strict-ascending contract with the frontend. `PageRangePlan` already
@@ -859,18 +949,32 @@ pub fn validate(req: &WholeFileOcrRequest, settings: &config::NonSecretSettings)
     // side would have produced silently mis-mapped page numbers without
     // this check.
     if !req.pages.windows(2).all(|w| w[0] < w[1]) {
-        return Err(AppError::Config("页码必须严格升序".into()));
+        return Err(AppError::Config(
+            crate::tr!(
+                "页码必须严格升序",
+                "Page numbers must be strictly ascending"
+            )
+            .into(),
+        ));
     }
     let max_pages = max_pages_for(settings.provider, req.kind);
     if req.pages.len() as u32 > max_pages {
         let hint = if max_pages == 1000 {
-            "（Paddle 文档级 OCR 单次最多 1000 页，请拆分输入或减少页码范围）"
+            crate::tr!(
+                "（Paddle 文档级 OCR 单次最多 1000 页，请拆分输入或减少页码范围）",
+                " (Paddle document OCR takes at most 1000 pages per run — split the input or narrow the page range)"
+            )
         } else {
-            "（建议拆分大文件以获得更短的反馈周期）"
+            crate::tr!(
+                "（建议拆分大文件以获得更短的反馈周期）",
+                " (splitting large files gives you feedback sooner)"
+            )
         };
-        return Err(AppError::Config(format!(
+        return Err(AppError::Config(crate::trf!(
             "单次最多识别 {} 页{}",
-            max_pages, hint
+            "At most {} pages can be recognized per run{}",
+            max_pages,
+            hint
         )));
     }
     Ok(())
@@ -885,6 +989,7 @@ mod tests {
         config::NonSecretSettings {
             provider,
             ocr_profile: OcrProfile::Standard,
+            language: Some(crate::i18n::Language::Zh),
             ocr_prompt: String::new(),
             paddle_url: String::new(),
             paddle_model: String::new(),

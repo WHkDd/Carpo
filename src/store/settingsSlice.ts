@@ -5,8 +5,11 @@ import type { FileViewSlice } from "./fileViewSlice";
 import type { PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { JobSlice } from "./jobSlice";
+import { current } from "immer";
 import { setSettings as ipcSetSettings } from "@/lib/tauri";
 import { logWarn } from "@/lib/runtime";
+import { getLanguage, setLanguage as applyLanguage, type Language } from "@/i18n";
+import { en, zh } from "@/i18n/messages";
 import {
   appErrorMessage,
   type NonSecretSettings,
@@ -16,13 +19,22 @@ import {
 
 export type OcrProfile = IpcOcrProfile;
 
+/** The prompt shown as the placeholder and restored by "Restore default".
+ *  Mirrors `config::default_ocr_prompt` on the Rust side, which picks the
+ *  same wording for the language stored in the settings. */
+export function defaultOcrPrompt(language: Language = getLanguage()): string {
+  return (language === "en" ? en : zh)["settings.defaultPrompt"];
+}
+
 /** Local defaults mirror the Rust `NonSecretSettings::default()` so the UI
  *  can render before the first `getSettings()` round-trip completes. */
 export const DEFAULT_SETTINGS: NonSecretSettings = {
   provider: "openai",
   ocr_profile: "standard",
-  ocr_prompt:
-    "请识别并转录图中所有文字。这是一份近代中文报纸的版块图像，文字方向可能为竖排（从上到下，从右到左）或横排。请按原文顺序输出所有文字，不要添加任何解释、标注或格式。",
+  // Seeded from the locale hint so a first run on an English system starts
+  // in English; `hydrate()` then replaces it with the persisted choice.
+  language: getLanguage(),
+  ocr_prompt: defaultOcrPrompt(),
   paddle_url: "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
   paddle_model: "PaddleOCR-VL-1.6",
   paddle_document_options: {
@@ -67,6 +79,10 @@ export interface SettingsSlice {
   setSettings: (next: NonSecretSettings) => void;
   setProvider: (provider: Provider) => void;
   setOcrProfile: (profile: OcrProfile) => void;
+  /** Persists the UI language. The active catalog is switched immediately so
+   *  the whole app re-renders, and the value rides along in the settings so
+   *  the backend can localize job progress and error messages too. */
+  setLanguage: (language: Language) => void;
   /** Mirror of `settings.ocr_profile` kept as a top-level key so the
    *  M4-era `ProfileToggle` selector (`s.ocrProfile`) still works after
    *  the slice grew. New code should read `s.settings.ocr_profile`. */
@@ -98,12 +114,15 @@ export const createSettingsSlice: StateCreator<
       state.settings = { ...next };
       state.settingsLoaded = true;
       state.ocrProfile = next.ocr_profile;
+      // Hydration and the settings dialog both land here, so this is the one
+      // place that has to keep the message catalog in step with the store.
+      if (next.language) applyLanguage(next.language);
     }),
   setProvider: (provider) => {
     let next: NonSecretSettings | null = null;
     set((state) => {
       state.settings.provider = provider;
-      next = { ...state.settings };
+      next = current(state.settings);
     });
     if (next) void persistSettings(next);
   },
@@ -112,8 +131,17 @@ export const createSettingsSlice: StateCreator<
     set((state) => {
       state.settings.ocr_profile = profile;
       state.ocrProfile = profile;
-      next = { ...state.settings };
+      next = current(state.settings);
     });
+    if (next) void persistSettings(next);
+  },
+  setLanguage: (language) => {
+    let next: NonSecretSettings | null = null;
+    set((state) => {
+      state.settings.language = language;
+      next = current(state.settings);
+    });
+    applyLanguage(language);
     if (next) void persistSettings(next);
   },
 });

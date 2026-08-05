@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { useStore } from "@/store";
+import { useT } from "@/i18n";
 import { OCR_PANEL_MAX_RESERVE, OCR_PANEL_MIN_HEIGHT } from "@/store/uiSlice";
 import { MetadataInline } from "@/components/structure/MetadataInline";
 import { BlockOpsPanel } from "@/components/structure/BlockOpsPanel";
@@ -22,6 +23,7 @@ export function StructureRail() {
 }
 
 function GroupedRail() {
+  const t = useT();
   const ocrPanelHeight = useStore((s) => s.ocrPanelHeight);
   const setOcrPanelHeight = useStore((s) => s.setOcrPanelHeight);
   const asideRef = useRef<HTMLElement>(null);
@@ -71,17 +73,17 @@ function GroupedRail() {
   );
 
   const triggerLabel = state.starting
-    ? "正在启动…"
+    ? t("rail.starting")
     : state.selectedCount > 0
-      ? `识别选中报道 (${state.selectedCount})`
-      : "识别选中报道";
+      ? t("rail.recognizeSelectedCount", { count: state.selectedCount })
+      : t("rail.recognizeSelected");
 
   return (
     <aside ref={asideRef} className="flex min-h-0 flex-col bg-surface">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-px pb-2">
         <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5">
           <span className="text-[13px] font-semibold text-foreground">
-            扫描文本结构
+            {t("rail.groupedTitle")}
           </span>
           <OcrBulkActions />
         </div>
@@ -95,7 +97,7 @@ function GroupedRail() {
           </div>
         ) : (
           <p className="px-1.5 pt-3 text-[12px] leading-5 text-foreground-subtle">
-            完成版块标注后，此处将显示报道结构与阅读顺序。
+            {t("rail.groupedEmpty")}
           </p>
         )}
       </div>
@@ -103,7 +105,7 @@ function GroupedRail() {
       <div
         role="separator"
         aria-orientation="horizontal"
-        aria-label="拖动调整 OCR 文本区高度"
+        aria-label={t("rail.resizeOcrPanel")}
         onPointerDown={onDividerDrag}
         className="group relative h-1.5 shrink-0 cursor-row-resize"
       >
@@ -142,6 +144,7 @@ function GroupedRail() {
 }
 
 function WholeFileRail() {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const file = useStore((s) =>
     fileId ? s.files.find((f) => f.id === fileId) ?? null : null
@@ -156,16 +159,16 @@ function WholeFileRail() {
   const canTrigger =
     !!file && state.ready && !state.starting && !activeJobRunning;
   const triggerLabel = state.starting
-    ? "正在启动…"
+    ? t("rail.starting")
     : state.pageCount > 0
-      ? `开始全文识别 (${state.pageCount})`
-      : "开始全文识别";
+      ? t("rail.startWholeFileCount", { count: state.pageCount })
+      : t("rail.startWholeFile");
 
   return (
     <aside className="flex min-h-0 flex-col bg-surface">
       <div className="flex h-8 shrink-0 items-center justify-between gap-2 px-3">
         <span className="text-[13px] font-semibold text-foreground">
-          全文识别
+          {t("rail.wholeFileTitle")}
         </span>
         <OcrBulkActions />
       </div>

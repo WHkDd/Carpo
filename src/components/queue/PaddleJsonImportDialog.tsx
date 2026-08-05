@@ -23,6 +23,7 @@ import type {
 } from "@/lib/layout-document";
 import { DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS } from "@/lib/layout-document";
 import { useStore } from "@/store";
+import { t as translate, useT } from "@/i18n";
 import type { RecognizedPage } from "@/store/jobSlice";
 
 interface PaddleJsonImportDialogProps {
@@ -50,23 +51,31 @@ interface ExportFeedback {
   warnings: string[];
 }
 
-/** Static blurb for each preflight bullet. The dialog labels these as
- *  "已确认开启 / 已确认关闭 / 结构存在 / 结构缺失" per plan §9.5. */
-const STRUCTURE_DESCRIPTIONS: Array<{
-  key: keyof PaddleJsonPreflightReport;
-  label: string;
-}> = [
-  { key: "hasParsingResults", label: "区块解析结果 (parsing_res_list)" },
-  { key: "hasBlockBbox", label: "区块位置 (block_bbox)" },
-  { key: "hasBlockOrder", label: "阅读顺序 (block_order)" },
-  { key: "hasPolygonPoints", label: "区块多边形 (block_polygon_points)" },
-  { key: "hasMarkdown", label: "页面 Markdown 文本 (markdown.text)" },
-  { key: "hasImages", label: "Markdown 内嵌图片 (markdown.images)" },
-  { key: "hasOutputImages", label: "版面渲染图 (outputImages)" },
-];
+/** The two reading-version outputs. They are peer choices rather than a
+ *  primary/secondary pair, so the footer carries one button and the format
+ *  is picked in the options panel — two same-weight buttons side by side
+ *  just made the footer read as cluttered. */
+type ExportFormat = "pdf" | "markdown";
 
-const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
-const MD_FILTERS = [{ name: "Markdown", extensions: ["md"] }];
+const EXPORT_FORMATS: Record<
+  ExportFormat,
+  {
+    label: string;
+    extension: string;
+    filters: Array<{ name: string; extensions: string[] }>;
+  }
+> = {
+  pdf: {
+    label: "PDF",
+    extension: "pdf",
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  },
+  markdown: {
+    label: "Markdown",
+    extension: "md",
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  },
+};
 
 /** Which raw block labels each label-gated export option governs. Mirrors
  *  `classify()` in layout_pdf.rs: exact-match roles win over the contains()
@@ -109,7 +118,9 @@ function countLabelGatedBlocks(
 
 function defaultExportNameFromPath(path: string, ext: string): string {
   const filename = path.split(/[\\/]/).pop() || "paddle-json";
-  return `${filename.replace(/\.[^.]+$/, "")}_阅读版.${ext}`;
+  return `${filename.replace(/\.[^.]+$/, "")}_${translate(
+    "file.suffix.reading"
+  )}.${ext}`;
 }
 
 export function PaddleJsonImportDialog({
@@ -117,9 +128,10 @@ export function PaddleJsonImportDialog({
   path,
   onClose,
 }: PaddleJsonImportDialogProps) {
+  const t = useT();
   const [state, setState] = useState<DialogState>({ status: "loading" });
-  const [exportingPdf, setExportingPdf] = useState(false);
-  const [exportingMarkdown, setExportingMarkdown] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
+  const [exporting, setExporting] = useState(false);
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(
     null
   );
@@ -145,6 +157,7 @@ export function PaddleJsonImportDialog({
     setState({ status: "loading" });
     setExportFeedback(null);
     setExportWarningsOpen(false);
+    setExportFormat("pdf");
     setExportOptions(DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS);
     // Pull the full import payload up front: the Rust side already does the
     // heavy parse work, and confirming should be instant. If the user
@@ -209,71 +222,47 @@ export function PaddleJsonImportDialog({
     }
   }
 
-  async function exportReadingPdf(): Promise<void> {
+  /** One export path for both formats — they differ only in the save-dialog
+   *  filter and which IPC command runs; both results share the same shape. */
+  async function runExport(): Promise<void> {
     if (state.status !== "ready" || !state.imported || !path) return;
-    setExportingPdf(true);
+    const spec = EXPORT_FORMATS[exportFormat];
+    setExporting(true);
     setExportFeedback(null);
     setExportWarningsOpen(false);
     try {
       const targetPath = await saveDialog({
-        defaultPath: defaultExportNameFromPath(path, "pdf"),
-        filters: PDF_FILTERS,
+        defaultPath: defaultExportNameFromPath(path, spec.extension),
+        filters: spec.filters,
       });
       if (!targetPath) return;
-      const result = await ipcExportLayoutPdf({
+      const req = {
         document: state.imported.document,
         targetPath,
         options: exportOptions,
-      });
+      };
+      const result =
+        exportFormat === "pdf"
+          ? await ipcExportLayoutPdf(req)
+          : await ipcExportReadingMarkdown(req);
       setExportFeedback({
         kind: "success",
-        summary: `已导出 PDF ${result.pageCount} 页`,
+        summary: t("paddleJson.exportedSummary", {
+          format: spec.label,
+          count: result.pageCount,
+        }),
         warningCount: result.warningCount,
         warnings: result.warnings,
       });
     } catch (e) {
       setExportFeedback({
         kind: "error",
-        summary: `导出失败：${appErrorMessage(e)}`,
+        summary: t("ocr.exportFailed", { message: appErrorMessage(e) }),
         warningCount: 0,
         warnings: [],
       });
     } finally {
-      setExportingPdf(false);
-    }
-  }
-
-  async function exportReadingMarkdown(): Promise<void> {
-    if (state.status !== "ready" || !state.imported || !path) return;
-    setExportingMarkdown(true);
-    setExportFeedback(null);
-    setExportWarningsOpen(false);
-    try {
-      const targetPath = await saveDialog({
-        defaultPath: defaultExportNameFromPath(path, "md"),
-        filters: MD_FILTERS,
-      });
-      if (!targetPath) return;
-      const result = await ipcExportReadingMarkdown({
-        document: state.imported.document,
-        targetPath,
-        options: exportOptions,
-      });
-      setExportFeedback({
-        kind: "success",
-        summary: `已导出 Markdown ${result.pageCount} 页`,
-        warningCount: result.warningCount,
-        warnings: result.warnings,
-      });
-    } catch (e) {
-      setExportFeedback({
-        kind: "error",
-        summary: `导出失败：${appErrorMessage(e)}`,
-        warningCount: 0,
-        warnings: [],
-      });
-    } finally {
-      setExportingMarkdown(false);
+      setExporting(false);
     }
   }
 
@@ -288,7 +277,7 @@ export function PaddleJsonImportDialog({
     >
       <button
         type="button"
-        aria-label="关闭导入对话框"
+        aria-label={t("paddleJson.closeDialog")}
         className="absolute inset-0 bg-foreground/25"
         onClick={onClose}
       />
@@ -301,13 +290,13 @@ export function PaddleJsonImportDialog({
               id="paddle-json-import-title"
               className="truncate text-[15px] font-medium text-foreground"
             >
-              导入 Paddle JSON
+              {t("paddleJson.title")}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭"
+aria-label={t("common.close")}
             className="grid h-7 w-7 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
@@ -315,22 +304,32 @@ export function PaddleJsonImportDialog({
         </header>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 text-[12px] leading-relaxed">
-          <p className="mb-3 truncate text-[11px] text-foreground-subtle" title={path}>
+          <p
+            className="truncate font-mono text-[11px] text-foreground-subtle"
+            title={path}
+          >
             {path}
+          </p>
+          <p className="mt-1.5 text-[12px] text-foreground-muted">
+            {t("paddleJson.desc")}
           </p>
 
           {state.status === "loading" && (
-            <p className="text-foreground-muted">正在分析 JSON 结构…</p>
+            <p className="mt-4 text-foreground-muted">
+              {t("paddleJson.analyzing")}
+            </p>
           )}
           {state.status === "error" && (
-            <p className="text-destructive" role="alert">
-              读取失败：{state.errorMessage ?? "未知错误"}
+            <p className="mt-4 text-destructive" role="alert">
+              {t("paddleJson.readFailed", {
+                message: state.errorMessage ?? t("common.unknownError"),
+              })}
             </p>
           )}
 
           {(state.status === "ready" || state.status === "writing") &&
             state.preflight && (
-              <div className="flex flex-col gap-4">
+              <div className="mt-4 flex flex-col gap-4">
                 <PreflightSummary
                   preflight={state.preflight}
                   pdfTotal={currentPdf?.pdfTotal}
@@ -339,6 +338,8 @@ export function PaddleJsonImportDialog({
                   options={exportOptions}
                   labelCounts={state.preflight.labelCounts}
                   onChange={setExportOptions}
+                  format={exportFormat}
+                  onFormatChange={setExportFormat}
                 />
               </div>
             )}
@@ -354,7 +355,7 @@ export function PaddleJsonImportDialog({
                   className="rounded border border-warning/30 bg-surface px-3 py-2"
                 >
                   <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-                    导出提示
+                    {t("paddleJson.warningsTitle")}
                   </div>
                   <ul className="flex max-h-28 flex-col gap-1 overflow-y-auto">
                     {exportFeedback.warnings.map((warning, idx) => (
@@ -369,8 +370,11 @@ export function PaddleJsonImportDialog({
                     {exportFeedback.warningCount >
                       exportFeedback.warnings.length && (
                       <li className="text-[11px] text-foreground-subtle">
-                        另有 {exportFeedback.warningCount - exportFeedback.warnings.length}{" "}
-                        条提示未返回详细内容。
+                        {t("paddleJson.moreWarnings", {
+                          count:
+                            exportFeedback.warningCount -
+                            exportFeedback.warnings.length,
+                        })}
                       </li>
                     )}
                   </ul>
@@ -400,8 +404,13 @@ export function PaddleJsonImportDialog({
                       onClick={() => setExportWarningsOpen((open) => !open)}
                       className="inline-flex shrink-0 items-center gap-0.5 font-medium text-foreground-muted hover:text-foreground"
                     >
-                      {exportWarningsOpen ? "收起" : "查看"}{" "}
-                      {exportFeedback.warningCount} 条导出提示
+                      {exportWarningsOpen
+                        ? t("paddleJson.hideWarnings", {
+                            count: exportFeedback.warningCount,
+                          })
+                        : t("paddleJson.showWarnings", {
+                            count: exportFeedback.warningCount,
+                          })}
                       <ChevronDown
                         className={`h-3 w-3 transition-transform ${
                           exportWarningsOpen ? "rotate-180" : ""
@@ -417,7 +426,7 @@ export function PaddleJsonImportDialog({
                   onClick={onClose}
                   className="h-7 rounded px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 {currentPdf && (
                   <button
@@ -425,38 +434,31 @@ export function PaddleJsonImportDialog({
                     onClick={commit}
                     disabled={state.status !== "ready" || !currentFileId}
                     className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                    title={`写入到「${currentPdf.name}」`}
+                    title={t("paddleJson.writeTo", { name: currentPdf.name })}
                   >
-                    写入按页文本
+                    {t("paddleJson.writePageTexts")}
                   </button>
                 )}
                 <button
                   type="button"
-                  onClick={() => void exportReadingMarkdown()}
+                  onClick={() => void runExport()}
                   disabled={
-                    exportingMarkdown ||
-                    exportingPdf ||
-                    state.status !== "ready" ||
-                    !state.imported?.document.pages.length
-                  }
-                  className="inline-flex h-7 items-center gap-1.5 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  {exportingMarkdown ? "导出中…" : "导出 Markdown"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void exportReadingPdf()}
-                  disabled={
-                    exportingPdf ||
-                    exportingMarkdown ||
+                    exporting ||
                     state.status !== "ready" ||
                     !state.imported?.document.pages.length
                   }
                   className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  {exportingPdf ? "导出中…" : "导出阅读版 PDF"}
+                  {exportFormat === "pdf" ? (
+                    <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  ) : (
+                    <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  )}
+                  {exporting
+                    ? t("paddleJson.exporting")
+                    : t("paddleJson.exportButton", {
+                        format: EXPORT_FORMATS[exportFormat].label,
+                      })}
                 </button>
               </div>
             </div>
@@ -467,6 +469,10 @@ export function PaddleJsonImportDialog({
   );
 }
 
+/** Just the numbers a user needs to sanity-check the file they picked, plus
+ *  the one mismatch that changes what "write per-page text" will do. Everything else the
+ *  preflight reports (structure fields, label histogram, model settings,
+ *  parser warnings) is diagnostic detail and stays out of the dialog. */
 function PreflightSummary({
   preflight,
   pdfTotal,
@@ -474,131 +480,35 @@ function PreflightSummary({
   preflight: PaddleJsonPreflightReport;
   pdfTotal: number | undefined;
 }) {
-  const labelEntries = useMemo(
-    () => Object.entries(preflight.labelCounts).sort((a, b) => b[1] - a[1]),
-    [preflight.labelCounts]
-  );
-  const modelSettingsPretty = useMemo(() => {
-    if (
-      preflight.modelSettings == null ||
-      preflight.modelSettings === undefined
-    ) {
-      return null;
-    }
-    try {
-      return JSON.stringify(preflight.modelSettings, null, 2);
-    } catch {
-      return String(preflight.modelSettings);
-    }
-  }, [preflight.modelSettings]);
+  const t = useT();
+  const pageMismatch = pdfTotal != null && pdfTotal !== preflight.pageCount;
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-3 gap-2">
-        <Stat label="页数" value={preflight.pageCount.toLocaleString()} />
-        <Stat label="区块数" value={preflight.blockCount.toLocaleString()} />
+      <div className="grid grid-cols-3 divide-x divide-border/60 overflow-hidden rounded-lg border border-border/60 bg-surface-2/40">
         <Stat
-          label="区块标签"
+          label={t("paddleJson.statPages")}
+          value={preflight.pageCount.toLocaleString()}
+        />
+        <Stat
+          label={t("paddleJson.statBlocks")}
+          value={preflight.blockCount.toLocaleString()}
+        />
+        <Stat
+          label={t("paddleJson.statLabels")}
           value={Object.keys(preflight.labelCounts).length.toString()}
         />
       </div>
 
-      {pdfTotal != null && pdfTotal !== preflight.pageCount && (
-        <div className="flex items-start gap-2 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+      {pageMismatch && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
-            JSON 为 {preflight.pageCount} 页，当前 PDF 为 {pdfTotal} 页。导入后
-            JSON 的页码会按其原始页号写入，未匹配的页保持原样。
+            {t("paddleJson.pageMismatch", {
+              jsonPages: preflight.pageCount,
+              pdfPages: pdfTotal ?? 0,
+            })}
           </span>
-        </div>
-      )}
-
-      <div>
-        <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-          结构字段
-        </div>
-        <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
-          {STRUCTURE_DESCRIPTIONS.map(({ key, label }) => {
-            const present = preflight[key] as boolean;
-            return (
-              <li
-                key={key}
-                className="flex items-center gap-1.5 text-[12px]"
-                title={present ? "结构存在" : "结构缺失"}
-              >
-                <span
-                  className={`inline-block h-1.5 w-1.5 rounded-full ${
-                    present ? "bg-success" : "bg-foreground-subtle/40"
-                  }`}
-                />
-                <span
-                  className={present ? "text-foreground" : "text-foreground-subtle"}
-                >
-                  {label}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
-      {labelEntries.length > 0 && (
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-            区块标签分布
-          </div>
-          <ul className="flex flex-wrap gap-1">
-            {labelEntries.map(([label, count]) => (
-              <li
-                key={label}
-                className="flex items-center gap-1 rounded bg-surface-2 px-2 py-0.5 text-[11px] tabular-nums"
-              >
-                <span className="text-foreground">{label}</span>
-                <span className="text-foreground-subtle">{count}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {preflight.markdownIgnoreLabels.length > 0 && (
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-            Markdown 忽略的标签
-          </div>
-          <p className="text-[12px] text-foreground-subtle">
-            {preflight.markdownIgnoreLabels.join("、")}
-          </p>
-        </div>
-      )}
-
-      {modelSettingsPretty && (
-        <details className="rounded border border-border/40">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-foreground-muted hover:text-foreground">
-            模型参数 (model_settings)
-          </summary>
-          <pre className="max-h-40 overflow-auto bg-surface-2 px-2 py-1 font-mono text-[11px] leading-tight text-foreground">
-            {modelSettingsPretty}
-          </pre>
-        </details>
-      )}
-
-      {preflight.warnings.length > 0 && (
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-foreground-muted">
-            导入检查提示
-          </div>
-          <ul className="flex flex-col gap-1">
-            {preflight.warnings.map((warning, idx) => (
-              <li
-                key={idx}
-                className="flex items-start gap-1.5 text-[12px] text-foreground-muted"
-              >
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
-                <span>{warning}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </div>
@@ -609,11 +519,16 @@ function ExportOptionsPanel({
   options,
   labelCounts,
   onChange,
+  format,
+  onFormatChange,
 }: {
   options: LayoutPdfExportOptions;
   labelCounts: Record<string, number>;
   onChange: (next: LayoutPdfExportOptions) => void;
+  format: ExportFormat;
+  onFormatChange: (next: ExportFormat) => void;
 }) {
+  const t = useT();
   const setOption = <K extends keyof LayoutPdfExportOptions>(
     key: K,
     value: LayoutPdfExportOptions[K]
@@ -624,50 +539,91 @@ function ExportOptionsPanel({
   );
 
   return (
-    <div className="rounded border border-border/40 bg-surface px-3 py-2">
-      <div className="mb-2 text-[11px] font-medium text-foreground-muted">
-        阅读版导出选项
+    <div className="rounded-lg border border-border/60 bg-surface-2/40 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="text-[12px] font-medium text-foreground">
+          {t("paddleJson.optionsTitle")}
+        </div>
+        <FormatToggle value={format} onChange={onFormatChange} />
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+      <div className="mt-2.5 grid grid-cols-2 gap-x-5">
         <OptionCheck
-          label="源文件页锚"
+          label={t("paddleJson.opt.pageAnchor")}
           checked={options.includePageNumber}
           onChange={(v) => setOption("includePageNumber", v)}
         />
         <OptionCheck
-          label="脚注"
+          label={t("paddleJson.opt.footnote")}
           count={blockCounts.footnote}
           checked={options.includeFootnote}
           onChange={(v) => setOption("includeFootnote", v)}
         />
         <OptionCheck
-          label="表格"
+          label={t("paddleJson.opt.table")}
           count={blockCounts.table}
           checked={options.includeTables}
           onChange={(v) => setOption("includeTables", v)}
         />
         <OptionCheck
-          label="旁注"
+          label={t("paddleJson.opt.aside")}
           count={blockCounts.aside}
           checked={options.includeAsideText}
           onChange={(v) => setOption("includeAsideText", v)}
         />
         <OptionCheck
-          label="页眉"
+          label={t("paddleJson.opt.header")}
           count={blockCounts.header}
           checked={options.includeHeader}
           onChange={(v) => setOption("includeHeader", v)}
         />
         <OptionCheck
-          label="页脚"
+          label={t("paddleJson.opt.footer")}
           count={blockCounts.footer}
           checked={options.includeFooter}
           onChange={(v) => setOption("includeFooter", v)}
         />
       </div>
-      <p className="mt-2 text-[10.5px] text-foreground-subtle">
-        正文图片暂以占位和图注保留，不做联网下载内嵌。
+      <p className="mt-2.5 text-[11px] text-foreground-subtle">
+        {t("paddleJson.imagesNote")}
       </p>
+    </div>
+  );
+}
+
+/** Segmented control for the output format. Sits with the export options
+ *  rather than in the footer so the footer keeps a single action button. */
+function FormatToggle({
+  value,
+  onChange,
+}: {
+  value: ExportFormat;
+  onChange: (next: ExportFormat) => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/60 bg-surface p-0.5"
+      role="group"
+      aria-label={t("paddleJson.formatGroup")}
+    >
+      {(Object.keys(EXPORT_FORMATS) as ExportFormat[]).map((key) => {
+        const active = key === value;
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(key)}
+            className={`h-5 rounded px-2 text-[11px] transition-colors ${
+              active
+                ? "bg-primary font-medium text-primary-foreground"
+                : "text-foreground-muted hover:text-foreground"
+            }`}
+          >
+            {EXPORT_FORMATS[key].label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -685,25 +641,28 @@ function OptionCheck({
    *  apply (e.g. the synthesized page anchor). Zero disables the checkbox. */
   count?: number;
 }) {
+  const t = useT();
   const disabled = count === 0;
   return (
     <label
-      className={`flex items-center gap-1.5 text-[12px] ${
-        disabled ? "cursor-not-allowed text-foreground-subtle" : "text-foreground-muted"
+      className={`flex h-7 items-center gap-2 rounded px-1.5 text-[12px] ${
+        disabled
+          ? "cursor-not-allowed text-foreground-subtle"
+          : "cursor-pointer text-foreground hover:bg-surface"
       }`}
-      title={disabled ? "此文件中没有该类区块，选项不生效" : undefined}
+      title={disabled ? t("paddleJson.optionDisabled") : undefined}
     >
       <input
         type="checkbox"
         checked={checked && !disabled}
         disabled={disabled}
         onChange={(e) => onChange(e.currentTarget.checked)}
-        className="h-3.5 w-3.5 accent-primary disabled:cursor-not-allowed"
+        className="h-3.5 w-3.5 shrink-0 accent-primary disabled:cursor-not-allowed"
       />
-      <span>{label}</span>
+      <span className="flex-1 truncate">{label}</span>
       {count != null && (
-        <span className="text-[10.5px] tabular-nums text-foreground-subtle">
-          {count > 0 ? count.toLocaleString() : "无"}
+        <span className="shrink-0 text-[11px] tabular-nums text-foreground-subtle">
+          {count > 0 ? count.toLocaleString() : t("common.none")}
         </span>
       )}
     </label>
@@ -712,11 +671,11 @@ function OptionCheck({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-border/40 bg-surface px-3 py-2">
+    <div className="px-3 py-2">
       <div className="text-[10px] tracking-wide text-foreground-subtle">
         {label}
       </div>
-      <div className="font-mono text-[14px] font-medium tabular-nums text-foreground">
+      <div className="mt-0.5 font-mono text-[15px] font-medium tabular-nums text-foreground">
         {value}
       </div>
     </div>

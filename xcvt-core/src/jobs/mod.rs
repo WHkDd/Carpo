@@ -46,6 +46,60 @@ impl JobEventKind {
     }
 }
 
+/// Machine-readable description of what a job is doing right now, emitted
+/// alongside the human-readable `label` on every progress event. The UI
+/// formats this in the language the user picked instead of parsing the
+/// label's prose — see `ProgressStage` in `src/lib/ipc-types.ts`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProgressStage {
+    PreparingBlocks {
+        total: u32,
+    },
+    PreparingPages {
+        total: u32,
+    },
+    PreparingChunks {
+        total: u32,
+    },
+    SubmittingDocument {
+        total: u32,
+    },
+    ChunkSubmitting {
+        chunk: u32,
+        chunks: u32,
+        pages: u32,
+    },
+    ChunkRunning {
+        chunk: u32,
+        chunks: u32,
+        done: u32,
+        total: u32,
+    },
+    DocumentRunning {
+        done: u32,
+        total: u32,
+    },
+    PageRunning {
+        page: u32,
+        total: u32,
+    },
+    PageDone {
+        page: u32,
+        total: u32,
+    },
+    BlockRunning {
+        article_num: u32,
+        index: u32,
+        count: u32,
+    },
+    BlockDone {
+        article_num: u32,
+        index: u32,
+        count: u32,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JobEvent {
     pub kind: JobEventKind,

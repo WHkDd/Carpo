@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderOpen, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, X } from "lucide-react";
 import { useStore } from "@/store";
-import { DEFAULT_SETTINGS } from "@/store/settingsSlice";
-import { isTauriRuntime, logWarn } from "@/lib/runtime";
+import { DEFAULT_SETTINGS, defaultOcrPrompt } from "@/store/settingsSlice";
+import {
+  getLanguage,
+  LANGUAGES,
+  setLanguage as applyLanguage,
+  useT,
+  type Language,
+  type Translator,
+} from "@/i18n";
 import {
   deleteSecret as ipcDeleteSecret,
   getSecret as ipcGetSecret,
   listProviderModels as ipcListProviderModels,
-  openLogDir as ipcOpenLogDir,
   setSecret as ipcSetSecret,
   setSettings as ipcSetSettings,
 } from "@/lib/tauri";
@@ -19,12 +25,18 @@ import type {
 } from "@/lib/ipc-types";
 import { appErrorMessage } from "@/lib/ipc-types";
 
-const PROVIDER_LABEL: Record<Provider, string> = {
-  paddleocr: "PaddleOCR",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-  openai_compatible: "OpenAI 兼容",
-};
+function providerLabel(provider: Provider, t: Translator): string {
+  switch (provider) {
+    case "paddleocr":
+      return "PaddleOCR";
+    case "openai":
+      return "OpenAI";
+    case "openrouter":
+      return "OpenRouter";
+    case "openai_compatible":
+      return t("provider.openai_compatible");
+  }
+}
 
 const PROVIDER_ORDER: Provider[] = [
   "paddleocr",
@@ -40,18 +52,7 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   openai_compatible: "openai_compatible_key",
 };
 
-const PROVIDER_NOTE: Record<Provider, string> = {
-  paddleocr:
-    "百度 AI Studio 异步 OCR jobs API。Token 存于系统 Keychain，URL/模型存于本地配置。",
-  openai:
-    "OpenAI Vision 模型（GPT-4o 等）。API Key 存于系统 Keychain，不会写入磁盘配置文件。",
-  openrouter:
-    "通过 OpenRouter 转发到 Claude / Gemini / DeepSeek 等模型。API Key 存于系统 Keychain。",
-  openai_compatible:
-    "用户自填 Base URL 的 OpenAI 兼容端点（Claude / Gemini 代理、本地 vLLM 等）。Key 存于 Keychain。",
-};
-
-type TabId = Provider | "prompt";
+type TabId = Provider | "prompt" | "language";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -59,6 +60,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+  const t = useT();
   const committed = useStore((s) => s.settings);
   const setCommitted = useStore((s) => s.setSettings);
 
@@ -71,7 +73,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     openai_compatible_key: false,
   });
   /** Keyed by SecretKey: blank means "no edit"; non-blank means user typed a
-   *  new value and we'll send it on save. `null` means user clicked 删除 — we
+   *  new value and we'll send it on save. `null` means user clicked Delete — we
    *  fire delete_secret on save. */
   const [secretEdits, setSecretEdits] = useState<
     Partial<Record<SecretKey, string | null>>
@@ -86,13 +88,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [refreshError, setRefreshError] = useState<Partial<Record<Provider, string>>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const desktopRuntime = isTauriRuntime();
+
+  // Language active when the dialog opened, so cancelling can restore it
+  // even when nothing was ever committed (`committed.language === null`).
+  const languageOnOpenRef = useRef<Language>(getLanguage());
+  const committedRef = useRef(committed);
+  const wasOpenRef = useRef(false);
+  committedRef.current = committed;
 
   // Reset draft + tab + presence whenever the dialog opens.
   useEffect(() => {
-    if (!open) return;
-    setDraft(committed);
-    setTab(committed.provider);
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    // Hydration can update `committed` while the dialog is already open. Do
+    // not replace the user's draft or cancellation snapshot in that case.
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    languageOnOpenRef.current = getLanguage();
+    setDraft(committedRef.current);
+    setTab(committedRef.current.provider);
     setSecretEdits({});
     setRevealedSecrets({});
     setRefreshError({});
@@ -114,7 +130,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     return () => {
       cancelled = true;
     };
-  }, [open, committed]);
+  }, [open]);
+
+  // The language select previews immediately (the whole app re-renders), so
+  // walking away from the dialog has to put the committed language back.
+  const closeAndRevertLanguage = useCallback(() => {
+    applyLanguage(languageOnOpenRef.current);
+    onClose();
+  }, [onClose]);
 
   // Esc to close, ⌘S to save.
   const trySave = useCallback(async () => {
@@ -147,7 +170,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        closeAndRevertLanguage();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         void trySave();
@@ -155,7 +178,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose, trySave]);
+  }, [open, closeAndRevertLanguage, trySave]);
 
   const refreshModels = useCallback(
     async (provider: Provider) => {
@@ -201,9 +224,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     >
       <button
         type="button"
-        aria-label="关闭设置"
+        aria-label={t("settings.closeDialog")}
         className="absolute inset-0 bg-foreground/25"
-        onClick={onClose}
+        onClick={closeAndRevertLanguage}
       />
 
       <div className="relative flex h-[600px] w-full max-w-4xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]">
@@ -212,12 +235,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             id="settings-title"
             className="text-[17px] font-medium text-foreground"
           >
-            设置
+            {t("settings.title")}
           </h2>
           <button
             type="button"
-            onClick={onClose}
-            aria-label="关闭"
+            onClick={closeAndRevertLanguage}
+            aria-label={t("common.close")}
             className="grid h-7 w-7 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
@@ -234,7 +257,15 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           />
 
           <section className="flex-1 overflow-y-auto">
-            {tab === "prompt" ? (
+            {tab === "language" ? (
+              <LanguagePanel
+                value={draft.language ?? languageOnOpenRef.current}
+                onChange={(language) => {
+                  setDraft((d) => ({ ...d, language }));
+                  applyLanguage(language);
+                }}
+              />
+            ) : tab === "prompt" ? (
               <PromptPanel
                 value={draft.ocr_prompt}
                 onChange={(v) =>
@@ -276,44 +307,19 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </section>
         </div>
 
-        <footer className="flex items-center justify-between gap-4 border-t border-border bg-surface-2 pl-6 pr-7 py-3">
-          <div className="flex min-w-0 items-center gap-3 text-[11px] text-foreground-muted">
-            {saveError ? (
-              <span className="text-destructive">保存失败：{saveError}</span>
-            ) : (
-              <>
-                <span className="truncate">
-                  {desktopRuntime ? "Keychain 存 API Key" : "服务端配置文件存 API Key"} · 其余写入{" "}
-                  <span className="font-mono text-foreground-subtle">
-                    {desktopRuntime ? "${AppConfig}/settings.json" : "/data/settings.json"}
-                  </span>
-                </span>
-                {desktopRuntime && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void ipcOpenLogDir().catch((e) => {
-                        const message = appErrorMessage(e);
-                        void logWarn(`open_log_dir failed: ${message}`);
-                      });
-                    }}
-                    title="在文件管理器中打开日志目录"
-                    className="flex shrink-0 items-center gap-1 rounded text-foreground-subtle transition-colors hover:text-foreground"
-                  >
-                    <FolderOpen className="h-3 w-3" strokeWidth={1.75} />
-                    <span>日志</span>
-                  </button>
-                )}
-              </>
-            )}
-          </div>
+        <footer className="flex items-center justify-end gap-4 border-t border-border bg-surface-2 pl-6 pr-7 py-3">
+          {saveError && (
+            <span className="min-w-0 flex-1 truncate text-[11px] text-destructive">
+              {t("settings.saveFailed", { message: saveError })}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => void trySave()}
             disabled={saving}
             className="flex h-[34px] items-center rounded border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? t("common.saving") : t("common.save")}
           </button>
         </footer>
       </div>
@@ -336,10 +342,11 @@ function TabRail({
   secretPresent,
   secretEdits,
 }: TabRailProps) {
+  const t = useT();
   return (
     <nav className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border bg-surface-2/50 p-3">
       <div className="mb-1 px-3 pt-1 text-[11px] font-medium tracking-wider text-foreground-subtle">
-        OCR 服务商
+        {t("settings.providerSection")}
       </div>
       {PROVIDER_ORDER.map((p) => {
         const key = PROVIDER_SECRET_KEY[p];
@@ -349,21 +356,26 @@ function TabRail({
           <TabButton
             key={p}
             active={tab === p}
-            label={PROVIDER_LABEL[p]}
+            label={providerLabel(p, t)}
             onClick={() => setTab(p)}
-            badge={isActive ? "当前" : undefined}
+            badge={isActive ? t("settings.current") : undefined}
             dot={present ? "configured" : "empty"}
           />
         );
       })}
       <div className="my-2 h-px bg-border" />
       <div className="mb-1 px-3 pt-1 text-[11px] font-medium tracking-wider text-foreground-subtle">
-        通用
+        {t("settings.generalSection")}
       </div>
       <TabButton
         active={tab === "prompt"}
-        label="识别提示词"
+        label={t("settings.promptTab")}
         onClick={() => setTab("prompt")}
+      />
+      <TabButton
+        active={tab === "language"}
+        label={t("settings.languageTab")}
+        onClick={() => setTab("language")}
       />
     </nav>
   );
@@ -456,6 +468,7 @@ function ProviderPanel({
   onToggleReveal,
   onDeleteSecret,
 }: ProviderPanelProps) {
+  const t = useT();
   const isActive = draft.provider === provider;
   const paddleOptions = draft.paddle_document_options ??
     DEFAULT_SETTINGS.paddle_document_options;
@@ -514,18 +527,18 @@ function ProviderPanel({
     return "";
   }, [secretEdit]);
   const secretPlaceholder = secretPresent && secretEdit === undefined
-    ? "已配置（输入新值覆盖；不回显已存的密钥）"
-    : "粘贴或输入 API Key";
+    ? t("settings.secretPlaceholderConfigured")
+    : t("settings.secretPlaceholder");
 
   return (
     <div className="px-7 py-6">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-5 flex items-center gap-2">
         <h3 className="text-[15px] font-medium text-foreground">
-          {PROVIDER_LABEL[provider]}
+          {providerLabel(provider, t)}
         </h3>
         {effectiveSecretPresent_local() && (
           <span className="rounded bg-primary-muted px-1.5 py-0.5 text-[11px] font-medium text-primary">
-            已配置
+            {t("settings.configured")}
           </span>
         )}
         {!isActive && (
@@ -536,18 +549,15 @@ function ProviderPanel({
             }
             className="ml-auto text-[11px] text-primary hover:underline"
           >
-            设为当前服务商
+            {t("settings.setActiveProvider")}
           </button>
         )}
         {isActive && (
           <span className="ml-auto rounded border border-success/40 px-1.5 py-0.5 text-[11px] font-medium text-success">
-            当前
+            {t("settings.current")}
           </span>
         )}
       </div>
-      <p className="mb-5 text-[13px] text-foreground-muted">
-        {PROVIDER_NOTE[provider]}
-      </p>
 
       <div className="space-y-4">
         {provider === "paddleocr" && (
@@ -565,7 +575,7 @@ function ProviderPanel({
         )}
 
         {provider === "openai_compatible" && (
-          <Field label="Base URL" hint="例：https://api.deepseek.com/v1">
+          <Field label="Base URL">
             <input
               type="text"
               value={draft.openai_compatible_base_url}
@@ -595,28 +605,28 @@ function ProviderPanel({
               onClick={onToggleReveal}
               className="flex h-8 items-center rounded border border-border bg-transparent px-3 text-[11px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             >
-              {revealed ? "隐藏" : "显示"}
+              {revealed ? t("common.hide") : t("common.show")}
             </button>
             <button
               type="button"
               onClick={onDeleteSecret}
               className="flex h-8 items-center rounded border border-destructive/40 bg-transparent px-3 text-[11px] text-destructive transition-colors hover:bg-destructive/10"
             >
-              删除
+              {t("common.delete")}
             </button>
           </div>
           <div className="text-[11px] text-foreground-subtle">
             {secretEdit === null
-              ? "保存后将从 Keychain 移除"
+              ? t("settings.secretRemoveOnSave")
               : typeof secretEdit === "string" && secretEdit.length > 0
-                ? "保存后写入 Keychain"
+                ? t("settings.secretUpdateOnSave")
                 : secretPresent
-                  ? "✓ Keychain 已存有 Key"
-                  : "未配置"}
+                  ? t("settings.secretSaved")
+                  : t("settings.secretMissing")}
           </div>
         </Field>
 
-        <Field label="模型">
+        <Field label={t("settings.model")}>
           <div className="flex items-center justify-between">
             <select
               value={modelValue}
@@ -634,23 +644,23 @@ function ProviderPanel({
               onClick={onRefresh}
               disabled={refreshing}
               className="ml-2 flex items-center gap-1 rounded border border-border bg-transparent px-2.5 py-1 text-[11px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              title="刷新模型列表"
+              title={t("settings.refreshModels")}
             >
               <RefreshCw
                 className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
                 strokeWidth={1.8}
               />
-              刷新
+              {t("common.refresh")}
             </button>
           </div>
           {refreshError && (
             <div className="text-[11px] text-destructive">
-              刷新失败：{refreshError}
+              {t("settings.refreshFailed", { message: refreshError })}
             </div>
           )}
           {provider === "paddleocr" && (
             <div className="text-[11px] text-foreground-subtle">
-              异步 jobs API 没有模型列表端点，仅暴露 VL 系列。
+              {t("settings.paddleModelNote")}
             </div>
           )}
         </Field>
@@ -685,55 +695,56 @@ function PaddleDocumentOptionsPanel({
   options,
   onChange,
 }: PaddleDocumentOptionsPanelProps) {
+  const t = useT();
   return (
     <div className="border-t border-border pt-4">
       <div className="mb-3">
         <h4 className="text-[13px] font-medium text-foreground">
-          全文识别版式参数
+          {t("settings.paddleDocTitle")}
         </h4>
         <p className="mt-1 text-[11px] text-foreground-subtle">
-          仅用于 Paddle + PDF 全文识别；框选识别不读取这些参数。
+          {t("settings.paddleDocNote")}
         </p>
       </div>
 
       <div className="space-y-4">
         <div>
           <div className="mb-2 text-[12px] font-medium text-foreground-muted">
-            辅助内容解析
+            {t("settings.paddleDocAuxGroup")}
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-2">
             <ToggleRow
-              label="页眉"
+              label={t("settings.opt.header")}
               checked={options.includeHeader}
               onChange={(v) => onChange("includeHeader", v)}
             />
             <ToggleRow
-              label="页眉图片"
+              label={t("settings.opt.headerImage")}
               checked={options.includeHeaderImage}
               onChange={(v) => onChange("includeHeaderImage", v)}
             />
             <ToggleRow
-              label="页脚"
+              label={t("settings.opt.footer")}
               checked={options.includeFooter}
               onChange={(v) => onChange("includeFooter", v)}
             />
             <ToggleRow
-              label="页脚图片"
+              label={t("settings.opt.footerImage")}
               checked={options.includeFooterImage}
               onChange={(v) => onChange("includeFooterImage", v)}
             />
             <ToggleRow
-              label="页码"
+              label={t("settings.opt.pageNumber")}
               checked={options.includePageNumber}
               onChange={(v) => onChange("includePageNumber", v)}
             />
             <ToggleRow
-              label="脚注"
+              label={t("settings.opt.footnote")}
               checked={options.includeFootnote}
               onChange={(v) => onChange("includeFootnote", v)}
             />
             <ToggleRow
-              label="旁注文本"
+              label={t("settings.opt.asideText")}
               checked={options.includeAsideText}
               onChange={(v) => onChange("includeAsideText", v)}
             />
@@ -742,56 +753,56 @@ function PaddleDocumentOptionsPanel({
 
         <div>
           <div className="mb-2 text-[12px] font-medium text-foreground-muted">
-            模型参数设置
+            {t("settings.paddleDocModelGroup")}
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-2">
             <ToggleRow
-              label="图片方向矫正"
+              label={t("settings.opt.docOrientation")}
               checked={options.useDocOrientationClassify}
               onChange={(v) => onChange("useDocOrientationClassify", v)}
             />
             <ToggleRow
-              label="图片扭曲矫正"
+              label={t("settings.opt.docUnwarping")}
               checked={options.useDocUnwarping}
               onChange={(v) => onChange("useDocUnwarping", v)}
             />
             <ToggleRow
-              label="版面分析"
+              label={t("settings.opt.layoutDetection")}
               checked={options.useLayoutDetection}
               onChange={(v) => onChange("useLayoutDetection", v)}
             />
             <ToggleRow
-              label="图表识别"
+              label={t("settings.opt.chartRecognition")}
               checked={options.useChartRecognition}
               onChange={(v) => onChange("useChartRecognition", v)}
             />
             <ToggleRow
-              label="印章识别"
+              label={t("settings.opt.sealRecognition")}
               checked={options.useSealRecognition}
               onChange={(v) => onChange("useSealRecognition", v)}
             />
             <ToggleRow
-              label="图片文字识别"
+              label={t("settings.opt.ocrForImageBlock")}
               checked={options.useOcrForImageBlock}
               onChange={(v) => onChange("useOcrForImageBlock", v)}
             />
             <ToggleRow
-              label="跨页表格合并"
+              label={t("settings.opt.mergeTables")}
               checked={options.mergeTables}
               onChange={(v) => onChange("mergeTables", v)}
             />
             <ToggleRow
-              label="段落标题级别识别"
+              label={t("settings.opt.relevelTitles")}
               checked={options.relevelTitles}
               onChange={(v) => onChange("relevelTitles", v)}
             />
             <ToggleRow
-              label="页面重排"
+              label={t("settings.opt.restructurePages")}
               checked={options.restructurePages}
               onChange={(v) => onChange("restructurePages", v)}
             />
             <ToggleRow
-              label="NMS 后处理"
+              label={t("settings.opt.layoutNms")}
               checked={options.layoutNms}
               onChange={(v) => onChange("layoutNms", v)}
             />
@@ -800,55 +811,58 @@ function PaddleDocumentOptionsPanel({
 
         <div className="grid grid-cols-2 gap-x-4 gap-y-3">
           <SelectSetting
-            label="版面检测结果的几何形状"
+            label={t("settings.layoutShapeMode")}
             value={options.layoutShapeMode}
             options={[
-              ["auto", "自动"],
-              ["rectangle", "矩形"],
-              ["quadrilateral", "四边形"],
-              ["polygon", "多边形"],
+              ["auto", t("settings.layoutShape.auto")],
+              ["rectangle", t("settings.layoutShape.rectangle")],
+              ["quadrilateral", t("settings.layoutShape.quadrilateral")],
+              ["polygon", t("settings.layoutShape.polygon")],
             ]}
             onChange={(v) => onChange("layoutShapeMode", v)}
           />
           <SelectSetting
-            label="prompt 类型"
+            label={t("settings.promptLabel")}
             value={options.promptLabel}
             options={[
-              ["ocr", "文本"],
-              ["formula", "公式"],
-              ["table", "表格"],
-              ["chart", "图表"],
-              ["seal", "印章"],
-              ["text_detection_recognition", "文本检测与识别"],
+              ["ocr", t("settings.promptLabel.ocr")],
+              ["formula", t("settings.promptLabel.formula")],
+              ["table", t("settings.promptLabel.table")],
+              ["chart", t("settings.promptLabel.chart")],
+              ["seal", t("settings.promptLabel.seal")],
+              [
+                "text_detection_recognition",
+                t("settings.promptLabel.textDetection"),
+              ],
             ]}
             onChange={(v) => onChange("promptLabel", v)}
           />
           <NumberSetting
-            label="重复抑制强度"
+            label={t("settings.repetitionPenalty")}
             value={options.repetitionPenalty}
             step={0.1}
             onChange={(v) => onChange("repetitionPenalty", v)}
           />
           <NumberSetting
-            label="识别稳定性"
+            label={t("settings.temperature")}
             value={options.temperature}
             step={0.1}
             onChange={(v) => onChange("temperature", v)}
           />
           <NumberSetting
-            label="结果可信范围"
+            label={t("settings.topP")}
             value={options.topP}
             step={0.1}
             onChange={(v) => onChange("topP", v)}
           />
           <NumberSetting
-            label="图像最小总像素数"
+            label={t("settings.minPixels")}
             value={options.minPixels}
             step={1}
             onChange={(v) => onChange("minPixels", Math.max(1, Math.round(v)))}
           />
           <NumberSetting
-            label="图像最大总像素数"
+            label={t("settings.maxPixels")}
             value={options.maxPixels}
             step={1}
             onChange={(v) => onChange("maxPixels", Math.max(1, Math.round(v)))}
@@ -976,21 +990,13 @@ function modelOptions(
 
 interface FieldProps {
   label: string;
-  hint?: string;
   children: React.ReactNode;
 }
 
-function Field({ label, hint, children }: FieldProps) {
+function Field({ label, children }: FieldProps) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <label className="text-[13px] font-medium text-foreground">
-          {label}
-        </label>
-        {hint && (
-          <span className="text-[11px] text-foreground-subtle">{hint}</span>
-        )}
-      </div>
+      <label className="text-[13px] font-medium text-foreground">{label}</label>
       {children}
     </div>
   );
@@ -1002,31 +1008,70 @@ interface PromptPanelProps {
 }
 
 function PromptPanel({ value, onChange }: PromptPanelProps) {
+  const t = useT();
   return (
     <div className="px-7 py-6">
       <h3 className="mb-1 text-[15px] font-medium text-foreground">
-        识别提示词
+        {t("settings.promptTitle")}
       </h3>
       <p className="mb-5 text-[13px] text-foreground-muted">
-        OpenAI / OpenRouter / 兼容端点会随每次请求把这段提示词发给视觉模型。PaddleOCR 不接受自定义提示词。
+        {t("settings.promptDesc")}
       </p>
-      <Field label="自定义识别提示词">
+      <Field label={t("settings.promptField")}>
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={DEFAULT_SETTINGS.ocr_prompt}
+          placeholder={defaultOcrPrompt()}
           className="min-h-[140px] rounded border border-border bg-background p-2.5 text-[13px] leading-relaxed text-foreground placeholder:text-foreground-subtle/70 focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
         />
         <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
-          <span>留空时使用默认提示词。</span>
+          <span>{t("settings.promptEmptyNote")}</span>
           <button
             type="button"
-            onClick={() => onChange(DEFAULT_SETTINGS.ocr_prompt)}
+            onClick={() => onChange(defaultOcrPrompt())}
             className="text-foreground-muted transition-colors hover:text-foreground"
           >
-            恢复默认
+            {t("settings.promptReset")}
           </button>
         </div>
+      </Field>
+    </div>
+  );
+}
+
+interface LanguagePanelProps {
+  value: Language;
+  onChange: (next: Language) => void;
+}
+
+function LanguagePanel({ value, onChange }: LanguagePanelProps) {
+  const t = useT();
+  return (
+    <div className="px-7 py-6">
+      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+        {t("settings.languageTitle")}
+      </h3>
+      <p className="mb-5 text-[13px] text-foreground-muted">
+        {t("settings.languageDesc")}
+      </p>
+      <Field label={t("settings.languageField")}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as Language)}
+          // `Field` renders its label as a sibling rather than a wrapper, so
+          // the control needs its own accessible name.
+          aria-label={t("settings.languageField")}
+          className="h-8 w-[240px] rounded border border-border bg-background px-2 text-[13px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+        >
+          {LANGUAGES.map((language) => (
+            <option key={language} value={language}>
+              {t(language === "zh" ? "language.zh" : "language.en")}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-foreground-subtle">
+          {t("settings.languageNote")}
+        </span>
       </Field>
     </div>
   );

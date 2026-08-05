@@ -1,7 +1,9 @@
 import { useCallback } from "react";
 import { useStore } from "@/store";
+import { useT } from "@/i18n";
 
 export function MetadataInline() {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const docState = useStore((s) => s.getDocumentState(fileId));
   const updateDocumentMetadata = useStore((s) => s.updateDocumentMetadata);
@@ -26,7 +28,7 @@ export function MetadataInline() {
     <div className="grid grid-cols-2 gap-2">
       <div>
         <label className="mb-1 block text-[11px] font-medium text-foreground-subtle">
-          报刊名
+          {t("metadata.newspaperName")}
         </label>
         <input
           type="text"
@@ -38,7 +40,7 @@ export function MetadataInline() {
       </div>
       <div>
         <label className="mb-1 block text-[11px] font-medium text-foreground-subtle">
-          日期
+          {t("metadata.date")}
         </label>
         <input
           type="text"

@@ -17,6 +17,7 @@ import type { Transformer as KTransformer } from "konva/lib/shapes/Transformer";
 import useImage from "use-image";
 import { ImageOff } from "lucide-react";
 import { useStore } from "@/store";
+import { useT } from "@/i18n";
 import type { Block } from "@/store/pageStateSlice";
 import { useElementSize } from "@/hooks/useElementSize";
 import { subscribeArticleColorTokens } from "@/lib/article-color-token";
@@ -46,6 +47,7 @@ function getActivePage(): { fileId: string; page: number } | null {
 
 export const ImageCanvas = forwardRef<CanvasController, object>(
   function ImageCanvas(_props, ref) {
+    const t = useT();
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<KStage>(null);
     const { width: cw, height: ch } = useElementSize(containerRef);
@@ -618,7 +620,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               className="block w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-surface-2"
               onClick={handleCtxDelete}
             >
-              删除版块
+              {t("canvas.deleteBlocks")}
             </button>
           </div>
         )}
@@ -644,13 +646,15 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                 id="delete-blocks-title"
                 className="text-sm font-semibold text-foreground"
               >
-                删除选中的版块？
+                {t("canvas.deleteConfirmTitle")}
               </div>
               <div
                 id="delete-blocks-desc"
                 className="mt-2 text-sm text-foreground-muted"
               >
-                将删除 {deleteConfirm.ids.length} 个版块。此操作不会删除原始图像。
+                {t("canvas.deleteConfirmBody", {
+                  count: deleteConfirm.ids.length,
+                })}
               </div>
               <div className="mt-4 flex justify-end gap-2">
                 <button
@@ -658,7 +662,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   className="rounded-md border px-3 py-1.5 text-sm text-foreground hover:bg-surface-2"
                   onClick={() => setDeleteConfirm(null)}
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -669,7 +673,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                     setDeleteConfirm(null);
                   }}
                 >
-                  删除
+                  {t("common.delete")}
                 </button>
               </div>
             </div>
@@ -680,10 +684,8 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
             <div className="flex flex-col items-center gap-3 text-foreground-subtle">
               <ImageOff className="h-9 w-9 opacity-60" strokeWidth={1.4} />
-              <div className="text-sm">将扫描件拖入此处，或使用顶栏「添加文件」</div>
-              <div className="font-mono text-xs">
-                支持 PDF · PNG · JPG · TIFF · BMP
-              </div>
+              <div className="text-sm">{t("canvas.dropHint")}</div>
+              <div className="font-mono text-xs">{t("canvas.formats")}</div>
             </div>
           </div>
         )}

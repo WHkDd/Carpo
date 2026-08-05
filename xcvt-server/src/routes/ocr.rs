@@ -60,6 +60,7 @@ pub async fn start_grouped_ocr(
     Json(req): Json<WebGroupedOcrRequest>,
 ) -> ServerResult<Json<JobStarted>> {
     let record = file_record(&state, req.file_id)?;
+    let settings = config::load(&state.data_dir)?;
     let req = GroupedOcrRequest {
         file_id: req.file_id.to_string(),
         path: record.path.display().to_string(),
@@ -72,7 +73,7 @@ pub async fn start_grouped_ocr(
     };
     xcvt_core::jobs::grouped::validate(&req)?;
     let (id, token) = state.core.jobs.register(JobKind::GroupedOcr);
-    xcvt_core::jobs::grouped::spawn(state.core.clone(), req, id, token);
+    xcvt_core::jobs::grouped::spawn_with_settings(state.core.clone(), req, id, token, settings);
     Ok(Json(JobStarted {
         job_id: id.to_string(),
     }))

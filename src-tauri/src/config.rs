@@ -10,6 +10,7 @@ use tauri_plugin_store::StoreExt;
 
 pub use xcvt_core::config::NonSecretSettings;
 use xcvt_core::error::{AppError, AppResult};
+use xcvt_core::i18n;
 
 const STORE_FILE: &str = "settings.json";
 const STORE_KEY: &str = "settings";
@@ -21,11 +22,16 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> AppResult<NonSecretSettings> {
     let Some(raw) = store.get(STORE_KEY) else {
         return Ok(NonSecretSettings::default());
     };
-    serde_json::from_value::<NonSecretSettings>(raw)
-        .map_err(|e| AppError::Config(format!("settings parse: {e}")))
+    let settings = serde_json::from_value::<NonSecretSettings>(raw)
+        .map_err(|e| AppError::Config(format!("settings parse: {e}")))?;
+    // Backend messages (job progress, provider errors) have to come back in
+    // the language the UI is rendering.
+    i18n::set_language(settings.language.unwrap_or_default());
+    Ok(settings)
 }
 
 pub fn save<R: Runtime>(app: &AppHandle<R>, s: &NonSecretSettings) -> AppResult<()> {
+    i18n::set_language(s.language.unwrap_or_default());
     let store = app
         .store(STORE_FILE)
         .map_err(|e| AppError::Config(format!("store open: {e}")))?;
