@@ -1,8 +1,10 @@
 import { useCallback } from "react";
 import { useStore } from "@/store";
+import { useT } from "@/i18n";
 import { Newspaper } from "lucide-react";
 
 export function BlockOpsPanel() {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const currentPage = useStore((s) => {
     const file = s.files.find((f) => f.id === fileId);
@@ -26,7 +28,7 @@ export function BlockOpsPanel() {
         className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground transition-opacity disabled:cursor-default disabled:opacity-40 hover:enabled:opacity-90"
       >
         <Newspaper className="h-3.5 w-3.5" />
-        标记为报道
+        {t("blockOps.markAsArticle")}
       </button>
     </div>
   );

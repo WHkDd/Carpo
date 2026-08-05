@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/store";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 interface PageJumpControlProps {
   fileId: string | null;
@@ -18,6 +19,7 @@ export function PageJumpControl({
   variant = "canvas",
   className,
 }: PageJumpControlProps) {
+  const t = useT();
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const [draft, setDraft] = useState(String(currentPage));
   const focusedRef = useRef(false);
@@ -60,7 +62,7 @@ export function PageJumpControl({
         type="button"
         onClick={() => setCurrentPage(fileId, safeCurrent - 1)}
         disabled={atFirst}
-        aria-label="上一页"
+        aria-label={t("pageJump.prev")}
         className={cn(
           "grid h-5 w-5 place-items-center rounded transition-colors",
           atFirst
@@ -76,7 +78,7 @@ export function PageJumpControl({
           inputMode="numeric"
           pattern="[0-9]*"
           value={draft}
-          aria-label="跳转页码"
+          aria-label={t("pageJump.input")}
           onFocus={(e) => {
             focusedRef.current = true;
             e.currentTarget.select();
@@ -107,7 +109,7 @@ export function PageJumpControl({
         type="button"
         onClick={() => setCurrentPage(fileId, safeCurrent + 1)}
         disabled={atLast}
-        aria-label="下一页"
+        aria-label={t("pageJump.next")}
         className={cn(
           "grid h-5 w-5 place-items-center rounded transition-colors",
           atLast

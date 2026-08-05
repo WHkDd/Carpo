@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
+import { t } from "@/i18n";
 import { getSecret, startWholeFileOcr } from "@/lib/tauri";
 import {
   PageRangeError,
@@ -97,11 +98,11 @@ export function useWholeFileOcrTrigger() {
 
   const trigger = useCallback(async () => {
     if (!currentFileId || !file) {
-      setError("请先打开一个文件");
+      setError(t("trigger.openFileFirst"));
       return;
     }
     if (pages.length === 0) {
-      setError(rangeState.error ?? "没有可识别的页面");
+      setError(rangeState.error ?? t("trigger.noPages"));
       return;
     }
     if (rangeState.error !== null) {
@@ -114,14 +115,17 @@ export function useWholeFileOcrTrigger() {
         settings.provider === "openai_compatible" &&
         !settings.openai_compatible_base_url
       ) {
-        setError("OpenAI 兼容服务尚未配置 base_url —— 请先在设置中填写。");
+        setError(t("trigger.compatBaseUrlMissing"));
         return;
       }
       const secretKey = PROVIDER_SECRET_KEY[settings.provider];
       const hasSecret = await getSecret(secretKey);
       if (!hasSecret) {
         setError(
-          `${settings.provider} 的 API 密钥未找到（Keychain key: ${secretKey}）—— 请在设置中重新保存。`
+          t("trigger.secretMissing", {
+            provider: settings.provider,
+            key: secretKey,
+          })
         );
         return;
       }
@@ -149,7 +153,7 @@ export function useWholeFileOcrTrigger() {
         newspaperName,
         newspaperDate,
         requestedPages: pages,
-        label: `准备中… 共 ${pages.length} 页`,
+        stage: { kind: "preparing_pages", total: pages.length },
       });
     } catch (e) {
       setError(appErrorMessage(e));

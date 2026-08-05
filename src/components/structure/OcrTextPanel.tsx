@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
+import { t as translate, useT } from "@/i18n";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { copyText, isTauriRuntime, saveTextFile } from "@/lib/runtime";
@@ -46,7 +47,10 @@ function buildAllPagesText(pageTexts: Record<number, string>): string {
     .map(([page, text]) => ({ page: Number(page), text }))
     .filter((entry) => Number.isFinite(entry.page) && entry.text.length > 0)
     .sort((a, b) => a.page - b.page)
-    .map((entry) => `# 第 ${entry.page} 页\n\n${entry.text.trim()}`)
+    .map(
+      (entry) =>
+        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`
+    )
     .join("\n\n");
 }
 
@@ -57,7 +61,10 @@ function buildAllRecognizedPagesText(
     .map(([page, result]) => ({ page: Number(page), text: result.text }))
     .filter((entry) => Number.isFinite(entry.page) && entry.text.length > 0)
     .sort((a, b) => a.page - b.page)
-    .map((entry) => `# 第 ${entry.page} 页\n\n${entry.text.trim()}`)
+    .map(
+      (entry) =>
+        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`
+    )
     .join("\n\n");
 }
 
@@ -205,7 +212,7 @@ function useBulkOcrText() {
   return {
     getBulkText,
     getLayoutDocument,
-    fileLabel: fileEntry?.name ?? "(未命名)",
+    fileLabel: fileEntry?.name ?? translate("common.untitledFile"),
     hasFile: fileId !== null,
     recognitionMode,
     hasBulkText,
@@ -215,6 +222,7 @@ function useBulkOcrText() {
 }
 
 export function OcrBulkActions() {
+  const t = useT();
   const {
     getBulkText,
     getLayoutDocument,
@@ -230,7 +238,6 @@ export function OcrBulkActions() {
   const [savedTip, setSavedTip] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [exportingLayoutPdf, setExportingLayoutPdf] = useState(false);
-  const unitLabel = recognitionMode === "whole_file" ? "页" : "篇";
   const canExportLayoutPdf = isTauriRuntime();
 
   const showSavedTip = useCallback((tip: string) => {
@@ -248,9 +255,9 @@ export function OcrBulkActions() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (e) {
-      setSaveError(`复制失败：${appErrorMessage(e)}`);
+      setSaveError(t("ocr.copyFailed", { message: appErrorMessage(e) }));
     }
-  }, [getBulkText, getBulkCount]);
+  }, [getBulkText, getBulkCount, t]);
 
   const onSaveAll = useCallback(async () => {
     const allText = getBulkText();
@@ -260,18 +267,18 @@ export function OcrBulkActions() {
       const stem = fileLabel.replace(/\.[^.]+$/, "");
       const defaultName =
         recognitionMode === "whole_file"
-          ? `${stem}_全文按页.md`
-          : `${stem}_全部报道.md`;
+          ? `${stem}_${t("file.suffix.allPages")}.md`
+          : `${stem}_${t("file.suffix.allArticles")}.md`;
       const saved = await saveTextFile(allText, {
         defaultName,
         filters: SAVE_FILTERS,
       });
       if (!saved) return;
-      showSavedTip("已导出");
+      showSavedTip(t("ocr.exported"));
     } catch (e) {
-      setSaveError(`保存失败：${appErrorMessage(e)}`);
+      setSaveError(t("ocr.saveFailed", { message: appErrorMessage(e) }));
     }
-  }, [getBulkText, fileLabel, recognitionMode, showSavedTip]);
+  }, [getBulkText, fileLabel, recognitionMode, showSavedTip, t]);
 
   const onExportLayoutPdf = useCallback(async () => {
     const document = getLayoutDocument();
@@ -282,7 +289,7 @@ export function OcrBulkActions() {
       const { save } = await import("@tauri-apps/plugin-dialog");
       const stem = fileLabel.replace(/\.[^.]+$/, "");
       const target = await save({
-        defaultPath: `${stem}_阅读版.pdf`,
+        defaultPath: `${stem}_${t("file.suffix.reading")}.pdf`,
         filters: PDF_FILTERS,
       });
       if (!target) return;
@@ -291,13 +298,13 @@ export function OcrBulkActions() {
         targetPath: target,
         options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
       });
-      showSavedTip("已导出 PDF");
+      showSavedTip(t("ocr.exportedPdf"));
     } catch (e) {
-      setSaveError(`导出失败：${appErrorMessage(e)}`);
+      setSaveError(t("ocr.exportFailed", { message: appErrorMessage(e) }));
     } finally {
       setExportingLayoutPdf(false);
     }
-  }, [getLayoutDocument, fileLabel, showSavedTip]);
+  }, [getLayoutDocument, fileLabel, showSavedTip, t]);
 
   if (!hasFile) return null;
 
@@ -309,7 +316,9 @@ export function OcrBulkActions() {
           role="status"
         >
           <Check className="h-3 w-3" strokeWidth={1.9} aria-hidden />
-          已复制 {copiedCount} {unitLabel}
+          {recognitionMode === "whole_file"
+            ? t("ocr.copiedPages", { count: copiedCount })
+            : t("ocr.copiedArticles", { count: copiedCount })}
         </span>
       )}
       {savedTip && (
@@ -333,9 +342,15 @@ export function OcrBulkActions() {
         type="button"
         disabled={!hasBulkText}
         onClick={() => void onCopyAll()}
-        title={recognitionMode === "whole_file" ? "复制所有页" : "复制所有报道"}
+        title={
+          recognitionMode === "whole_file"
+            ? t("ocr.copyAllPages")
+            : t("ocr.copyAllArticles")
+        }
         aria-label={
-          recognitionMode === "whole_file" ? "复制所有页" : "复制所有报道"
+          recognitionMode === "whole_file"
+            ? t("ocr.copyAllPages")
+            : t("ocr.copyAllArticles")
         }
         className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
       >
@@ -345,9 +360,15 @@ export function OcrBulkActions() {
         type="button"
         disabled={!hasBulkText}
         onClick={() => void onSaveAll()}
-        title={recognitionMode === "whole_file" ? "导出所有页" : "导出所有报道"}
+        title={
+          recognitionMode === "whole_file"
+            ? t("ocr.exportAllPages")
+            : t("ocr.exportAllArticles")
+        }
         aria-label={
-          recognitionMode === "whole_file" ? "导出所有页" : "导出所有报道"
+          recognitionMode === "whole_file"
+            ? t("ocr.exportAllPages")
+            : t("ocr.exportAllArticles")
         }
         className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
       >
@@ -358,8 +379,8 @@ export function OcrBulkActions() {
           type="button"
           disabled={!hasLayoutDocument || exportingLayoutPdf}
           onClick={() => void onExportLayoutPdf()}
-          title="导出阅读版 PDF"
-          aria-label="导出阅读版 PDF"
+          title={t("ocr.exportLayoutPdf")}
+          aria-label={t("ocr.exportLayoutPdf")}
           className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
         >
           <Printer className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -370,6 +391,7 @@ export function OcrBulkActions() {
 }
 
 export function OcrTextPanel() {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId);
   const recognitionMode = useStore((s) => s.recognitionMode);
   const documentResults = useStore((s) => s.documentResults);
@@ -389,7 +411,7 @@ export function OcrTextPanel() {
     () => files.find((f) => f.id === fileId) ?? null,
     [files, fileId]
   );
-  const fileLabel = fileEntry?.name ?? "(未命名)";
+  const fileLabel = fileEntry?.name ?? t("common.untitledFile");
   const totalPages = fileEntry?.pdfTotal ?? 1;
   const currentPage = fileEntry?.currentPage ?? 1;
   const hasMultiplePages = totalPages > 1;
@@ -515,9 +537,9 @@ export function OcrTextPanel() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
-      setSaveError(`复制失败：${appErrorMessage(e)}`);
+      setSaveError(t("ocr.copyFailed", { message: appErrorMessage(e) }));
     }
-  }, []);
+  }, [t]);
 
   const onSave = useCallback(async () => {
     setSaveError(null);
@@ -526,10 +548,13 @@ export function OcrTextPanel() {
       const defaultName =
         recognitionMode === "whole_file"
           ? hasMultiplePages
-            ? `${stem}_第${currentPage}页.md`
+            ? `${stem}_${t("file.suffix.page", { page: currentPage })}.md`
             : `${stem}.md`
           : pinnedArticle
-            ? `${stem}_${pinnedArticle.article.title || `报道${pinnedArticle.article.num}`}.md`
+            ? `${stem}_${
+                pinnedArticle.article.title ||
+                t("article.defaultTitle", { num: pinnedArticle.article.num })
+              }.md`
             : `${stem}.md`;
       const saved = await saveTextFile(draftRef.current, {
         defaultName,
@@ -539,16 +564,17 @@ export function OcrTextPanel() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
-      setSaveError(`保存失败：${appErrorMessage(e)}`);
+      setSaveError(t("ocr.saveFailed", { message: appErrorMessage(e) }));
     }
-  }, [fileLabel, recognitionMode, pinnedArticle, hasMultiplePages, currentPage]);
+  }, [fileLabel, recognitionMode, pinnedArticle, hasMultiplePages, currentPage, t]);
 
   const titleLabel =
     recognitionMode === "whole_file"
-      ? `第 ${currentPage} 页`
+      ? t("ocr.pageHeading", { page: currentPage })
       : pinnedArticle
-        ? pinnedArticle.article.title || `报道${pinnedArticle.article.num}`
-        : "全文";
+        ? pinnedArticle.article.title ||
+          t("article.defaultTitle", { num: pinnedArticle.article.num })
+        : t("ocr.titleFullText");
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1.5 px-2 pt-2 pb-1">
@@ -570,16 +596,20 @@ export function OcrTextPanel() {
         {hasContent && (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
             {copied && (
-              <span className="text-[10px] text-foreground-muted">已复制 ✓</span>
+              <span className="text-[10px] text-foreground-muted">
+                {t("ocr.copied")}
+              </span>
             )}
             {saved && (
-              <span className="text-[10px] text-foreground-muted">已保存 ✓</span>
+              <span className="text-[10px] text-foreground-muted">
+                {t("ocr.saved")}
+              </span>
             )}
             <button
               type="button"
               onClick={() => setViewMode("preview")}
-              title="预览"
-              aria-label="切换到预览"
+              title={t("ocr.preview")}
+              aria-label={t("ocr.switchToPreview")}
               disabled={!hasText}
               className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 ${
                 viewMode === "preview" ? "bg-surface-2 text-foreground" : ""
@@ -590,8 +620,8 @@ export function OcrTextPanel() {
             <button
               type="button"
               onClick={() => setViewMode("source")}
-              title="编辑源码"
-              aria-label="切换到源码"
+              title={t("ocr.sourceView")}
+              aria-label={t("ocr.switchToSource")}
               disabled={!hasText}
               className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 ${
                 viewMode === "source" ? "bg-surface-2 text-foreground" : ""
@@ -603,8 +633,8 @@ export function OcrTextPanel() {
               <button
                 type="button"
                 onClick={() => setViewMode("blocks")}
-                title="版面块校对"
-                aria-label="版面块校对"
+                title={t("ocr.blockProofread")}
+                aria-label={t("ocr.blockProofread")}
                 className={`grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground ${
                   viewMode === "blocks" ? "bg-surface-2 text-foreground" : ""
                 }`}
@@ -615,8 +645,8 @@ export function OcrTextPanel() {
             <button
               type="button"
               onClick={() => void onCopy()}
-              title="复制"
-              aria-label="复制"
+              title={t("common.copy")}
+              aria-label={t("common.copy")}
               disabled={!hasText}
               className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
             >
@@ -625,8 +655,8 @@ export function OcrTextPanel() {
             <button
               type="button"
               onClick={() => void onSave()}
-              title="保存"
-              aria-label="保存"
+              title={t("ocr.save")}
+              aria-label={t("ocr.save")}
               disabled={!hasText}
               className="grid h-6 w-6 place-items-center rounded text-foreground-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40"
             >
@@ -654,7 +684,7 @@ export function OcrTextPanel() {
           <div className="flex min-h-0 flex-1 flex-col">
             {hasLayout && (
               <p className="mb-1 px-1.5 text-[10px] text-foreground-muted">
-                此处修改会作为整页校对文本进入阅读版导出；需要保留细分块结构时请用"版面块校对"
+                {t("ocr.sourceLayoutNote")}
               </p>
             )}
             <textarea
@@ -675,7 +705,9 @@ export function OcrTextPanel() {
                   className="mb-2 rounded border border-border/40 bg-surface-2 px-2 py-1 text-[10.5px] text-foreground-muted"
                   role="status"
                 >
-                  文本约 {Math.round(draft.length / 1024)} KB，已切换到纯文本视图避免渲染卡顿
+                  {t("ocr.plainTextNote", {
+                    kb: Math.round(draft.length / 1024),
+                  })}
                 </div>
                 <pre className="whitespace-pre-wrap font-mono text-[11.5px] leading-relaxed text-foreground">
                   {draft}
@@ -708,8 +740,10 @@ export function OcrTextPanel() {
         <div className="flex shrink-0 items-center px-1.5">
           <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-subtle tabular-nums">
             {viewMode === "blocks" && currentLayout
-              ? `${currentLayout.blocks.length.toLocaleString()} 块`
-              : `${charCount.toLocaleString()} 字`}
+              ? t("ocr.blockCount", {
+                  count: currentLayout.blocks.length.toLocaleString(),
+                })
+              : t("ocr.charCount", { count: charCount.toLocaleString() })}
           </span>
         </div>
       )}

@@ -227,7 +227,7 @@ fn ordered_blocks(page: &LayoutPage) -> Vec<&LayoutBlock> {
 /// contents entries and cover noise, which made anchors jump or repeat. Source
 /// page indices are less pretty but reliable for citation back to the PDF.
 fn page_anchor_label(page: &LayoutPage) -> String {
-    format!("源文件第 {} 页", page.index)
+    xcvt_core::trf!("源文件第 {} 页", "Source page {}", page.index)
 }
 
 /// Strip leading Markdown heading/quote markers (`#`, `>`) and a single layer of
@@ -342,7 +342,7 @@ fn build_reading_items(
                 BlockRole::Table => {
                     if cleaned.is_empty() {
                         empty_table_notice = true;
-                        "［表格］".to_string()
+                        xcvt_core::tr!("［表格］", "[table]").to_string()
                     } else {
                         cleaned
                     }
@@ -373,22 +373,44 @@ fn build_reading_items(
     }
     if image_notice {
         if options.include_images {
-            warnings.push("图片内嵌尚未实现，图片区块已用占位说明表示".to_string());
+            warnings.push(
+                xcvt_core::tr!(
+                    "图片内嵌尚未实现，图片区块已用占位说明表示",
+                    "Embedding images is not implemented yet — image blocks are shown as placeholders"
+                )
+                .to_string(),
+            );
         } else {
-            warnings.push("图片区块未嵌入，已用占位说明表示".to_string());
+            warnings.push(
+                xcvt_core::tr!(
+                    "图片区块未嵌入，已用占位说明表示",
+                    "Image blocks were not embedded — they are shown as placeholders"
+                )
+                .to_string(),
+            );
         }
     }
     if empty_table_notice {
-        warnings.push("部分表格无文本内容，已用占位说明表示".to_string());
+        warnings.push(
+            xcvt_core::tr!(
+                "部分表格无文本内容，已用占位说明表示",
+                "Some tables carry no text — they are shown as placeholders"
+            )
+            .to_string(),
+        );
     }
     if inferred_furniture_count > 0 {
-        warnings.push(format!(
-            "已过滤 {inferred_furniture_count} 个重复页眉/页脚块"
+        warnings.push(xcvt_core::trf!(
+            "已过滤 {} 个重复页眉/页脚块",
+            "Filtered out {} repeated header/footer blocks",
+            inferred_furniture_count
         ));
     }
     if scanner_artifact_count > 0 {
-        warnings.push(format!(
-            "已过滤 {scanner_artifact_count} 个扫描/封装元数据块"
+        warnings.push(xcvt_core::trf!(
+            "已过滤 {} 个扫描/封装元数据块",
+            "Filtered out {} scanner / container metadata blocks",
+            scanner_artifact_count
         ));
     }
     items
@@ -396,8 +418,10 @@ fn build_reading_items(
 
 fn image_placeholder(image_ref: Option<&str>) -> String {
     match image_ref.and_then(display_image_ref) {
-        Some(source) => format!("［图片：未嵌入：{source}］"),
-        None => "［图片：未嵌入］".to_string(),
+        Some(source) => {
+            xcvt_core::trf!("［图片：未嵌入：{}］", "[image: not embedded: {}]", source)
+        }
+        None => xcvt_core::tr!("［图片：未嵌入］", "[image: not embedded]").to_string(),
     }
 }
 
@@ -553,7 +577,13 @@ pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<Layou
     let target_path = validate_target(&req.target_path, &req.document)?;
     let mut warnings = Vec::new();
     if req.options.mode == LayoutPdfExportMode::Bbox {
-        warnings.push("bbox 版式重建已改为阅读版导出".to_string());
+        warnings.push(
+            xcvt_core::tr!(
+                "bbox 版式重建已改为阅读版导出",
+                "bbox layout reconstruction now exports the reading view instead"
+            )
+            .to_string(),
+        );
     }
     let items = build_reading_items(&req.document, &req.options, &mut warnings);
 
@@ -946,7 +976,13 @@ pub fn export_reading_markdown_to_path(
     let target_path = validate_target(&req.target_path, &req.document)?;
     let mut warnings = Vec::new();
     if req.options.mode == LayoutPdfExportMode::Bbox {
-        warnings.push("bbox 版式重建已改为阅读版导出".to_string());
+        warnings.push(
+            xcvt_core::tr!(
+                "bbox 版式重建已改为阅读版导出",
+                "bbox layout reconstruction now exports the reading view instead"
+            )
+            .to_string(),
+        );
     }
     let items = build_reading_items(&req.document, &req.options, &mut warnings);
 
@@ -1021,10 +1057,18 @@ fn one_line(text: &str) -> String {
 
 fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<PathBuf> {
     if target_path.trim().is_empty() {
-        return Err(AppError::Config("缺少导出路径".into()));
+        return Err(AppError::Config(
+            xcvt_core::tr!("缺少导出路径", "No export path given").into(),
+        ));
     }
     if document.pages.is_empty() {
-        return Err(AppError::Config("没有可导出的版式页面".into()));
+        return Err(AppError::Config(
+            xcvt_core::tr!(
+                "没有可导出的版式页面",
+                "There are no layout pages to export"
+            )
+            .into(),
+        ));
     }
     let path = PathBuf::from(target_path);
     if let Some(parent) = path.parent() {
@@ -1036,7 +1080,12 @@ fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<Pa
 }
 
 fn collect_item_chars(items: &[ReadingItem]) -> BTreeSet<char> {
-    let mut chars: BTreeSet<char> = "Xcvt源文件第页〔〕［］图表格未嵌入".chars().collect();
+    let mut chars: BTreeSet<char> = xcvt_core::tr!(
+        "Xcvt源文件第页〔〕［］图表格未嵌入",
+        "Xcvt[]:Source page image table not embedded"
+    )
+    .chars()
+    .collect();
     for item in items {
         if let Some(text) = &item.text {
             chars.extend(text.chars().filter(|c| !c.is_control()));
@@ -1053,8 +1102,9 @@ fn push_missing_char_warning(loaded_font: &LoadedFont, warnings: &mut Vec<String
         return;
     }
     let preview: String = loaded_font.missing_chars.iter().take(12).collect();
-    warnings.push(format!(
+    warnings.push(xcvt_core::trf!(
         "字体 {} 缺少 {} 个字符（{}{}），缺字会显示为空白或替代字形",
+        "Font {} is missing {} characters ({}{}) — they render as blanks or fallback glyphs",
         loaded_font.path.display(),
         loaded_font.missing_chars.len(),
         preview,
@@ -1109,7 +1159,11 @@ fn load_cjk_font(required_chars: &BTreeSet<char>) -> AppResult<LoadedFont> {
     }
 
     Err(AppError::Config(
-        "未找到可用中文字体；请安装 Noto Sans CJK、Arial Unicode、微软雅黑或宋体后重试".into(),
+        xcvt_core::tr!(
+            "未找到可用中文字体；请安装 Noto Sans CJK、Arial Unicode、微软雅黑或宋体后重试",
+            "No usable CJK font found — install Noto Sans CJK, Arial Unicode, Microsoft YaHei or SimSun and try again"
+        )
+        .into(),
     ))
 }
 

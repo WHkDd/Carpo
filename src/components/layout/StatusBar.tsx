@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ChevronDown, Minus, Plus } from "lucide-react";
 import type { CanvasController } from "@/components/canvas/ImageCanvas";
 import { useStore } from "@/store";
+import { useT, type Translator } from "@/i18n";
 import { DEFAULT_FILE_VIEW } from "@/store/fileViewSlice";
 import { clampZoomPercent } from "@/store/uiSlice";
 import { getSecret as ipcGetSecret } from "@/lib/tauri";
@@ -11,12 +12,18 @@ interface StatusBarProps {
   canvasRef: RefObject<CanvasController | null>;
 }
 
-const PROVIDER_LABEL: Record<Provider, string> = {
-  paddleocr: "PaddleOCR",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-  openai_compatible: "OpenAI 兼容",
-};
+function providerLabel(provider: Provider, t: Translator): string {
+  switch (provider) {
+    case "paddleocr":
+      return "PaddleOCR";
+    case "openai":
+      return "OpenAI";
+    case "openrouter":
+      return "OpenRouter";
+    case "openai_compatible":
+      return t("provider.openai_compatible");
+  }
+}
 
 const PROVIDER_ORDER: Provider[] = [
   "paddleocr",
@@ -32,14 +39,14 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   openai_compatible: "openai_compatible_key",
 };
 
-const PROFILE_LABEL: Record<OcrProfile, string> = {
-  standard: "标准",
-  fast: "快速",
-};
+function profileLabel(profile: OcrProfile, t: Translator): string {
+  return profile === "standard" ? t("profile.standard") : t("profile.fast");
+}
 
 const PROFILE_ORDER: OcrProfile[] = ["standard", "fast"];
 
 export function StatusBar({ canvasRef }: StatusBarProps) {
+  const t = useT();
   const hasFile = useStore((s) => s.currentFileId !== null);
   const settings = useStore((s) => s.settings);
   const provider = settings.provider;
@@ -106,26 +113,28 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
   return (
     <footer className="absolute bottom-[2.5px] left-2 z-10 flex h-7 items-center gap-1 rounded-lg border border-border/60 bg-background/75 px-1 text-[12px] text-foreground-muted">
       <DropMenu
-        ariaLabel="OCR 服务商"
-        triggerLabel={PROVIDER_LABEL[provider]}
-        triggerHint={!secretPresent[provider] ? "未配置" : undefined}
+        ariaLabel={t("statusBar.provider")}
+        triggerLabel={providerLabel(provider, t)}
+        triggerHint={
+          !secretPresent[provider] ? t("statusBar.notConfigured") : undefined
+        }
         triggerClassName="font-semibold text-foreground"
         items={PROVIDER_ORDER.map((p) => ({
           key: p,
-          label: PROVIDER_LABEL[p],
+          label: providerLabel(p, t),
           selected: p === provider,
           disabled: !secretPresent[p] && p !== provider,
-          hint: secretPresent[p] ? undefined : "未配置",
+          hint: secretPresent[p] ? undefined : t("statusBar.notConfigured"),
         }))}
         onSelect={(p) => setProvider(p)}
       />
       <DropMenu
-        ariaLabel="OCR 模式"
-        triggerLabel={PROFILE_LABEL[ocrProfile]}
+        ariaLabel={t("statusBar.profile")}
+        triggerLabel={profileLabel(ocrProfile, t)}
         triggerClassName="text-foreground"
         items={PROFILE_ORDER.map((p) => ({
           key: p,
-          label: PROFILE_LABEL[p],
+          label: profileLabel(p, t),
           selected: p === ocrProfile,
         }))}
         onSelect={(p) => setOcrProfile(p)}
@@ -133,7 +142,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       <span className="h-3 w-px bg-border" aria-hidden />
       <button
         type="button"
-        aria-label="缩小"
+        aria-label={t("statusBar.zoomOut")}
         onClick={() => canvasRef.current?.zoomOut()}
         className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
       >
@@ -153,7 +162,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
             }
           }}
           inputMode="numeric"
-          aria-label="缩放百分比"
+          aria-label={t("statusBar.zoomPercent")}
           style={{ width: `calc(${Math.max(1, draftZoom.length)}ch + 2px)` }}
           className="h-6 bg-transparent text-right font-mono text-[11px] font-semibold text-foreground tabular-nums outline-none"
         />
@@ -163,7 +172,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       </div>
       <button
         type="button"
-        aria-label="放大"
+        aria-label={t("statusBar.zoomIn")}
         onClick={() => canvasRef.current?.zoomIn()}
         className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
       >
@@ -174,7 +183,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         onClick={() => canvasRef.current?.fit()}
         className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
       >
-        适应
+        {t("statusBar.fit")}
       </button>
     </footer>
   );

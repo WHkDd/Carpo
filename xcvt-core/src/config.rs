@@ -3,11 +3,27 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::i18n::{self, Language};
 
 const STORE_FILE: &str = "settings.json";
 
-/// Default OCR prompt — mirrors `_OCR_PROMPT` in `newspaper_ocr.py:296`.
-const DEFAULT_OCR_PROMPT: &str = "请识别并转录图中所有文字。这是一份近代中文报纸的版块图像，文字方向可能为竖排（从上到下，从右到左）或横排。请按原文顺序输出所有文字，不要添加任何解释、标注或格式。";
+/// Language for a settings file that predates localization: it was written
+/// by a Chinese-only build, so that is what its owner has been reading.
+fn legacy_language() -> Option<Language> {
+    Some(Language::Zh)
+}
+
+/// Default OCR prompt. The Chinese wording mirrors `_OCR_PROMPT` in
+/// `newspaper_ocr.py:296`; the English one is its translation and is what a
+/// fresh English install starts with. Kept in step with
+/// `settings.defaultPrompt` in `src/i18n/messages.ts`, which the settings
+/// dialog shows as the placeholder and restores on "Restore default".
+pub fn default_ocr_prompt(language: Language) -> String {
+    match language {
+        Language::Zh => "请识别并转录图中所有文字。这是一份近代中文报纸的版块图像，文字方向可能为竖排（从上到下，从右到左）或横排。请按原文顺序输出所有文字，不要添加任何解释、标注或格式。".to_string(),
+        Language::En => "Transcribe every piece of text in the image. It is a block cropped from a historical Chinese newspaper; the text may run vertically (top to bottom, right to left) or horizontally. Output all of the text in its original order, with no explanations, annotations or formatting.".to_string(),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +114,16 @@ impl Default for PaddleDocumentOptions {
 pub struct NonSecretSettings {
     pub provider: Provider,
     pub ocr_profile: OcrProfile,
+    /// UI language, mirrored here so backend progress labels and error
+    /// messages come back in the language the user is reading.
+    ///
+    /// `None` means "never chosen", which the frontend answers by adopting
+    /// the system locale and saving the result. Settings files written
+    /// before localization existed deserialize to `Some(Zh)` instead
+    /// (see [`legacy_language`]) so an existing install keeps the Chinese
+    /// wording it already had.
+    #[serde(default = "legacy_language")]
+    pub language: Option<Language>,
     pub ocr_prompt: String,
     pub paddle_url: String,
     pub paddle_model: String,
@@ -114,7 +140,9 @@ impl Default for NonSecretSettings {
         Self {
             provider: Provider::Openai,
             ocr_profile: OcrProfile::Standard,
-            ocr_prompt: DEFAULT_OCR_PROMPT.to_string(),
+            // Fresh install: let the frontend pick from the system locale.
+            language: None,
+            ocr_prompt: default_ocr_prompt(i18n::language()),
             paddle_url: "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs".to_string(),
             paddle_model: "PaddleOCR-VL-1.6".to_string(),
             paddle_document_options: PaddleDocumentOptions::default(),
@@ -133,11 +161,14 @@ pub fn load(data_dir: &Path) -> AppResult<NonSecretSettings> {
     }
     let raw = fs::read_to_string(&path)
         .map_err(|e| AppError::Config(format!("settings read {}: {e}", path.display())))?;
-    serde_json::from_str::<NonSecretSettings>(&raw)
-        .map_err(|e| AppError::Config(format!("settings parse {}: {e}", path.display())))
+    let settings = serde_json::from_str::<NonSecretSettings>(&raw)
+        .map_err(|e| AppError::Config(format!("settings parse {}: {e}", path.display())))?;
+    i18n::set_language(settings.language.unwrap_or_default());
+    Ok(settings)
 }
 
 pub fn save(data_dir: &Path, s: &NonSecretSettings) -> AppResult<()> {
+    i18n::set_language(s.language.unwrap_or_default());
     fs::create_dir_all(data_dir)
         .map_err(|e| AppError::Config(format!("settings dir {}: {e}", data_dir.display())))?;
     let path = data_dir.join(STORE_FILE);
@@ -174,6 +205,11 @@ mod tests {
             "openai_compatible_model": ""
         }))
         .unwrap();
+
+        // Pre-localization settings files keep the Chinese wording they were
+        // written with, rather than falling back to the locale.
+        assert_eq!(parsed.language, Some(Language::Zh));
+        assert_eq!(NonSecretSettings::default().language, None);
 
         assert!(parsed.paddle_document_options.use_layout_detection);
         assert!(!parsed.paddle_document_options.include_header_image);

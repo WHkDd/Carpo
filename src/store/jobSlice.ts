@@ -9,6 +9,7 @@ import type {
   JobDone,
   JobError,
   JobProgress,
+  ProgressStage,
 } from "@/lib/ipc-types";
 import { clearPendingJob, savePendingJob } from "@/lib/job-persistence";
 import type { LayoutPage } from "@/lib/layout-document";
@@ -25,7 +26,10 @@ interface BaseActiveJob {
   status: JobStatus;
   done: number;
   total: number;
+  /** Raw backend label. Only rendered when `stage` is missing (an older
+   *  backend); otherwise the UI formats `stage` in the active language. */
   label: string;
+  stage: ProgressStage | null;
   /** Set when status is "error". */
   error?: string;
   /** Captured on `done`. The shape depends on `kind`. */
@@ -86,7 +90,7 @@ function mergeRecognizedPage(
   // layout metadata that no longer describes it. Once the source mode
   // changes, the old pipeline's page-shape fields are meaningless — drop
   // them before merging.
-  const base = prev && prev.sourceMode !== next.sourceMode
+  const base = prev && (prev.sourceMode !== next.sourceMode || next.status === "failed")
     ? { ...prev, layout: undefined, chunkId: undefined, chunkPage: undefined }
     : prev;
   const merged = { ...base, ...next };
@@ -99,30 +103,61 @@ function mergeRecognizedPage(
   return merged;
 }
 
+/** Re-states a backend stage in terms of the pages the *user* asked for.
+ *  A Paddle document job counts the pages it submitted (a chunk, or the whole
+ *  PDF), which can be larger than the requested sub-range; showing that raw
+ *  would make the pill claim more pages than the user picked. */
+function normalizeStage(
+  stage: ProgressStage,
+  total: number,
+  done: number
+): ProgressStage {
+  switch (stage.kind) {
+    case "preparing_blocks":
+    case "preparing_pages":
+    case "preparing_articles":
+    case "preparing_chunks":
+    case "submitting_document":
+      return { ...stage, total };
+    case "document_running":
+      return { ...stage, done, total };
+    case "page_running":
+    case "page_done":
+      return {
+        ...stage,
+        page: Math.min(Math.max(1, stage.page), total),
+        total,
+      };
+    default:
+      return stage;
+  }
+}
+
 function normalizeWholeFileProgress(
   job: WholeFileActiveJob,
   progress: JobProgress
-): Pick<JobProgress, "done" | "total" | "label"> {
+): Pick<JobProgress, "done" | "total" | "label" | "stage"> {
   const requestedTotal = job.requestedPages.length;
   if (requestedTotal === 0) {
     return {
       done: progress.done,
       total: progress.total,
       label: progress.label,
+      ...(progress.stage ? { stage: progress.stage } : {}),
     };
   }
 
   const total = requestedTotal;
   const done = Math.min(Math.max(0, progress.done), total);
-  const label = progress.label
-    .replace(/共\s+\d+\s+页/g, `共 ${total} 页`)
-    .replace(/已完成\s+\d+\s*\/\s*\d+\s+页/g, `已完成 ${done}/${total} 页`)
-    .replace(/第(\d+)\s*\/\s*\d+页/g, (_match, pageIndex: string) => {
-      const current = Math.min(Math.max(1, Number(pageIndex)), total);
-      return `第${current}/${total}页`;
-    });
 
-  return { done, total, label };
+  return {
+    done,
+    total,
+    label: progress.label,
+    ...(progress.stage
+      ? { stage: normalizeStage(progress.stage, total, done) }
+      : {}),
+  };
 }
 
 export type StartJobInfo =
@@ -133,7 +168,7 @@ export type StartJobInfo =
       newspaperName: string;
       newspaperDate: string;
       requestedArticles: Array<{ id: string; title: string }>;
-      label?: string;
+      stage?: ProgressStage;
     }
   | {
       jobId: string;
@@ -142,7 +177,7 @@ export type StartJobInfo =
       newspaperName: string;
       newspaperDate: string;
       requestedPages: number[];
-      label?: string;
+      stage?: ProgressStage;
     };
 
 export interface JobSlice {
@@ -231,7 +266,8 @@ export const createJobSlice: StateCreator<
         status: "running",
         done: 0,
         total: 0,
-        label: info.label ?? "准备中…",
+        label: "",
+        stage: info.stage ?? null,
         fileId: info.fileId,
         newspaperName: info.newspaperName,
         newspaperDate: info.newspaperDate,
@@ -258,6 +294,7 @@ export const createJobSlice: StateCreator<
       job.done = progress.done;
       job.total = progress.total;
       job.label = progress.label;
+      job.stage = progress.stage ?? null;
     }),
   markCancelling: () =>
     set((state) => {

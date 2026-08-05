@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
+import { t } from "@/i18n";
 import { pageKey } from "@/store/pageStateSlice";
 import { getSecret, startGroupedOcr } from "@/lib/tauri";
 import { ACTIVE_PREVIEW_DPI } from "@/lib/ocr-profile";
@@ -79,7 +80,7 @@ export function useGroupedOcrTrigger() {
   const trigger = useCallback(async () => {
     if (!currentFileId || !file || !docState) return;
     if (selectedSet.size === 0) {
-      setError("请先选择要识别的报道");
+      setError(t("trigger.selectArticles"));
       return;
     }
     setStarting(true);
@@ -90,11 +91,16 @@ export function useGroupedOcrTrigger() {
         settings.provider === "openai_compatible" &&
         !settings.openai_compatible_base_url
       ) {
-        setError("OpenAI 兼容服务尚未配置 base_url —— 请先在设置中填写。");
+        setError(t("trigger.compatBaseUrlMissing"));
         return;
       }
       if (!hasSecret) {
-        setError(`${settings.provider} 的 API 密钥未找到（Keychain key: ${secretKey}）—— 请在设置中重新保存。`);
+        setError(
+          t("trigger.secretMissing", {
+            provider: settings.provider,
+            key: secretKey,
+          })
+        );
         return;
       }
 
@@ -107,7 +113,11 @@ export function useGroupedOcrTrigger() {
           const block = ps?.blocks.find((b) => b.id === ref.blockId);
           if (!block) {
             setError(
-              `报道${art.num} 引用的块 ${ref.blockId} 在 page ${ref.page} 中已不存在`
+              t("trigger.blockMissing", {
+                num: art.num,
+                blockId: ref.blockId,
+                page: ref.page,
+              })
             );
             return;
           }
@@ -119,7 +129,7 @@ export function useGroupedOcrTrigger() {
           });
         }
         if (blocks.length === 0) {
-          setError(`报道${art.num} 没有任何块`);
+          setError(t("trigger.articleNoBlocks", { num: art.num }));
           return;
         }
         articles.push({
@@ -131,7 +141,7 @@ export function useGroupedOcrTrigger() {
       }
 
       if (articles.length === 0) {
-        setError("当前选中的报道在文档中已不存在");
+        setError(t("trigger.articlesGone"));
         return;
       }
 
@@ -159,7 +169,7 @@ export function useGroupedOcrTrigger() {
         newspaperName: docState.newspaperName,
         newspaperDate: docState.newspaperDate,
         requestedArticles: articles.map((a) => ({ id: a.id, title: a.title })),
-        label: `准备中… 共 ${articles.length} 篇`,
+        stage: { kind: "preparing_articles", total: articles.length },
       });
     } catch (e) {
       setError(appErrorMessage(e));

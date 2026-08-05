@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "@/i18n";
 import { isTauriRuntime } from "./runtime";
 import { HttpAppError } from "./ipc-types";
 import type {
@@ -234,7 +235,7 @@ export async function getJobResult(
 
 export async function openLogDir(): Promise<string> {
   if (!isTauriRuntime()) {
-    throw new Error("日志目录只在桌面版可用");
+    throw new Error(t("runtime.logDirDesktopOnly"));
   }
   return invoke<string>("open_log_dir");
 }
@@ -243,7 +244,7 @@ export async function analyzePaddleJson(
   path: string
 ): Promise<PaddleJsonPreflightReport> {
   if (!isTauriRuntime()) {
-    throw new Error("Paddle JSON 导入只在桌面版可用");
+    throw new Error(t("runtime.paddleJsonDesktopOnly"));
   }
   return invoke<PaddleJsonPreflightReport>("analyze_paddle_json", { path });
 }
@@ -252,7 +253,7 @@ export async function importPaddleJson(
   path: string
 ): Promise<PaddleJsonImport> {
   if (!isTauriRuntime()) {
-    throw new Error("Paddle JSON 导入只在桌面版可用");
+    throw new Error(t("runtime.paddleJsonDesktopOnly"));
   }
   return invoke<PaddleJsonImport>("import_paddle_json", { path });
 }
@@ -261,7 +262,7 @@ export async function exportLayoutPdf(
   req: LayoutPdfExportRequest
 ): Promise<LayoutPdfExportResult> {
   if (!isTauriRuntime()) {
-    throw new Error("版式 PDF 导出只在桌面版可用");
+    throw new Error(t("runtime.layoutPdfDesktopOnly"));
   }
   return invoke<LayoutPdfExportResult>("export_layout_pdf", { req });
 }
@@ -270,7 +271,7 @@ export async function exportReadingMarkdown(
   req: LayoutPdfExportRequest
 ): Promise<ReadingMarkdownExportResult> {
   if (!isTauriRuntime()) {
-    throw new Error("Markdown 导出只在桌面版可用");
+    throw new Error(t("runtime.markdownExportDesktopOnly"));
   }
   return invoke<ReadingMarkdownExportResult>("export_reading_markdown", { req });
 }

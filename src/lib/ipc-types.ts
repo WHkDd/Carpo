@@ -1,3 +1,4 @@
+import type { Language } from "@/i18n";
 import type { LayoutPage } from "./layout-document";
 
 /**
@@ -49,6 +50,11 @@ export type SecretKey =
 export interface NonSecretSettings {
   provider: Provider;
   ocr_profile: OcrProfile;
+  /** UI language. Also sent to the backend so job progress and error
+   *  messages come back in the same language as the interface.
+   *  `null` means the user has never chosen one — the app then follows the
+   *  system locale and saves that choice. */
+  language: Language | null;
   ocr_prompt: string;
   paddle_url: string;
   paddle_model: string;
@@ -157,11 +163,37 @@ export interface JobStarted {
   job_id: string;
 }
 
+/** Structured description of what a job is doing right now. The backend
+ *  emits this alongside the (Chinese) `label` so the UI can render progress
+ *  in whatever language the user picked instead of parsing prose. */
+export type ProgressStage =
+  | { kind: "preparing_blocks"; total: number }
+  | { kind: "preparing_pages"; total: number }
+  | { kind: "preparing_articles"; total: number }
+  | { kind: "preparing_chunks"; total: number }
+  | { kind: "submitting_document"; total: number }
+  | { kind: "chunk_submitting"; chunk: number; chunks: number; pages: number }
+  | {
+      kind: "chunk_running";
+      chunk: number;
+      chunks: number;
+      done: number;
+      total: number;
+    }
+  | { kind: "document_running"; done: number; total: number }
+  | { kind: "page_running"; page: number; total: number }
+  | { kind: "page_done"; page: number; total: number }
+  | { kind: "block_running"; article_num: number; index: number; count: number }
+  | { kind: "block_done"; article_num: number; index: number; count: number };
+
 export interface JobProgress {
   job_id: string;
   done: number;
   total: number;
   label: string;
+  /** Absent only when talking to a backend older than the i18n rollout, in
+   *  which case the UI falls back to showing `label` verbatim. */
+  stage?: ProgressStage;
   current_block?: number;
   article_total?: number;
 }

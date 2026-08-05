@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 export interface PageRange {
   from: number;
   to: number;
@@ -21,7 +23,7 @@ export class PageRangeError extends Error {
 export function parsePageRangePlan(raw: string, totalPages: number): PageRangePlan {
   const normalizedTotal = Math.floor(totalPages);
   if (!Number.isFinite(normalizedTotal) || normalizedTotal < 1) {
-    throw new PageRangeError("总页数无效");
+    throw new PageRangeError(t("pageRange.error.totalInvalid"));
   }
 
   const normalizedRaw = raw.trim();
@@ -30,7 +32,7 @@ export function parsePageRangePlan(raw: string, totalPages: number): PageRangePl
   }
 
   if (/[^0-9,\-\s]/.test(normalizedRaw)) {
-    throw new PageRangeError("页码范围只能包含数字、逗号和连字符");
+    throw new PageRangeError(t("pageRange.error.charset"));
   }
 
   const pages = new Set<number>();
@@ -38,7 +40,7 @@ export function parsePageRangePlan(raw: string, totalPages: number): PageRangePl
   for (const part of parts) {
     const token = part.trim();
     if (token.length === 0) {
-      throw new PageRangeError("页码范围里有空段，请删除多余逗号");
+      throw new PageRangeError(t("pageRange.error.emptySegment"));
     }
     const rangeMatch = token.match(/^(\d+)\s*-\s*(\d+)$/);
     const singleMatch = token.match(/^\d+$/);
@@ -52,9 +54,9 @@ export function parsePageRangePlan(raw: string, totalPages: number): PageRangePl
       from = Number(token);
       to = from;
     } else if (/^-\d+/.test(token) || /\s-\d+/.test(token)) {
-      throw new PageRangeError("页码不能为负数");
+      throw new PageRangeError(t("pageRange.error.negative"));
     } else {
-      throw new PageRangeError(`页码范围格式无效：${token}`);
+      throw new PageRangeError(t("pageRange.error.format", { token }));
     }
 
     validateBounds(from, to, normalizedTotal);
@@ -69,16 +71,16 @@ export function parsePageRangePlan(raw: string, totalPages: number): PageRangePl
 
 function validateBounds(from: number, to: number, totalPages: number): void {
   if (from === 0 || to === 0) {
-    throw new PageRangeError("页码从 1 开始，不能为 0");
+    throw new PageRangeError(t("pageRange.error.zero"));
   }
   if (from < 0 || to < 0) {
-    throw new PageRangeError("页码不能为负数");
+    throw new PageRangeError(t("pageRange.error.negative"));
   }
   if (to < from) {
-    throw new PageRangeError(`页码范围不能倒序：${from}-${to}`);
+    throw new PageRangeError(t("pageRange.error.reversed", { from, to }));
   }
   if (from > totalPages || to > totalPages) {
-    throw new PageRangeError(`页码不能超过总页数 ${totalPages}`);
+    throw new PageRangeError(t("pageRange.error.exceeds", { total: totalPages }));
   }
 }
 
@@ -121,6 +123,6 @@ export function formatPageRangeLabel(plan: PageRangePlan): string {
     plan.ranges.length === 1 &&
     plan.ranges[0]?.from === 1 &&
     plan.ranges[0]?.to === plan.totalPages;
-  if (full) return `第 1-${plan.totalPages} 页 · 全部`;
-  return `第 ${plan.paddlePageRanges} 页`;
+  if (full) return t("pageRange.all", { total: plan.totalPages });
+  return t("pageRange.pages", { ranges: plan.paddlePageRanges });
 }

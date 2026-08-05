@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScanText, Square } from "lucide-react";
 import { useStore } from "@/store";
+import { useT } from "@/i18n";
 import { useWholeFileOcrTrigger } from "@/hooks/useWholeFileOcrTrigger";
 import { formatPageRangeLabel, parsePageRangePlan } from "@/lib/page-range";
 import type { PageRangePlan } from "@/lib/page-range";
 
 export function Toolbar() {
+  const t = useT();
   const currentFile = useStore((s) =>
     s.currentFileId ? s.files.find((f) => f.id === s.currentFileId) ?? null : null
   );
@@ -41,10 +43,10 @@ export function Toolbar() {
               ? "bg-primary-muted text-foreground"
               : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
           }`}
-          title="切换框选模式（V）"
+          title={t("toolbar.toggleDraw")}
         >
           <Square className="h-3 w-3" />
-          <span>{manualDrawMode ? "退出框选" : "框选识别"}</span>
+          <span>{manualDrawMode ? t("toolbar.exitDraw") : t("toolbar.draw")}</span>
         </button>
       )}
 
@@ -58,7 +60,11 @@ export function Toolbar() {
             setDrawMode(false);
           }
         }}
-        title={groupedActive ? "进入全文识别模式" : "返回框选模式"}
+        title={
+          groupedActive
+            ? t("toolbar.enterWholeFile")
+            : t("toolbar.backToGrouped")
+        }
         className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
           groupedActive
             ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
@@ -66,7 +72,7 @@ export function Toolbar() {
         }`}
       >
         <ScanText className="h-3 w-3" />
-        <span>{groupedActive ? "全文识别" : "返回框选"}</span>
+        <span>{groupedActive ? t("toolbar.wholeFile") : t("toolbar.backToDraw")}</span>
       </button>
 
       {recognitionMode === "whole_file" && triggerState.showRange && (
@@ -106,6 +112,7 @@ function PageRangeChip({
   rangePlan: PageRangePlan | null;
   rangeError: string | null;
 }) {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId);
   const setRange = useStore((s) => s.setWholeFileRange);
   const [open, setOpen] = useState(false);
@@ -114,8 +121,8 @@ function PageRangeChip({
   const label = rangePlan
     ? formatPageRangeLabel(rangePlan)
     : rangeInput.trim().length > 0
-      ? `第 ${rangeInput.trim()} 页`
-      : `第 1-${totalPages} 页 · 全部`;
+      ? t("pageRange.pages", { ranges: rangeInput.trim() })
+      : t("pageRange.all", { total: totalPages });
 
   const wrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -145,9 +152,12 @@ function PageRangeChip({
     try {
       return { plan: parsePageRangePlan(draft, totalPages), error: null };
     } catch (e) {
-      return { plan: null, error: e instanceof Error ? e.message : "页码范围无效" };
+      return {
+        plan: null,
+        error: e instanceof Error ? e.message : t("pageRange.invalid"),
+      };
     }
-  }, [draft, totalPages]);
+  }, [draft, totalPages, t]);
 
   function commit() {
     if (!fileId) return;
@@ -161,7 +171,7 @@ function PageRangeChip({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="点击修改页码范围"
+        title={t("pageRange.chipTitle")}
         className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-mono leading-none tabular-nums transition-colors ${
           isFull && rangeError === null
             ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
@@ -176,9 +186,9 @@ function PageRangeChip({
       {open && (
         <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-[300px] rounded-md border border-border/70 bg-background p-2 shadow-lg">
           <div className="mb-2 flex items-center justify-between text-[11px] text-foreground-muted">
-            <span>页码范围</span>
+            <span>{t("pageRange.label")}</span>
             <span className="font-mono tabular-nums">
-              共 {totalPages} 页
+              {t("pageRange.total", { total: totalPages })}
             </span>
           </div>
           <div className="mb-2">
@@ -202,8 +212,11 @@ function PageRangeChip({
               {draftValidation.error
                 ? draftValidation.error
                 : draftValidation.plan
-                  ? `${draftValidation.plan.pages.length} 页 · ${draftValidation.plan.paddlePageRanges}`
-                  : "留空表示全部页"}
+                  ? t("pageRange.summary", {
+                      count: draftValidation.plan.pages.length,
+                      ranges: draftValidation.plan.paddlePageRanges,
+                    })
+                  : t("pageRange.emptyHint")}
             </div>
           </div>
           <div className="flex items-center justify-between">
@@ -215,14 +228,14 @@ function PageRangeChip({
               }}
               className="text-[11px] text-foreground-muted hover:text-foreground hover:underline"
             >
-              重置为全部
+              {t("pageRange.resetAll")}
             </button>
             <button
               type="button"
               onClick={commit}
               className="h-6 rounded bg-primary px-2 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90"
             >
-              确定
+              {t("common.confirm")}
             </button>
           </div>
         </div>

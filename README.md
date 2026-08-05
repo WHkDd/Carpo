@@ -16,6 +16,8 @@ provider 任选，结果导出为 Markdown / 纯文本。
 - **Paddle 文档级 OCR**：一次性对整份 PDF 调用 Paddle 批量接口；大文件自动分块分批提交，
   语言、并发、每批页数均可配置。
 - **Paddle JSON 复用（桌面版）**：可导入 Paddle 网页版 JSON，预检区块结构完整性，写入按页文本，重建为可复制文字且阅读更友好的 PDF。**注意**：这一功能适合横排或竖排书籍，而非针对报刊
+- **中英双语界面**：设置 → 语言 可在简体中文 / English 之间切换，识别进度、错误提示与导出文件名一并跟随；
+  首次启动按系统语言自动选择。
 - **本地凭据**：桌面版 API key / Token 通过系统 Keychain（macOS）/ Credential Manager（Windows）
   保管；Docker 版写入挂载卷里的 `/data/secrets.json`，不会通过接口回传明文。
 
