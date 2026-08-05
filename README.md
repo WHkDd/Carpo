@@ -33,7 +33,7 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 **Paddle JSON 导入**
 
-![Paddle JSON 导入界面](docs/screenshots/json-import.png)
+![Paddle JSON 导入界面](docs/screenshots/json-import-simplified.png)
 
 ## 安装
 
