@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useStore } from "@/store";
 import { Pencil, Trash2 } from "lucide-react";
 import { articleHsl } from "@/lib/article-color-token";
+import { useT } from "@/i18n";
 
 interface ArticleRowProps {
   num: number;
@@ -28,6 +29,7 @@ function ArticleRow({
   onUpdateTitle,
   onRemove,
 }: ArticleRowProps) {
+  const t = useT();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(title);
 
@@ -85,15 +87,15 @@ function ArticleRow({
               {hasOcr && (
                 <span
                   aria-hidden
-                  title="已识别"
+                  title={t("article.recognized")}
                   className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70"
                 />
               )}
             </div>
             <div className="text-[10px] text-foreground-subtle">
-              {totalBlocks} 版块
+              {t("article.blocks", { count: totalBlocks })}
               {pageBlocks > 0 && pageBlocks < totalBlocks
-                ? ` · ${pageBlocks} 在当前页`
+                ? t("article.blocksOnPage", { count: pageBlocks })
                 : ""}
             </div>
           </>
@@ -126,6 +128,7 @@ function ArticleRow({
 }
 
 export function ArticleList() {
+  const t = useT();
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const articles = useStore((s) => s.getDocumentState(fileId).articles);
   const currentPage = useStore((s) => {
@@ -166,12 +169,12 @@ export function ArticleList() {
 
   const handleClearAll = useCallback(() => {
     if (articles.length === 0) return;
-    if (window.confirm(`确定清除全部 ${articles.length} 篇报道？`)) {
+    if (window.confirm(t("article.confirmClear", { count: articles.length }))) {
       clearArticles(fileId);
       clearArticleSelection();
       anchorIdRef.current = null;
     }
-  }, [articles.length, fileId, clearArticles, clearArticleSelection]);
+  }, [articles.length, fileId, clearArticles, clearArticleSelection, t]);
 
   const handleRowClick = useCallback(
     (articleId: string, e: React.MouseEvent) => {
@@ -220,14 +223,14 @@ export function ArticleList() {
               }
               className="text-[11px] text-foreground-muted hover:text-foreground"
             >
-              {allSelected ? "取消全选" : "全选"}
+              {allSelected ? t("article.deselectAll") : t("article.selectAll")}
             </button>
             <button
               type="button"
               onClick={handleClearAll}
               className="text-[11px] text-destructive hover:opacity-80"
             >
-              全清
+              {t("article.clearAll")}
             </button>
           </div>
         </div>
@@ -235,7 +238,7 @@ export function ArticleList() {
 
       {articles.length === 0 ? (
         <div className="rounded-lg border border-border/40 px-3 py-6 text-center text-[11px] text-foreground-subtle">
-          尚未标记报道
+          {t("article.empty")}
         </div>
       ) : (
         articles.map((article) => {

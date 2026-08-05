@@ -132,7 +132,11 @@ pub async fn recognize(
         Provider::OpenaiCompatible => {
             if settings.openai_compatible_base_url.is_empty() {
                 return Err(AppError::Config(
-                    "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。".into(),
+                    crate::tr!(
+                        "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。",
+                        "OpenAI-Compatible: no base URL configured — set one in Settings."
+                    )
+                    .into(),
                 ));
             }
             let key = secret.unwrap_or_default();
@@ -163,7 +167,8 @@ pub async fn recognize(
 /// payload builder rather than just adding the id to this list.
 pub const PADDLE_MODELS: &[&str] = &["PaddleOCR-VL-1.6", "PaddleOCR-VL"];
 
-/// Fetches the model list for the active provider. Backs the "刷新模型" button
+/// Fetches the model list for the active provider. Backs the "refresh models"
+/// button
 /// in the settings dialog. Paddle returns a static list because the
 /// async jobs endpoint has no model-discovery surface; the other three hit
 /// `{base_url}/models` with the user's key.
@@ -195,7 +200,11 @@ pub async fn list_models(
         Provider::OpenaiCompatible => {
             if settings.openai_compatible_base_url.is_empty() {
                 return Err(AppError::Config(
-                    "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。".into(),
+                    crate::tr!(
+                        "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。",
+                        "OpenAI-Compatible: no base URL configured — set one in Settings."
+                    )
+                    .into(),
                 ));
             }
             openai::list_models(
@@ -260,6 +269,7 @@ mod tests {
         NonSecretSettings {
             provider: Provider::Paddleocr,
             ocr_profile: OcrProfile::Standard,
+            language: Some(crate::i18n::Language::Zh),
             ocr_prompt: String::new(),
             paddle_url: jobs_url,
             paddle_model: "PaddleOCR-VL-1.6".into(),

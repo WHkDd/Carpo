@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{page_loader::PageLoader, JobEventKind};
+use super::{page_loader::PageLoader, JobEventKind, ProgressStage};
 use crate::config::{self, NonSecretSettings, Provider};
 use crate::error::{AppError, AppResult};
 use crate::ocr::{self, OcrRequest};
@@ -96,6 +96,7 @@ struct ProgressEvent {
     done: u32,
     total: u32,
     label: String,
+    stage: ProgressStage,
     current_block: u32,
     article_total: u32,
 }
@@ -150,6 +151,12 @@ fn spawn_inner(
     token: CancellationToken,
     settings: Option<config::NonSecretSettings>,
 ) {
+    // Progress labels and failure messages emitted below are shown verbatim
+    // in the UI, so pin the language to the settings this job runs with —
+    // a caller-supplied override never went through `config::load`.
+    if let Some(settings) = settings.as_ref() {
+        crate::i18n::set_language(settings.language.unwrap_or_default());
+    }
     tokio::spawn(async move {
         let outcome = run(Arc::clone(&state), req, job_id, token, settings).await;
         state.jobs.remove(job_id);
@@ -231,7 +238,8 @@ async fn run(
             job_id: job_id_str.clone(),
             done: 0,
             total,
-            label: format!("准备识别 · 共 {} 块", total),
+            label: crate::trf!("准备识别 · 共 {} 块", "Preparing · {} blocks", total),
+            stage: ProgressStage::PreparingBlocks { total },
             current_block: 0,
             article_total: 0,
         },
@@ -302,10 +310,18 @@ async fn run_one_block(
             job_id: job_id_str.clone(),
             done: cur_done,
             total,
-            label: format!(
+            label: crate::trf!(
                 "识别中 · 报道{} 第{}/{}块",
-                item.article_num, item.article_block_idx, item.article_block_total
+                "Recognizing · article {} block {}/{}",
+                item.article_num,
+                item.article_block_idx,
+                item.article_block_total
             ),
+            stage: ProgressStage::BlockRunning {
+                article_num: item.article_num,
+                index: item.article_block_idx as u32,
+                count: item.article_block_total as u32,
+            },
             current_block: item.article_block_idx as u32,
             article_total: item.article_block_total as u32,
         },
@@ -321,7 +337,12 @@ async fn run_one_block(
         Err(e) => {
             return BlockOutcome::Failed {
                 article_id: item.article_id,
-                message: format!("page {} 加载失败: {e}", item.block.page),
+                message: crate::trf!(
+                    "page {} 加载失败: {}",
+                    "page {} failed to load: {}",
+                    item.block.page,
+                    e
+                ),
             }
         }
     };
@@ -344,7 +365,12 @@ async fn run_one_block(
         Err(e) => {
             return BlockOutcome::Failed {
                 article_id: item.article_id,
-                message: format!("block {} 裁切/编码失败: {e}", item.block.block_id),
+                message: crate::trf!(
+                    "block {} 裁切/编码失败: {}",
+                    "block {} failed to crop/encode: {}",
+                    item.block.block_id,
+                    e
+                ),
             }
         }
     };
@@ -377,10 +403,18 @@ async fn run_one_block(
                     job_id: job_id_str,
                     done: n,
                     total,
-                    label: format!(
+                    label: crate::trf!(
                         "完成 · 报道{} 第{}/{}块",
-                        item.article_num, item.article_block_idx, item.article_block_total
+                        "Done · article {} block {}/{}",
+                        item.article_num,
+                        item.article_block_idx,
+                        item.article_block_total
                     ),
+                    stage: ProgressStage::BlockDone {
+                        article_num: item.article_num,
+                        index: item.article_block_idx as u32,
+                        count: item.article_block_total as u32,
+                    },
                     current_block: item.article_block_idx as u32,
                     article_total: item.article_block_total as u32,
                 },
@@ -396,7 +430,12 @@ async fn run_one_block(
         },
         Err(e) => BlockOutcome::Failed {
             article_id: item.article_id,
-            message: format!("block {} OCR 失败: {e}", item.block.block_id),
+            message: crate::trf!(
+                "block {} OCR 失败: {}",
+                "block {} OCR failed: {}",
+                item.block.block_id,
+                e
+            ),
         },
     }
 }
@@ -570,18 +609,28 @@ pub(super) fn encode_ocr_jpeg(img: &DynamicImage) -> AppResult<Vec<u8>> {
 /// up front instead of emitting an empty done event.
 pub fn validate(req: &GroupedOcrRequest) -> AppResult<()> {
     if req.path.is_empty() {
-        return Err(AppError::Config("缺少文件路径".into()));
+        return Err(AppError::Config(
+            crate::tr!("缺少文件路径", "No file path given").into(),
+        ));
     }
     if req.articles.is_empty() {
-        return Err(AppError::Config("没有可识别的报道".into()));
+        return Err(AppError::Config(
+            crate::tr!("没有可识别的报道", "No articles to recognize").into(),
+        ));
     }
     for article in &req.articles {
         if article.blocks.is_empty() {
-            return Err(AppError::Config(format!("报道 {} 没有版块", article.title)));
+            return Err(AppError::Config(crate::trf!(
+                "报道 {} 没有版块",
+                "Article {} has no blocks",
+                article.title
+            )));
         }
     }
     if matches!(req.kind, FileKind::Pdf) && req.preview_dpi == 0 {
-        return Err(AppError::Config("PDF 必须提供 preview_dpi".into()));
+        return Err(AppError::Config(
+            crate::tr!("PDF 必须提供 preview_dpi", "A PDF must carry preview_dpi").into(),
+        ));
     }
     Ok(())
 }

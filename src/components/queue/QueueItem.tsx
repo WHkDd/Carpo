@@ -1,6 +1,7 @@
 import { FileText, FileImage, Trash2, X } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 interface QueueItemProps {
   entry: FileEntry;
@@ -10,6 +11,7 @@ interface QueueItemProps {
 }
 
 export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps) {
+  const t = useT();
   const Icon = entry.kind === "pdf" ? FileText : FileImage;
   const meta = entry.ext.toUpperCase();
   const pageBadge =
@@ -59,8 +61,8 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
         <button
           type="button"
           onClick={() => onRemove(entry.id)}
-          aria-label={`从队列移除 ${entry.name}`}
-          title="从队列移除"
+          aria-label={t("queue.removeNamed", { name: entry.name })}
+          title={t("queue.remove")}
           className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-foreground-subtle opacity-0 transition-colors hover:bg-background hover:text-destructive group-hover:opacity-100"
         >
           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.7} />
@@ -71,6 +73,7 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
 }
 
 export function QueueItemCompact({ entry, active, onSelect, onRemove }: QueueItemProps) {
+  const t = useT();
   const Icon = entry.kind === "pdf" ? FileText : FileImage;
   const tooltip =
     entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
@@ -107,7 +110,7 @@ export function QueueItemCompact({ entry, active, onSelect, onRemove }: QueueIte
             e.stopPropagation();
             onRemove(entry.id);
           }}
-          aria-label={`从队列移除 ${entry.name}`}
+          aria-label={t("queue.removeNamed", { name: entry.name })}
           className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full border border-border bg-background text-foreground-subtle opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
         >
           <X className="h-2.5 w-2.5" strokeWidth={2} />

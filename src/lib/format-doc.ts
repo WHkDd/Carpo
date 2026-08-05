@@ -13,6 +13,8 @@
  * matches the Python "first-line as title" rescue path for un-labelled
  * articles.
  */
+import { t } from "@/i18n";
+
 export interface AssemblyArticle {
   /** May be empty/whitespace — falls back to the OCR text's first line. */
   title: string;
@@ -44,7 +46,7 @@ export function assembleDocument(input: AssemblyInput): string {
     // whitespace-only title is kept as-is for byte-for-byte parity.
     if (!title) {
       const lines = text.trim().split("\n");
-      title = lines.length > 0 && lines[0] ? lines[0] : "（无标题）";
+      title = lines.length > 0 && lines[0] ? lines[0] : t("doc.untitledArticle");
       text = lines.length > 1 ? lines.slice(1).join("\n") : "";
     }
     parts.push(title);

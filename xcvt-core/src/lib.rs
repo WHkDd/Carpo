@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod i18n;
 pub mod image;
 pub mod jobs;
 pub mod ocr;

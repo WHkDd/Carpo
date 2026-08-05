@@ -11,6 +11,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  test: {
+    setupFiles: ["./src/test/setup-i18n.ts"],
+  },
   clearScreen: false,
   server: {
     port: 1420,

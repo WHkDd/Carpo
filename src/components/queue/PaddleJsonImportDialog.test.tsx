@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   exportLayoutPdf,
+  exportReadingMarkdown,
   importPaddleJson,
 } from "@/lib/tauri";
 import { PaddleJsonImportDialog } from "./PaddleJsonImportDialog";
@@ -70,15 +71,60 @@ describe("PaddleJsonImportDialog export feedback", () => {
       warningCount: 2,
       warnings: ["图片区块未嵌入", "已过滤重复页眉"],
     });
+    vi.mocked(exportReadingMarkdown).mockResolvedValue({
+      targetPath: "/tmp/output.md",
+      pageCount: 1,
+      warningCount: 0,
+      warnings: [],
+    });
   });
 
-  it("separates import warnings and expands concrete export warnings", async () => {
+  it("routes the single export button through the format toggle", async () => {
     render(
       <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
     );
+    await screen.findByText("阅读版导出选项");
 
-    expect(await screen.findByText("导入检查提示")).toBeTruthy();
-    expect(screen.getByText("页面尺寸由 bbox 估算")).toBeTruthy();
+    // PDF is the default, and only one export button exists.
+    expect(screen.getByRole("button", { name: /^导出阅读版 PDF/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^导出 Markdown/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+
+    // Switching the toggle relabels the one button and swaps the IPC call.
+    const exportButton = await screen.findByRole("button", {
+      name: /^导出阅读版 Markdown/,
+    });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("已导出 Markdown 1 页")).toBeTruthy();
+    });
+    expect(vi.mocked(exportReadingMarkdown)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(exportLayoutPdf)).not.toHaveBeenCalled();
+  });
+
+  it("keeps preflight diagnostics out of the dialog", async () => {
+    render(
+      <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
+    );
+    await screen.findByText("阅读版导出选项");
+
+    // The dialog shows the basic file summary and the export options only —
+    // parser warnings, structure fields and the label histogram stay hidden.
+    expect(screen.getByText("页数").parentElement?.textContent).toContain("1");
+    expect(screen.getByText("区块数").parentElement?.textContent).toContain("6");
+    expect(screen.queryByText("导入检查提示")).toBeNull();
+    expect(screen.queryByText("页面尺寸由 bbox 估算")).toBeNull();
+    expect(screen.queryByText("结构字段")).toBeNull();
+    expect(screen.queryByText("区块标签分布")).toBeNull();
+  });
+
+  it("expands concrete export warnings", async () => {
+    render(
+      <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
+    );
+    await screen.findByText("阅读版导出选项");
 
     fireEvent.click(screen.getByRole("button", { name: "导出阅读版 PDF" }));
 

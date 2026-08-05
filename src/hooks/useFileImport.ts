@@ -10,6 +10,7 @@ import {
   uploadFile,
 } from "@/lib/tauri";
 import { useStore } from "@/store";
+import { t } from "@/i18n";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
 
 const PDF_PREVIEW_DPI = 150;
@@ -59,8 +60,8 @@ export function useFileImport() {
 
       setStatusText(
         accepted.length === 1
-          ? `正在加载 ${basename(accepted[0]!)}`
-          : `正在加载 ${accepted.length} 个文件`
+          ? t("import.loadingOne", { name: basename(accepted[0]!) })
+          : t("import.loadingMany", { count: accepted.length })
       );
 
       let okCount = 0;
@@ -78,7 +79,7 @@ export function useFileImport() {
         } catch (err) {
           const message = appErrorMessage(err);
           void logError(`${kind} import failed: ${path}: ${message}`);
-          setStatusText(`加载失败 · ${name}`);
+          setStatusText(t("import.loadFailed", { name }));
         }
       }
 
@@ -147,7 +148,11 @@ export function useFileImport() {
       }
 
       if (okCount > 0) {
-        setStatusText(okCount === 1 ? "就绪" : `已加载 ${okCount} 个文件`);
+        setStatusText(
+          okCount === 1
+            ? t("common.ready")
+            : t("import.loadedMany", { count: okCount })
+        );
       }
     },
     [addFile, cache, getSupported, setStatusText]
@@ -164,8 +169,8 @@ export function useFileImport() {
 
       setStatusText(
         accepted.length === 1
-          ? `正在上传 ${accepted[0]!.name}`
-          : `正在上传 ${accepted.length} 个文件`
+          ? t("import.uploadingOne", { name: accepted[0]!.name })
+          : t("import.uploadingMany", { count: accepted.length })
       );
 
       let okCount = 0;
@@ -187,7 +192,7 @@ export function useFileImport() {
         } catch (err) {
           const message = appErrorMessage(err);
           void logError(`${kind} upload failed: ${file.name}: ${message}`);
-          setStatusText(`上传失败 · ${file.name}`);
+          setStatusText(t("import.uploadFailed", { name: file.name }));
         }
       }
 
@@ -252,7 +257,11 @@ export function useFileImport() {
       }
 
       if (okCount > 0) {
-        setStatusText(okCount === 1 ? "就绪" : `已加载 ${okCount} 个文件`);
+        setStatusText(
+          okCount === 1
+            ? t("common.ready")
+            : t("import.loadedMany", { count: okCount })
+        );
       }
     },
     [addFile, cache, getSupported, setStatusText]

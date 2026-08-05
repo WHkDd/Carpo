@@ -6,6 +6,7 @@ import type { SelectionRef, SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { JobSlice } from "./jobSlice";
 import { assembleDocument } from "@/lib/format-doc";
+import { t } from "@/i18n";
 
 export interface Block {
   id: string;
@@ -146,13 +147,22 @@ function normalizeArticleRefs(article: Article): void {
   });
 }
 
+/** Matches an auto-generated article title in either language, so titles
+ *  minted before a language switch still renumber instead of freezing at
+ *  their old index. */
+const DEFAULT_ARTICLE_TITLE = /^(?:报道\d+|Article \d+)$/;
+
+export function defaultArticleTitle(num: number): string {
+  return t("article.defaultTitle", { num });
+}
+
 function renumberArticles(doc: DocumentState): void {
   doc.articles.forEach((article, index) => {
     const nextNum = index + 1;
-    const hadDefaultTitle = /^报道\d+$/.test(article.title);
+    const hadDefaultTitle = DEFAULT_ARTICLE_TITLE.test(article.title);
     article.num = nextNum;
     if (hadDefaultTitle) {
-      article.title = `报道${nextNum}`;
+      article.title = defaultArticleTitle(nextNum);
     }
     normalizeArticleRefs(article);
   });
@@ -381,7 +391,7 @@ export const createPageStateSlice: StateCreator<
         article = {
           id: newArticleId(),
           num: nextNum,
-          title: `报道${nextNum}`,
+          title: defaultArticleTitle(nextNum),
           blockRefs: [],
         };
         doc.articles.push(article);

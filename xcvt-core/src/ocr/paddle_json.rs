@@ -186,22 +186,53 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
 
     let mut warnings: Vec<String> = Vec::new();
     if pages_raw.is_empty() {
-        warnings.push("JSON 中没有任何页面数据".into());
+        warnings
+            .push(crate::tr!("JSON 中没有任何页面数据", "The JSON contains no page data").into());
     }
     if !any_parsing {
-        warnings.push("未找到 parsing_res_list，无法按区块解析版式".into());
+        warnings.push(
+            crate::tr!(
+                "未找到 parsing_res_list，无法按区块解析版式",
+                "No parsing_res_list found — the layout cannot be parsed block by block"
+            )
+            .into(),
+        );
     }
     if !any_bbox {
-        warnings.push("缺少 block_bbox，无法按位置重建版式 PDF".into());
+        warnings.push(
+            crate::tr!(
+                "缺少 block_bbox，无法按位置重建版式 PDF",
+                "block_bbox is missing — the layout PDF cannot be rebuilt by position"
+            )
+            .into(),
+        );
     }
     if !any_order {
-        warnings.push("缺少 block_order，重建时将按 JSON 内的顺序排列".into());
+        warnings.push(
+            crate::tr!(
+                "缺少 block_order，重建时将按 JSON 内的顺序排列",
+                "block_order is missing — blocks keep the order they have in the JSON"
+            )
+            .into(),
+        );
     }
     if !any_polygon {
-        warnings.push("缺少 block_polygon_points，将退回矩形 bbox 渲染".into());
+        warnings.push(
+            crate::tr!(
+                "缺少 block_polygon_points，将退回矩形 bbox 渲染",
+                "block_polygon_points is missing — falling back to rectangular bboxes"
+            )
+            .into(),
+        );
     }
     if !any_markdown && !any_parsing {
-        warnings.push("既无 markdown.text 也无 parsing_res_list，导出文本将为空".into());
+        warnings.push(
+            crate::tr!(
+                "既无 markdown.text 也无 parsing_res_list，导出文本将为空",
+                "Neither markdown.text nor parsing_res_list is present — the exported text will be empty"
+            )
+            .into(),
+        );
     }
     if !missing_dim_pages.is_empty() {
         let preview = missing_dim_pages
@@ -215,8 +246,9 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
         } else {
             ""
         };
-        warnings.push(format!(
+        warnings.push(crate::trf!(
             "{} 页未提供页面尺寸，已根据 bbox 估算（第 {}{} 页）",
+            "{} pages carry no page size — estimated from their bboxes (pages {}{})",
             missing_dim_pages.len(),
             preview,
             suffix,
@@ -308,7 +340,11 @@ fn extract_pages_array(root: &serde_json::Value) -> AppResult<Vec<serde_json::Va
         }
     }
     Err(AppError::Internal(
-        "Paddle JSON 顶层既不是数组，也找不到 pages/results/layoutParsingResults 字段".into(),
+        crate::tr!(
+            "Paddle JSON 顶层既不是数组，也找不到 pages/results/layoutParsingResults 字段",
+            "The Paddle JSON root is neither an array nor does it carry a pages / results / layoutParsingResults field"
+        )
+        .into(),
     ))
 }
 
