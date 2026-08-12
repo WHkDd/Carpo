@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { t } from "@/i18n";
 import { getSecret, startWholeFileOcr } from "@/lib/tauri";
+import { enableNotificationsAfterUserAction } from "@/lib/desktop";
 import {
   PageRangeError,
   parsePageRangePlan,
@@ -151,6 +152,7 @@ export function useWholeFileOcrTrigger() {
       };
 
       setError(null);
+      await enableNotificationsAfterUserAction();
       const { job_id } = await startWholeFileOcr(req);
       startJob({
         jobId: job_id,

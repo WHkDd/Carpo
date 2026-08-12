@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useStore } from "@/store";
 import { cn } from "@/lib/utils";
+import { isImeCommit } from "@/lib/ime";
 import { useT } from "@/i18n";
 
 interface PageJumpControlProps {
@@ -92,6 +93,7 @@ export function PageJumpControl({
             commit();
           }}
           onKeyDown={(e) => {
+            if (isImeCommit(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               e.currentTarget.blur();

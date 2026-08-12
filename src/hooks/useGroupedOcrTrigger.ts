@@ -4,6 +4,7 @@ import { t } from "@/i18n";
 import { pageKey } from "@/store/pageStateSlice";
 import { getSecret, startGroupedOcr } from "@/lib/tauri";
 import { ACTIVE_PREVIEW_DPI } from "@/lib/ocr-profile";
+import { enableNotificationsAfterUserAction } from "@/lib/desktop";
 import {
   appErrorMessage,
   type ArticleOcrPlan,
@@ -161,6 +162,7 @@ export function useGroupedOcrTrigger() {
 
       setError(null);
       setRecognitionMode("grouped");
+      await enableNotificationsAfterUserAction();
       const { job_id } = await startGroupedOcr(req);
       startJob({
         jobId: job_id,

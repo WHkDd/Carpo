@@ -74,6 +74,20 @@ export async function listSupportedExtensions(): Promise<string[]> {
   return invoke<string[]>("list_supported_extensions");
 }
 
+export interface ClipboardImageImport {
+  path: string;
+  name: string;
+}
+
+/** Writes the system clipboard's image to a PNG under the app cache dir and
+ *  returns its path, or `null` when the clipboard holds no image. Desktop
+ *  only — the browser build has no equivalent file to hand the OCR pipeline,
+ *  so it reports "nothing to paste" rather than half-supporting the gesture. */
+export async function importClipboardImage(): Promise<ClipboardImageImport | null> {
+  if (!isTauriRuntime()) return null;
+  return invoke<ClipboardImageImport | null>("import_clipboard_image");
+}
+
 export async function getPdfInfo(path: string): Promise<PdfInfo> {
   if (!isTauriRuntime()) {
     return httpJson<PdfInfo>(`/api/files/${path}/pdf-info`);

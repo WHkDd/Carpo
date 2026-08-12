@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 import { useStore } from "@/store";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { DEFAULT_SETTINGS, defaultOcrPrompt } from "@/store/settingsSlice";
 import {
   getLanguage,
@@ -63,6 +64,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const t = useT();
   const committed = useStore((s) => s.settings);
   const setCommitted = useStore((s) => s.setSettings);
+  // This dialog is the only place that reads the Keychain outside an actual
+  // OCR run, so it is also the only place that can tell the rest of the UI
+  // which credentials exist. See `credentialPresence` in the settings slice.
+  const mergeCredentialPresence = useStore((s) => s.mergeCredentialPresence);
 
   const [draft, setDraft] = useState<NonSecretSettings>(committed);
   const [tab, setTab] = useState<TabId>(committed.provider);
@@ -96,6 +101,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const wasOpenRef = useRef(false);
   committedRef.current = committed;
 
+  // Focus enters the dialog on open, is trapped while it is up, and returns
+  // to the control that opened it on close.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(open, dialogRef);
+
   // Reset draft + tab + presence whenever the dialog opens.
   useEffect(() => {
     if (!open) {
@@ -125,12 +135,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         })
       );
       if (cancelled) return;
-      setSecretPresent(Object.fromEntries(entries) as Record<SecretKey, boolean>);
+      const presence = Object.fromEntries(entries) as Record<SecretKey, boolean>;
+      setSecretPresent(presence);
+      mergeCredentialPresence(presence);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, mergeCredentialPresence]);
 
   // The language select previews immediately (the whole app re-renders), so
   // walking away from the dialog has to put the committed language back.
@@ -146,24 +158,30 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     try {
       // Persist all secret edits first so even if non-secret save fails the
       // Keychain reflects the user's intent.
+      const written: Partial<Record<SecretKey, boolean>> = {};
       for (const [key, value] of Object.entries(secretEdits) as Array<
         [SecretKey, string | null]
       >) {
         if (value === null) {
           await ipcDeleteSecret(key);
+          written[key] = false;
         } else if (value.length > 0) {
           await ipcSetSecret(key, value);
+          written[key] = true;
         }
       }
       await ipcSetSettings(draft);
       setCommitted(draft);
+      // Presence is now known for every key we just touched — publish it so
+      // the status bar updates without anyone re-reading the Keychain.
+      mergeCredentialPresence(written);
       onClose();
     } catch (e) {
       setSaveError(appErrorMessage(e));
     } finally {
       setSaving(false);
     }
-  }, [draft, secretEdits, setCommitted, onClose]);
+  }, [draft, secretEdits, setCommitted, mergeCredentialPresence, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -216,20 +234,23 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-title"
-    >
-      <button
-        type="button"
-        aria-label={t("settings.closeDialog")}
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Scrim. Not focusable: a dialog's dismissal target should not be a
+          tab stop competing with the controls inside it — Escape and the
+          close button are the keyboard paths. */}
+      <div
+        role="presentation"
         className="absolute inset-0 bg-foreground/25"
         onClick={closeAndRevertLanguage}
       />
 
-      <div className="relative flex h-[600px] w-full max-w-4xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        className="relative flex h-[600px] w-full max-w-4xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]"
+      >
         <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
           <h2
             id="settings-title"
@@ -256,7 +277,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             secretEdits={secretEdits}
           />
 
-          <section className="flex-1 overflow-y-auto">
+          <section
+            role="tabpanel"
+            id={settingsTabPanelId(tab)}
+            aria-labelledby={`settings-tab-${tab}`}
+            tabIndex={-1}
+            className="flex-1 overflow-y-auto overscroll-contain"
+          >
             {tab === "language" ? (
               <LanguagePanel
                 value={draft.language ?? languageOnOpenRef.current}
@@ -317,7 +344,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             type="button"
             onClick={() => void trySave()}
             disabled={saving}
-            className="flex h-[34px] items-center rounded border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-[34px] items-center rounded border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:cursor-default disabled:opacity-60"
           >
             {saving ? t("common.saving") : t("common.save")}
           </button>
@@ -335,6 +362,18 @@ interface TabRailProps {
   secretEdits: Partial<Record<SecretKey, string | null>>;
 }
 
+/** Tab order of the rail, used by the arrow-key handler. Must match the
+ *  render order below. */
+const TAB_ORDER: TabId[] = [...PROVIDER_ORDER, "prompt", "language"];
+
+export function settingsTabPanelId(tab: TabId): string {
+  return `settings-panel-${tab}`;
+}
+
+function tabButtonId(tab: TabId): string {
+  return `settings-tab-${tab}`;
+}
+
 function TabRail({
   tab,
   setTab,
@@ -343,8 +382,40 @@ function TabRail({
   secretEdits,
 }: TabRailProps) {
   const t = useT();
+  const railRef = useRef<HTMLDivElement>(null);
+
+  // A tablist is one tab stop; ↑/↓ move between tabs and switch the panel.
+  // Previously every tab was its own tab stop, so reaching the Save button
+  // meant tabbing past all six.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const index = TAB_ORDER.indexOf(tab);
+    let next: TabId | null = null;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      next = TAB_ORDER[(index + 1) % TAB_ORDER.length]!;
+    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      next = TAB_ORDER[(index - 1 + TAB_ORDER.length) % TAB_ORDER.length]!;
+    } else if (e.key === "Home") {
+      next = TAB_ORDER[0]!;
+    } else if (e.key === "End") {
+      next = TAB_ORDER[TAB_ORDER.length - 1]!;
+    }
+    if (!next) return;
+    e.preventDefault();
+    setTab(next);
+    railRef.current
+      ?.querySelector<HTMLElement>(`#${tabButtonId(next)}`)
+      ?.focus();
+  };
+
   return (
-    <nav className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border bg-surface-2/50 p-3">
+    <div
+      ref={railRef}
+      role="tablist"
+      aria-orientation="vertical"
+      aria-label={t("settings.title")}
+      onKeyDown={onKeyDown}
+      className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border bg-surface-2/50 p-3"
+    >
       <div className="mb-1 px-3 pt-1 text-[11px] font-medium tracking-wider text-foreground-subtle">
         {t("settings.providerSection")}
       </div>
@@ -355,6 +426,7 @@ function TabRail({
         return (
           <TabButton
             key={p}
+            id={p}
             active={tab === p}
             label={providerLabel(p, t)}
             onClick={() => setTab(p)}
@@ -368,16 +440,18 @@ function TabRail({
         {t("settings.generalSection")}
       </div>
       <TabButton
+        id="prompt"
         active={tab === "prompt"}
         label={t("settings.promptTab")}
         onClick={() => setTab("prompt")}
       />
       <TabButton
+        id="language"
         active={tab === "language"}
         label={t("settings.languageTab")}
         onClick={() => setTab("language")}
       />
-    </nav>
+    </div>
   );
 }
 
@@ -395,6 +469,7 @@ function effectiveSecretPresent(
 }
 
 interface TabButtonProps {
+  id: TabId;
   active: boolean;
   label: string;
   onClick: () => void;
@@ -402,12 +477,17 @@ interface TabButtonProps {
   dot?: "configured" | "empty";
 }
 
-function TabButton({ active, label, onClick, badge, dot }: TabButtonProps) {
+function TabButton({ id, active, label, onClick, badge, dot }: TabButtonProps) {
   return (
     <button
       type="button"
+      role="tab"
+      id={tabButtonId(id)}
+      aria-selected={active}
+      aria-controls={settingsTabPanelId(id)}
+      tabIndex={active ? 0 : -1}
       onClick={onClick}
-      className={`relative flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors ${
+      className={`relative flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${
         active
           ? "bg-surface-2 font-medium text-foreground"
           : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
@@ -643,7 +723,7 @@ function ProviderPanel({
               type="button"
               onClick={onRefresh}
               disabled={refreshing}
-              className="ml-2 flex items-center gap-1 rounded border border-border bg-transparent px-2.5 py-1 text-[11px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              className="ml-2 flex items-center gap-1 rounded border border-border bg-transparent px-2.5 py-1 text-[11px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay disabled:cursor-default disabled:opacity-60"
               title={t("settings.refreshModels")}
             >
               <RefreshCw

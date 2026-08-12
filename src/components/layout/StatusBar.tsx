@@ -5,7 +5,7 @@ import { useStore } from "@/store";
 import { useT, type Translator } from "@/i18n";
 import { DEFAULT_FILE_VIEW } from "@/store/fileViewSlice";
 import { clampZoomPercent } from "@/store/uiSlice";
-import { getSecret as ipcGetSecret } from "@/lib/tauri";
+import { isImeCommit } from "@/lib/ime";
 import type { OcrProfile, Provider, SecretKey } from "@/lib/ipc-types";
 
 interface StatusBarProps {
@@ -67,36 +67,16 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
     setDraftZoom(String(zoomPercent));
   }, [zoomPercent]);
 
-  // Probe Keychain so the provider menu can mark which entries are wired up.
-  // Re-runs whenever settings mutate (settings dialog Save touches the slice
-  // even when only secrets changed, since the dialog always writes settings).
-  const [secretPresent, setSecretPresent] = useState<Record<Provider, boolean>>({
-    paddleocr: false,
-    openai: false,
-    openrouter: false,
-    openai_compatible: false,
-  });
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(
-        PROVIDER_ORDER.map(async (p) => {
-          try {
-            return [p, await ipcGetSecret(PROVIDER_SECRET_KEY[p])] as const;
-          } catch {
-            return [p, false] as const;
-          }
-        })
-      );
-      if (cancelled) return;
-      setSecretPresent(
-        Object.fromEntries(entries) as Record<Provider, boolean>
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [settings]);
+  // Credential presence is read from the store, never probed here. This
+  // component mounts on every launch, and the old mount-time probe read all
+  // four Keychain entries before the `!hasFile` bail-out below — enough to
+  // pop a macOS Keychain password prompt over an empty first window. The
+  // store only knows about credentials the settings dialog already looked at
+  // for its own reasons; `undefined` means "unknown", and unknown providers
+  // are neither flagged nor disabled.
+  const presence = useStore((s) => s.credentialPresence);
+  const isMissing = (p: Provider): boolean =>
+    presence[PROVIDER_SECRET_KEY[p]] === false;
 
   const commitDraft = () => {
     const cleaned = draftZoom.replace(/[^\d]/g, "");
@@ -116,15 +96,18 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         ariaLabel={t("statusBar.provider")}
         triggerLabel={providerLabel(provider, t)}
         triggerHint={
-          !secretPresent[provider] ? t("statusBar.notConfigured") : undefined
+          isMissing(provider) ? t("statusBar.notConfigured") : undefined
         }
         triggerClassName="font-semibold text-foreground"
         items={PROVIDER_ORDER.map((p) => ({
           key: p,
           label: providerLabel(p, t),
           selected: p === provider,
-          disabled: !secretPresent[p] && p !== provider,
-          hint: secretPresent[p] ? undefined : t("statusBar.notConfigured"),
+          // Never disabled: an unconfigured provider is still a legitimate
+          // thing to select (the backend validates the credential when OCR
+          // actually starts and says so), and disabling on unknown presence
+          // would lock the user out of a provider we simply never checked.
+          hint: isMissing(p) ? t("statusBar.notConfigured") : undefined,
         }))}
         onSelect={(p) => setProvider(p)}
       />
@@ -144,7 +127,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         type="button"
         aria-label={t("statusBar.zoomOut")}
         onClick={() => canvasRef.current?.zoomOut()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
       >
         <Minus className="h-3 w-3" strokeWidth={1.8} />
       </button>
@@ -154,6 +137,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
           onChange={(e) => setDraftZoom(e.target.value.replace(/[^\d]/g, ""))}
           onBlur={commitDraft}
           onKeyDown={(e) => {
+            if (isImeCommit(e)) return;
             if (e.key === "Enter") {
               e.currentTarget.blur();
             } else if (e.key === "Escape") {
@@ -174,14 +158,14 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         type="button"
         aria-label={t("statusBar.zoomIn")}
         onClick={() => canvasRef.current?.zoomIn()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
       >
         <Plus className="h-3 w-3" strokeWidth={1.8} />
       </button>
       <button
         type="button"
         onClick={() => canvasRef.current?.fit()}
-        className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
       >
         {t("statusBar.fit")}
       </button>
@@ -193,7 +177,6 @@ interface DropMenuItem<T extends string> {
   key: T;
   label: string;
   selected?: boolean;
-  disabled?: boolean;
   hint?: string;
 }
 
@@ -215,7 +198,29 @@ function DropMenu<T extends string>({
   onSelect,
 }: DropMenuProps<T>) {
   const [open, setOpen] = useState(false);
+  // Roving focus index into `items`. A native menu moves a single focused
+  // item with the arrow keys rather than making every entry a tab stop.
+  const [activeIndex, setActiveIndex] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const openAt = (index: number) => {
+    setActiveIndex(index);
+    setOpen(true);
+  };
+
+  // Returning focus to the trigger is what makes Escape and select feel like
+  // a menu instead of a popover: focus never falls back to <body>.
+  const closeAndRestore = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    itemRefs.current[activeIndex]?.focus();
+  }, [open, activeIndex]);
 
   useEffect(() => {
     if (!open) return;
@@ -224,26 +229,54 @@ function DropMenu<T extends string>({
         setOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  const selectedIndex = Math.max(
+    0,
+    items.findIndex((it) => it.selected)
+  );
+
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAndRestore();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % items.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i - 1 + items.length) % items.length);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setActiveIndex(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setActiveIndex(items.length - 1);
+    } else if (e.key === "Tab") {
+      // Tab out of an open menu closes it, matching platform menus.
+      setOpen(false);
+    }
+  };
 
   return (
     <div ref={wrapRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex h-6 items-center gap-0.5 rounded px-1 transition-colors hover:bg-surface-2 ${triggerClassName}`}
+        onClick={() => (open ? setOpen(false) : openAt(selectedIndex))}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            openAt(e.key === "ArrowDown" ? 0 : items.length - 1);
+          }
+        }}
+        className={`flex h-6 items-center gap-0.5 rounded px-1 transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${triggerClassName}`}
       >
         <span>{triggerLabel}</span>
         {triggerHint && (
@@ -259,38 +292,38 @@ function DropMenu<T extends string>({
       {open && (
         <div
           role="menu"
+          aria-label={ariaLabel}
+          onKeyDown={onMenuKeyDown}
           className="absolute bottom-full left-0 z-20 mb-1 min-w-[160px] rounded-md border border-border/70 bg-background p-1 shadow-md"
         >
-          {items.map((it) => {
-            const disabled = it.disabled === true;
-            return (
-              <button
-                key={it.key}
-                type="button"
-                role="menuitem"
-                disabled={disabled}
-                onClick={() => {
-                  if (disabled) return;
-                  onSelect(it.key);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-left text-[12px] transition-colors ${
-                  disabled
-                    ? "cursor-default text-foreground-subtle"
-                    : "text-foreground hover:bg-surface-2"
-                } ${it.selected ? "bg-surface-2" : ""}`}
-              >
-                <span className={it.selected ? "font-medium" : ""}>
-                  {it.label}
+          {items.map((it, index) => (
+            <button
+              key={it.key}
+              ref={(node) => {
+                itemRefs.current[index] = node;
+              }}
+              type="button"
+              role="menuitemradio"
+              aria-checked={it.selected === true}
+              tabIndex={index === activeIndex ? 0 : -1}
+              onClick={() => {
+                onSelect(it.key);
+                closeAndRestore();
+              }}
+              className={`flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-left text-[12px] text-foreground transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${
+                it.selected ? "bg-surface-2" : ""
+              }`}
+            >
+              <span className={it.selected ? "font-medium" : ""}>
+                {it.label}
+              </span>
+              {it.hint && (
+                <span className="text-[10px] text-foreground-subtle">
+                  {it.hint}
                 </span>
-                {it.hint && (
-                  <span className="text-[10px] text-foreground-subtle">
-                    {it.hint}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+              )}
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ScanText, Square } from "lucide-react";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
+import { isImeCommit } from "@/lib/ime";
 import { useWholeFileOcrTrigger } from "@/hooks/useWholeFileOcrTrigger";
 import { formatPageRangeLabel, parsePageRangePlan } from "@/lib/page-range";
 import type { PageRangePlan } from "@/lib/page-range";
@@ -198,6 +199,7 @@ function PageRangeChip({
               placeholder="1-5,8,10-12"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
+                if (isImeCommit(e)) return;
                 if (e.key === "Enter") commit();
                 if (e.key === "Escape") {
                   setDraft(rangeInput);
