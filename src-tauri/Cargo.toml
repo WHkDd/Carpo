@@ -1,6 +1,6 @@
 [package]
 name = "xcvt"
-version = "0.2.13"
+version = "0.2.14"
 description = "Newspaper Layout OCR Tool"
 authors = ["Kai"]
 license = "MIT"
