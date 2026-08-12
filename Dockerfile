@@ -38,11 +38,11 @@ RUN mkdir -p .cargo \
 COPY Cargo.lock ./
 RUN printf '%s\n' \
   '[workspace]' \
-  'members = ["xcvt-core", "xcvt-server"]' \
+  'members = ["carpo-core", "carpo-server"]' \
   'resolver = "2"' \
   > Cargo.toml
-COPY xcvt-core ./xcvt-core
-COPY xcvt-server ./xcvt-server
+COPY carpo-core ./carpo-core
+COPY carpo-server ./carpo-server
 COPY src-tauri/scripts ./src-tauri/scripts
 COPY src-tauri/pdfium ./src-tauri/pdfium
 RUN bash src-tauri/scripts/fetch_pdfium.sh linux-x64 \
@@ -56,19 +56,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
   esac \
   && rustup target add "${rust_target}" \
-  && cargo build --release --target "${rust_target}" -p xcvt-server \
-  && cp "/app/target/${rust_target}/release/xcvt-server" /usr/local/bin/xcvt-server
+  && cargo build --release --target "${rust_target}" -p carpo-server \
+  && cp "/app/target/${rust_target}/release/carpo-server" /usr/local/bin/carpo-server
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/* \
-  && useradd --system --create-home --home-dir /home/xcvt --shell /usr/sbin/nologin xcvt \
+  && useradd --system --create-home --home-dir /home/carpo --shell /usr/sbin/nologin carpo \
   && mkdir -p /app /data \
-  && chown -R xcvt:xcvt /app /data
+  && chown -R carpo:carpo /app /data
 WORKDIR /app
 ARG TARGETARCH
-COPY --from=builder /usr/local/bin/xcvt-server /usr/local/bin/xcvt-server
+COPY --from=builder /usr/local/bin/carpo-server /usr/local/bin/carpo-server
 COPY --from=builder /app/src-tauri/pdfium/linux-x64/libpdfium.so /tmp/pdfium-linux-x64.so
 COPY --from=builder /app/src-tauri/pdfium/linux-arm64/libpdfium.so /tmp/pdfium-linux-arm64.so
 RUN case "${TARGETARCH}" in \
@@ -77,15 +77,15 @@ RUN case "${TARGETARCH}" in \
     *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
   esac \
   && rm -f /tmp/pdfium-linux-*.so \
-  && chown xcvt:xcvt /app/libpdfium.so
-COPY --from=frontend --chown=xcvt:xcvt /app/dist /app/dist
-ENV XCVT_PORT=8787 \
-    XCVT_STATIC_DIR=/app/dist \
-    XCVT_DATA_DIR=/data \
-    XCVT_PDFIUM_LIBRARY_PATH=/app/libpdfium.so
+  && chown carpo:carpo /app/libpdfium.so
+COPY --from=frontend --chown=carpo:carpo /app/dist /app/dist
+ENV CARPO_PORT=8787 \
+    CARPO_STATIC_DIR=/app/dist \
+    CARPO_DATA_DIR=/data \
+    CARPO_PDFIUM_LIBRARY_PATH=/app/libpdfium.so
 EXPOSE 8787
 VOLUME ["/data"]
-USER xcvt
+USER carpo
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${XCVT_PORT}/healthz" >/dev/null || exit 1
-CMD ["xcvt-server"]
+  CMD curl -fsS "http://127.0.0.1:${CARPO_PORT}/healthz" >/dev/null || exit 1
+CMD ["carpo-server"]

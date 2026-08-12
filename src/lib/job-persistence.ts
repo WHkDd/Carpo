@@ -9,7 +9,7 @@ import type { StartJobInfo } from "@/store/jobSlice";
 // quota, wall-clock time). `sessionStorage` (not `localStorage`) is
 // deliberate: a job belongs to the tab that started it, and stale entries
 // from a closed tab shouldn't resurrect themselves in a new one.
-const STORAGE_KEY = "xcvt:pendingJob";
+const STORAGE_KEY = "carpo:pendingJob";
 
 export function savePendingJob(info: StartJobInfo): void {
   try {

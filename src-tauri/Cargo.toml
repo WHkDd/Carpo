@@ -1,6 +1,6 @@
 [package]
-name = "xcvt"
-version = "0.2.14"
+name = "carpo"
+version = "0.3.0"
 description = "Newspaper Layout OCR Tool"
 authors = ["Kai"]
 license = "MIT"
@@ -8,14 +8,14 @@ edition = "2021"
 rust-version = "1.78"
 
 [lib]
-name = "xcvt_lib"
+name = "carpo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-xcvt-core = { path = "../xcvt-core" }
+carpo-core = { path = "../carpo-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

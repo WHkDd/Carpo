@@ -77,7 +77,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xcvt-${{ matrix.suffix }}
+          name: carpo-${{ matrix.suffix }}
           path: |
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz

@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use serde::Serialize;
-use tauri::{AppHandle, State};
-use uuid::Uuid;
-use xcvt_core::{
+use carpo_core::{
     error::{AppError, AppResult},
     jobs::{
         grouped::{self, GroupedOcrRequest},
@@ -13,6 +10,9 @@ use xcvt_core::{
     ocr,
     state::AppState,
 };
+use serde::Serialize;
+use tauri::{AppHandle, State};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct JobStarted {

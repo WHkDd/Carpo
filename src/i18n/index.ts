@@ -10,7 +10,7 @@ const CATALOGS: Record<Language, Record<MessageKey, string>> = { zh, en };
 /** Mirrors the language into `localStorage` so the very first paint after a
  *  restart already uses the right catalog — settings hydration is async and
  *  would otherwise flash Chinese at an English user. */
-const STORAGE_KEY = "xcvt.language";
+const STORAGE_KEY = "carpo.language";
 
 function syncDocumentLanguage(language: Language): void {
   if (typeof document === "undefined") return;

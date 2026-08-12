@@ -298,9 +298,9 @@ export interface JobEventEnvelope {
 }
 
 export const EVENTS = {
-  JOB_PROGRESS: "xcvt://job/progress",
-  JOB_DONE: "xcvt://job/done",
-  JOB_ERROR: "xcvt://job/error",
+  JOB_PROGRESS: "carpo://job/progress",
+  JOB_DONE: "carpo://job/done",
+  JOB_ERROR: "carpo://job/error",
 } as const;
 
 // --- AppError ---------------------------------------------------------------

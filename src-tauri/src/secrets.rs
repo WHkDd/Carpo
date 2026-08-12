@@ -7,23 +7,23 @@
 //! the call in `tokio::task::spawn_blocking` so they never wedge a tokio
 //! worker thread.
 //!
-//! Implements [`xcvt_core::secrets::SecretProvider`] so a single
+//! Implements [`carpo_core::secrets::SecretProvider`] so a single
 //! `KeychainSecretProvider` instance can back both the job runners (via
 //! `AppState::secrets`, `.get` only) and the settings commands (`set` /
 //! `delete`, kept as inherent methods since they're outside the trait's
-//! read-only contract that `xcvt-server`'s file-backed `SecretsStore` also
+//! read-only contract that `carpo-server`'s file-backed `SecretsStore` also
 //! implements).
 
 use keyring::Entry;
 
-use xcvt_core::error::{AppError, AppResult};
-pub use xcvt_core::secrets::SecretKey;
-use xcvt_core::secrets::{SecretFuture, SecretProvider};
+use carpo_core::error::{AppError, AppResult};
+pub use carpo_core::secrets::SecretKey;
+use carpo_core::secrets::{SecretFuture, SecretProvider};
 
-const SERVICE: &str = "local.kai.xcvt";
+const SERVICE: &str = "local.kai.carpo";
 
 // `AppError` and `keyring::Error` are both foreign to this crate now that
-// `AppError` lives in `xcvt-core` — the orphan rule forbids a `From` impl
+// `AppError` lives in `carpo-core` — the orphan rule forbids a `From` impl
 // bridging them here, so map explicitly at each call site instead.
 fn keyring_err(e: keyring::Error) -> AppError {
     AppError::Config(format!("keyring: {e}"))

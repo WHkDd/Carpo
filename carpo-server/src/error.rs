@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use xcvt_core::AppError;
+use carpo_core::AppError;
 
 pub type ServerResult<T> = Result<T, ServerError>;
 

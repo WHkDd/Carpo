@@ -68,12 +68,12 @@ pub struct PageLoader {
 /// depending on what the user opened. Budgeting bytes makes the ceiling mean
 /// the same thing for every document.
 ///
-/// Override with `XCVT_OCR_PAGE_CACHE_BYTES`.
+/// Override with `CARPO_OCR_PAGE_CACHE_BYTES`.
 pub const DEFAULT_PAGE_CACHE_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Reads the effective decoded-page cache budget in bytes.
 pub fn page_cache_budget_bytes() -> u64 {
-    env::var("XCVT_OCR_PAGE_CACHE_BYTES")
+    env::var("CARPO_OCR_PAGE_CACHE_BYTES")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|v| *v > 0)

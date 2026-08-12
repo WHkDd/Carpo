@@ -63,7 +63,7 @@ describe("job-persistence", () => {
   });
 
   it("returns null for corrupt stored JSON instead of throwing", () => {
-    sessionStorage.setItem("xcvt:pendingJob", "{not json");
+    sessionStorage.setItem("carpo:pendingJob", "{not json");
     expect(loadPendingJob()).toBeNull();
   });
 });

@@ -45,12 +45,12 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 tauri_dir="$(cd -- "${script_dir}/.." && pwd)"
 pdfium_dir="${tauri_dir}/pdfium"
 version="$(tr -d '[:space:]' < "${pdfium_dir}/VERSION")"
-if [[ -n "${XCVT_PDFIUM_CACHE_DIR:-}" ]]; then
-  cache_root="${XCVT_PDFIUM_CACHE_DIR}"
+if [[ -n "${CARPO_PDFIUM_CACHE_DIR:-}" ]]; then
+  cache_root="${CARPO_PDFIUM_CACHE_DIR}"
 elif [[ "$(uname -s)" == "Darwin" ]]; then
-  cache_root="${HOME}/Library/Caches/xcvt/pdfium"
+  cache_root="${HOME}/Library/Caches/carpo/pdfium"
 else
-  cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/xcvt/pdfium"
+  cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/carpo/pdfium"
 fi
 asset="pdfium-${asset_arch}.tgz"
 url="https://github.com/bblanchon/pdfium-binaries/releases/download/${version}/${asset}"
