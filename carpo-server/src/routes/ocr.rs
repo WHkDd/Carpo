@@ -3,8 +3,6 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use carpo_core::{
     config::{self, NonSecretSettings},
     error::AppError,
@@ -16,6 +14,8 @@ use carpo_core::{
     ocr,
     secrets::SecretProvider,
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{app_state::ServerState, error::ServerResult};
 

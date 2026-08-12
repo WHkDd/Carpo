@@ -1,10 +1,10 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use parking_lot::RwLock;
 use carpo_core::{
     error::{AppError, AppResult},
     secrets::{SecretFuture, SecretKey, SecretProvider},
 };
+use parking_lot::RwLock;
 
 #[derive(Debug)]
 pub struct SecretsStore {

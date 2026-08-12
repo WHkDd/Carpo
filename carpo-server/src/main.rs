@@ -11,8 +11,8 @@ use std::{
 };
 
 use axum::Router;
-use tower_http::{services::ServeDir, trace::TraceLayer};
 use carpo_core::state::AppState as CoreState;
+use tower_http::{services::ServeDir, trace::TraceLayer};
 
 use crate::{app_state::ServerState, secrets_store::SecretsStore};
 

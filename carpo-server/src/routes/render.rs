@@ -7,13 +7,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use carpo_core::{
     error::AppError,
     jobs::grouped::FileKind,
     pdf::{clamp_preview_dimensions, encode_preview_jpeg},
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{app_state::ServerState, error::ServerResult};
 

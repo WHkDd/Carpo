@@ -4,9 +4,9 @@ use std::{
     sync::Mutex,
 };
 
+use carpo_core::image::supported_extensions;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
-use carpo_core::image::supported_extensions;
 
 pub const OPEN_PATHS_AVAILABLE: &str = "carpo://desktop/open-paths-available";
 pub const MENU_OPEN_FILES: &str = "carpo://desktop/menu-open-files";
@@ -206,8 +206,13 @@ pub fn native_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu:
                 }
             }
         }
-        let settings =
-        MenuItem::with_id(app, "carpo-settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        let settings = MenuItem::with_id(
+            app,
+            "carpo-settings",
+            "Settings…",
+            true,
+            Some("CmdOrCtrl+,"),
+        )?;
         app_menu.insert(&settings, 1)?;
     }
 

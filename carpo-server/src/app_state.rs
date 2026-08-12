@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use carpo_core::{jobs::grouped::FileKind, state::AppState as CoreState};
 use parking_lot::Mutex;
 use uuid::Uuid;
-use carpo_core::{jobs::grouped::FileKind, state::AppState as CoreState};
 
 use crate::secrets_store::SecretsStore;
 

@@ -1,8 +1,5 @@
 use std::sync::Arc;
 
-use serde::Serialize;
-use tauri::{AppHandle, State};
-use uuid::Uuid;
 use carpo_core::{
     error::{AppError, AppResult},
     jobs::{
@@ -13,6 +10,9 @@ use carpo_core::{
     ocr,
     state::AppState,
 };
+use serde::Serialize;
+use tauri::{AppHandle, State};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct JobStarted {

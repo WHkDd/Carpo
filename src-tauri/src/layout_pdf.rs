@@ -382,7 +382,7 @@ fn build_reading_items(
             );
         } else {
             warnings.push(
-                        carpo_core::tr!(
+                carpo_core::tr!(
                     "图片区块未嵌入，已用占位说明表示",
                     "Image blocks were not embedded — they are shown as placeholders"
                 )
@@ -904,16 +904,8 @@ fn apply_html_table_tag(out: &mut String, raw_tag: &str) {
         .unwrap_or("")
         .to_ascii_lowercase();
     match tag.as_str() {
-        "tr" => {
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
-        }
-        "td" | "th" => {
-            if !out.ends_with('|') && !out.ends_with('\n') {
-                out.push('|');
-            }
-        }
+        "tr" if !out.ends_with('\n') => out.push('\n'),
+        "td" | "th" if !out.ends_with('|') && !out.ends_with('\n') => out.push('|'),
         "br" => out.push('\n'),
         _ => {}
     }

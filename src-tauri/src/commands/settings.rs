@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use tauri::{AppHandle, Runtime, State};
 use carpo_core::{
     error::AppResult,
     secrets::{SecretKey, SecretProvider},
 };
+use tauri::{AppHandle, Runtime, State};
 
 use crate::{
     config::{self, NonSecretSettings},

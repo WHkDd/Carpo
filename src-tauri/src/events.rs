@@ -3,8 +3,8 @@
 //! system. Mirror the `EVENTS` map in `src/lib/ipc-types.ts` — when a name
 //! changes here it must change there too.
 
-use tauri::{AppHandle, Emitter};
 use carpo_core::jobs::{EventBus, JobEventKind};
+use tauri::{AppHandle, Emitter};
 
 pub const JOB_PROGRESS: &str = "carpo://job/progress";
 pub const JOB_DONE: &str = "carpo://job/done";
