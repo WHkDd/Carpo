@@ -151,6 +151,7 @@ export const zh = {
   "queue.dropHintLine2": "或点此添加文件",
   "queue.remove": "从队列移除",
   "queue.removeNamed": "从队列移除 {name}",
+  "queue.loadFailed": "无法读取",
 
   "rail.groupedTitle": "扫描文本结构",
   "rail.groupedEmpty": "完成版块标注后，此处将显示报道结构与阅读顺序。",
@@ -181,7 +182,8 @@ export const zh = {
   "canvas.deleteConfirmTitle": "删除选中的版块？",
   "canvas.deleteConfirmBody": "将删除 {count} 个版块。此操作不会删除原始图像。",
   "canvas.dropHint": "将扫描件拖入此处，或使用顶栏「添加文件」",
-  "canvas.formats": "支持 PDF · PNG · JPG · TIFF · BMP",
+  "canvas.formats": "支持 PDF · PNG · JPG · TIFF · BMP · DNG(iPhone)",
+  "canvas.previewFailed": "预览加载失败，切换文件或重新导入可重试",
 
   "ocr.pageHeading": "第 {page} 页",
   "ocr.titleFullText": "全文",
@@ -449,6 +451,7 @@ export const en: Record<MessageKey, string> = {
   "queue.dropHintLine2": "or click here to add files",
   "queue.remove": "Remove from queue",
   "queue.removeNamed": "Remove {name} from queue",
+  "queue.loadFailed": "Unreadable",
 
   "rail.groupedTitle": "Document structure",
   "rail.groupedEmpty":
@@ -481,7 +484,9 @@ export const en: Record<MessageKey, string> = {
   "canvas.deleteConfirmBody":
     "{count} blocks will be deleted. The source image is left untouched.",
   "canvas.dropHint": "Drop scans here, or use “Add files” in the sidebar",
-  "canvas.formats": "Supports PDF · PNG · JPG · TIFF · BMP",
+  "canvas.formats": "Supports PDF · PNG · JPG · TIFF · BMP · DNG (iPhone)",
+  "canvas.previewFailed":
+    "The preview could not be loaded — switch files or re-import to retry",
 
   "ocr.pageHeading": "Page {page}",
   "ocr.titleFullText": "Full text",

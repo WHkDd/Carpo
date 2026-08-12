@@ -1,4 +1,4 @@
-import { FileText, FileImage, Trash2, X } from "lucide-react";
+import { FileText, FileImage, FileWarning, Trash2, X } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -12,8 +12,9 @@ interface QueueItemProps {
 
 export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps) {
   const t = useT();
-  const Icon = entry.kind === "pdf" ? FileText : FileImage;
-  const meta = entry.ext.toUpperCase();
+  const failed = !!entry.loadError;
+  const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
+  const meta = failed ? t("queue.loadFailed") : entry.ext.toUpperCase();
   const pageBadge =
     entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
       ? `${entry.currentPage ?? 1} / ${entry.pdfTotal}`
@@ -39,15 +40,25 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
         onClick={() => onSelect(entry.id)}
         className="contents text-left"
         aria-current={active ? "true" : undefined}
+        // Full reason on hover; the canvas shows it in full once selected.
+        title={entry.loadError ?? undefined}
       >
         <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-surface-2">
-          <Icon className="h-4 w-4 text-foreground-subtle" strokeWidth={1.5} />
+          <Icon
+            className={cn("h-4 w-4", failed ? "text-destructive" : "text-foreground-subtle")}
+            strokeWidth={1.5}
+          />
         </span>
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold">
             {entry.name}
           </span>
-          <span className="mt-0.5 block truncate font-mono text-[11px] text-foreground-subtle">
+          <span
+            className={cn(
+              "mt-0.5 block truncate font-mono text-[11px]",
+              failed ? "text-destructive" : "text-foreground-subtle"
+            )}
+          >
             {meta}
           </span>
         </span>
@@ -74,9 +85,11 @@ export function QueueItem({ entry, active, onSelect, onRemove }: QueueItemProps)
 
 export function QueueItemCompact({ entry, active, onSelect, onRemove }: QueueItemProps) {
   const t = useT();
-  const Icon = entry.kind === "pdf" ? FileText : FileImage;
-  const tooltip =
-    entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
+  const failed = !!entry.loadError;
+  const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
+  const tooltip = failed
+    ? `${entry.name} · ${entry.loadError}`
+    : entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
       ? `${entry.name} · ${entry.currentPage ?? 1}/${entry.pdfTotal}`
       : entry.name;
 
@@ -101,7 +114,10 @@ export function QueueItemCompact({ entry, active, onSelect, onRemove }: QueueIte
             className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
           />
         )}
-        <Icon className="h-4 w-4" strokeWidth={1.5} />
+        <Icon
+          className={cn("h-4 w-4", failed && "text-destructive")}
+          strokeWidth={1.5}
+        />
       </button>
       {onRemove && (
         <button

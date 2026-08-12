@@ -102,6 +102,12 @@ export interface FileEntry {
   payload?: RenderedPagePayload;
   // Page number that `payload` was rendered for. PDFs only; undefined for images.
   payloadPage?: number;
+  /** Why this file has no `payload`. Set when the backend refused to decode it
+   *  — a DNG with no usable embedded preview, a corrupt scan, a PDF PDFium
+   *  won't open. The entry still joins the queue so the failure is visible and
+   *  attributable instead of the file silently never appearing. Carries the
+   *  backend's own message, which for DNG tells the user what to re-export. */
+  loadError?: string;
 }
 
 export interface Rect {

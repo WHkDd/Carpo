@@ -27,6 +27,7 @@
 //! result lands in a closed `oneshot` and is dropped.
 
 use std::collections::{HashMap, VecDeque};
+use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
@@ -48,6 +49,8 @@ pub struct PageLoader {
     kind: FileKind,
     path: PathBuf,
     ocr_dpi: u32,
+    /// Long-edge pixel ceiling for PDF renders; `None` renders at `ocr_dpi`.
+    max_long_edge: Option<u32>,
     image_bitmap: OnceCell<Arc<DynamicImage>>,
     pdf_cache: Mutex<LruInner>,
     /// Per-page in-flight slot. Multiple concurrent callers for the same
@@ -57,18 +60,49 @@ pub struct PageLoader {
     pdf_in_flight: Mutex<HashMap<u32, Weak<OnceCell<Arc<DynamicImage>>>>>,
 }
 
+/// Byte ceiling for the decoded-page cache.
+///
+/// The page count alone is the wrong unit: a slot holding an A4 page at 300
+/// DPI is ~33 MB, the same slot holding a broadsheet scan is ~114 MB, so a
+/// fixed "6 pages" capacity silently swings between 200 MB and 700 MB
+/// depending on what the user opened. Budgeting bytes makes the ceiling mean
+/// the same thing for every document.
+///
+/// Override with `XCVT_OCR_PAGE_CACHE_BYTES`.
+pub const DEFAULT_PAGE_CACHE_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Reads the effective decoded-page cache budget in bytes.
+pub fn page_cache_budget_bytes() -> u64 {
+    env::var("XCVT_OCR_PAGE_CACHE_BYTES")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_PAGE_CACHE_BUDGET_BYTES)
+}
+
+/// Decoded footprint of a bitmap. `DynamicImage` owns one tightly-packed
+/// buffer, so width x height x bytes-per-pixel is exact rather than an
+/// estimate.
+fn decoded_bytes(img: &DynamicImage) -> u64 {
+    img.width() as u64 * img.height() as u64 * img.color().bytes_per_pixel() as u64
+}
+
 struct LruInner {
     map: HashMap<u32, Arc<DynamicImage>>,
     order: VecDeque<u32>,
     capacity: usize,
+    budget_bytes: u64,
+    used_bytes: u64,
 }
 
 impl LruInner {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, budget_bytes: u64) -> Self {
         Self {
             map: HashMap::new(),
             order: VecDeque::new(),
             capacity,
+            budget_bytes,
+            used_bytes: 0,
         }
     }
 
@@ -82,15 +116,26 @@ impl LruInner {
     }
 
     fn insert(&mut self, page: u32, img: Arc<DynamicImage>) {
-        if self.map.insert(page, img).is_some() {
+        self.used_bytes += decoded_bytes(&img);
+        if let Some(previous) = self.map.insert(page, img) {
+            self.used_bytes = self.used_bytes.saturating_sub(decoded_bytes(&previous));
             if let Some(idx) = self.order.iter().position(|p| *p == page) {
                 self.order.remove(idx);
             }
         }
         self.order.push_back(page);
-        while self.order.len() > self.capacity {
-            if let Some(victim) = self.order.pop_front() {
-                self.map.remove(&victim);
+
+        // Evict on whichever ceiling bites first, but never drop the entry we
+        // just inserted: a single page larger than the whole budget must still
+        // be servable, otherwise the caller re-renders it on every access.
+        while (self.order.len() > self.capacity || self.used_bytes > self.budget_bytes)
+            && self.order.len() > 1
+        {
+            let Some(victim) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(dropped) = self.map.remove(&victim) {
+                self.used_bytes = self.used_bytes.saturating_sub(decoded_bytes(&dropped));
             }
         }
     }
@@ -100,21 +145,33 @@ impl PageLoader {
     /// `lru_capacity` should track the caller's OCR worker-pool width plus
     /// one slack slot, so a full complement of in-flight workers spread
     /// across distinct pages can't thrash the cache. Floored at
-    /// [`MIN_PAGE_LRU_CAPACITY`].
+    /// [`MIN_PAGE_LRU_CAPACITY`], and bounded a second time by
+    /// [`page_cache_budget_bytes`] so oversized pages can't turn that slot
+    /// count into gigabytes.
+    ///
+    /// `max_long_edge` clamps the render resolution — see
+    /// [`crate::pdf::ocr_max_long_edge`]. Pass `None` for callers that crop
+    /// regions out of the page (the grouped runner), `Some(..)` for callers
+    /// that send the whole page to the model.
     pub fn new(
         state: Arc<AppState>,
         kind: FileKind,
         path: PathBuf,
         ocr_dpi: u32,
         lru_capacity: usize,
+        max_long_edge: Option<u32>,
     ) -> Self {
         Self {
             state,
             kind,
             path,
             ocr_dpi,
+            max_long_edge,
             image_bitmap: OnceCell::new(),
-            pdf_cache: Mutex::new(LruInner::new(lru_capacity.max(MIN_PAGE_LRU_CAPACITY))),
+            pdf_cache: Mutex::new(LruInner::new(
+                lru_capacity.max(MIN_PAGE_LRU_CAPACITY),
+                page_cache_budget_bytes(),
+            )),
             pdf_in_flight: Mutex::new(HashMap::new()),
         }
     }
@@ -173,6 +230,7 @@ impl PageLoader {
         let state = Arc::clone(&self.state);
         let path = self.path.clone();
         let dpi = self.ocr_dpi;
+        let max_long_edge = self.max_long_edge;
         let cancel_for_task = cancel.clone();
 
         let init = cell.get_or_try_init(|| async move {
@@ -187,7 +245,7 @@ impl PageLoader {
             // queue from filling up, so preview latency stays bounded.
             let img = state
                 .pdf
-                .render_image_cancellable(path, page, dpi, Some(cancel_for_task))
+                .render_image_cancellable(path, page, dpi, max_long_edge, Some(cancel_for_task))
                 .await?;
             Ok::<_, AppError>(Arc::new(img))
         });
@@ -215,7 +273,7 @@ mod tests {
 
     #[test]
     fn lru_evicts_oldest_when_over_capacity() {
-        let mut lru = LruInner::new(2);
+        let mut lru = LruInner::new(2, u64::MAX);
         lru.insert(1, flat(10));
         lru.insert(2, flat(20));
         lru.insert(3, flat(30));
@@ -226,7 +284,7 @@ mod tests {
 
     #[test]
     fn lru_promotes_on_hit() {
-        let mut lru = LruInner::new(2);
+        let mut lru = LruInner::new(2, u64::MAX);
         lru.insert(1, flat(10));
         lru.insert(2, flat(20));
         // Touch 1 so 2 becomes the eviction candidate.
@@ -242,10 +300,53 @@ mod tests {
 
     #[test]
     fn lru_reinsert_replaces_value_in_place() {
-        let mut lru = LruInner::new(2);
+        let mut lru = LruInner::new(2, u64::MAX);
         lru.insert(1, flat(10));
         lru.insert(1, flat(99));
         let img = lru.get(1).unwrap();
         assert_eq!(img.width(), 99);
+    }
+
+    #[test]
+    fn lru_evicts_on_the_byte_budget_before_the_slot_count() {
+        // Slot count says 10 fit; the budget only covers two of these pages.
+        // `flat(w)` is w x 1 RGBA = w*4 bytes.
+        let mut lru = LruInner::new(10, 900);
+        lru.insert(1, flat(100)); // 400 bytes
+        lru.insert(2, flat(100)); // 800 total
+        lru.insert(3, flat(100)); // 1200 -> over budget, page 1 goes
+
+        assert!(lru.get(1).is_none(), "page 1 should be evicted on bytes");
+        assert!(lru.get(2).is_some());
+        assert!(lru.get(3).is_some());
+        assert_eq!(lru.used_bytes, 800);
+    }
+
+    #[test]
+    fn lru_keeps_a_page_larger_than_the_whole_budget() {
+        // Otherwise the caller re-renders this page on every single access,
+        // which is far worse than briefly exceeding the budget.
+        let mut lru = LruInner::new(4, 100);
+        lru.insert(1, flat(1000)); // 4000 bytes, way over budget
+        assert!(
+            lru.get(1).is_some(),
+            "the just-inserted page must stay resident"
+        );
+    }
+
+    #[test]
+    fn lru_byte_accounting_survives_replacement_and_eviction() {
+        let mut lru = LruInner::new(10, u64::MAX);
+        lru.insert(1, flat(100)); // 400
+        lru.insert(2, flat(50)); // 200 -> 600
+        assert_eq!(lru.used_bytes, 600);
+
+        lru.insert(1, flat(10)); // replaces 400 with 40 -> 240
+        assert_eq!(lru.used_bytes, 240);
+
+        // Now squeeze the budget and confirm the counter tracks the evictions.
+        lru.budget_bytes = 100;
+        lru.insert(3, flat(10)); // +40 -> 280, evict until <= 100
+        assert!(lru.used_bytes <= 100, "got {}", lru.used_bytes);
     }
 }

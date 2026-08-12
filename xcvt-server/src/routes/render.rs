@@ -9,7 +9,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use xcvt_core::{error::AppError, jobs::grouped::FileKind, pdf::encode_preview_jpeg};
+use xcvt_core::{
+    error::AppError,
+    jobs::grouped::FileKind,
+    pdf::{clamp_preview_dimensions, encode_preview_jpeg},
+};
 
 use crate::{app_state::ServerState, error::ServerResult};
 
@@ -73,9 +77,12 @@ pub async fn raster(
         .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
     let width = img.width();
     let height = img.height();
-    let bytes = tokio::task::spawn_blocking(move || encode_preview_jpeg(img))
-        .await
-        .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
+    // Native width/height, clamped bitmap — see `load_raster_image` in the
+    // Tauri command of the same shape for why the two must disagree.
+    let bytes =
+        tokio::task::spawn_blocking(move || encode_preview_jpeg(clamp_preview_dimensions(img)))
+            .await
+            .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
     Ok(binary_image_response(pack_image(width, height, bytes)))
 }
 

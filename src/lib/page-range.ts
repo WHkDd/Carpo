@@ -87,7 +87,12 @@ function validateBounds(from: number, to: number, totalPages: number): void {
 function rangesFromPages(pages: number[]): PageRange[] {
   const ranges: PageRange[] = [];
   for (const page of pages) {
-    const last = ranges.at(-1);
+    // Not `ranges.at(-1)`: `Array.prototype.at` needs Safari 15.4, and the
+    // macOS bundle allows 12.0 — a Monterey user who never updated Safari gets
+    // an old WKWebView where this throws. esbuild's `safari13` target only
+    // downlevels syntax, not methods, so it would ship as-is and surface as a
+    // bogus "invalid page range" error the user can never get past.
+    const last = ranges[ranges.length - 1];
     if (last && page === last.to + 1) {
       last.to = page;
     } else {

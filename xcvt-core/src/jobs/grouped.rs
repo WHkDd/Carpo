@@ -206,6 +206,11 @@ async fn run(
         PathBuf::from(&req.path),
         ocr_dpi,
         concurrency + 1,
+        // No long-edge clamp here on purpose: `crop_block` scales the
+        // user-drawn rects by `ocr_dpi / preview_dpi`, so the rendered page
+        // must match that ratio exactly or every crop lands off-target — and
+        // the crops are small enough that the resolution is genuinely used.
+        None,
     ));
     let client = state.http.clone();
 

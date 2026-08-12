@@ -14,7 +14,7 @@ import { t } from "@/i18n";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
 
 const PDF_PREVIEW_DPI = 150;
-const BROWSER_ACCEPT = ".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf";
+const BROWSER_ACCEPT = ".png,.jpg,.jpeg,.tif,.tiff,.bmp,.dng,.pdf";
 
 function basename(p: string): string {
   const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
@@ -80,6 +80,12 @@ export function useFileImport() {
           const message = appErrorMessage(err);
           void logError(`${kind} import failed: ${path}: ${message}`);
           setStatusText(t("import.loadFailed", { name }));
+          // Queue it anyway, carrying the reason. Dropping the entry here used
+          // to make a failed import indistinguishable from one that never
+          // happened: `statusText` is written but rendered nowhere, so the file
+          // simply didn't appear and the backend's explanation reached the log
+          // file only. Selecting the entry now shows that explanation.
+          addFile({ id: makeId(), path, name, ext, kind, loadError: message });
         }
       }
 
@@ -177,8 +183,12 @@ export function useFileImport() {
       for (const file of accepted) {
         const ext = extensionOf(file.name);
         const kind = classify(ext);
+        // Tracked outside the try so a preview failure after a successful
+        // upload can still point the queue entry at the uploaded file.
+        let fileId: string | null = null;
         try {
           const uploaded = await uploadFile(file);
+          fileId = uploaded.fileId;
           const entry: FileEntry =
             uploaded.kind === "pdf"
               ? await buildBrowserPdfEntry(uploaded.fileId, uploaded.name, uploaded.ext)
@@ -193,6 +203,16 @@ export function useFileImport() {
           const message = appErrorMessage(err);
           void logError(`${kind} upload failed: ${file.name}: ${message}`);
           setStatusText(t("import.uploadFailed", { name: file.name }));
+          // Same reasoning as the desktop path: surface the failure in the
+          // queue rather than dropping it silently.
+          addFile({
+            id: fileId ?? makeId(),
+            path: fileId ?? "",
+            name: file.name,
+            ext,
+            kind,
+            loadError: message,
+          });
         }
       }
 
