@@ -103,6 +103,87 @@ pub fn render_page_with(
     })
 }
 
+/// Long-edge ceiling, in pixels, for the *bitmap the webview decodes*.
+///
+/// PDF previews are bounded by their 150 DPI render, but raster images are
+/// loaded at whatever resolution they were scanned at. A 600 DPI broadsheet
+/// scan is ~13000x18000 — 234 megapixels, ~936 MB decoded RGBA — and WKWebView
+/// refuses to decode it. The failure mode is indistinguishable from a dead
+/// object URL: blank canvas, blocks still drawn on top.
+///
+/// Set above [`DEFAULT_OCR_MAX_LONG_EDGE_PX`] rather than equal to it: that one
+/// answers "how many pixels does the model use", this one answers "how many
+/// pixels can the webview decode", and the second number is larger. It is also
+/// chosen to sit above the common camera long edge (a 12MP phone photo is 4032)
+/// so archival captures pass through untouched instead of paying a full resize
+/// pass to lose 0.8% of their height.
+///
+/// At the ceiling a square source decodes to ~36 MP / 144 MB RGBA, which
+/// WKWebView handles; the 234 MP case above is what it refuses. Nothing
+/// downstream sees the clamp — the OCR path re-reads the original file from
+/// disk — so the only cost is preview sharpness on genuinely enormous scans.
+pub const PREVIEW_MAX_LONG_EDGE_PX: u32 = 6000;
+
+/// Downscales `image` so neither edge exceeds [`PREVIEW_MAX_LONG_EDGE_PX`],
+/// preserving aspect ratio. Returns the image untouched when it already fits,
+/// which is the common case (PDF previews, ordinary scans).
+///
+/// Callers must keep reporting the *pre-clamp* dimensions to the frontend:
+/// block rects for images are stored in native pixel coordinates and
+/// `grouped::page_scale` assumes a 1.0 scale for `FileKind::Image`. The canvas
+/// draws the clamped bitmap stretched back to those dimensions.
+pub fn clamp_preview_dimensions(image: DynamicImage) -> DynamicImage {
+    let (w, h) = image.dimensions();
+    if w <= PREVIEW_MAX_LONG_EDGE_PX && h <= PREVIEW_MAX_LONG_EDGE_PX {
+        return image;
+    }
+    // `resize` fits the image inside the box while preserving aspect ratio, so
+    // passing the cap for both edges clamps the longer one and lets the
+    // shorter one fall out proportionally. Triangle over Lanczos3: at 200+
+    // megapixels the sharper filter costs seconds of UI latency to win detail
+    // that a downscaled preview cannot show anyway.
+    image.resize(
+        PREVIEW_MAX_LONG_EDGE_PX,
+        PREVIEW_MAX_LONG_EDGE_PX,
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+// Separate from the main `tests` module below, which is gated on the platforms
+// that ship PDFium — none of this touches it.
+#[cfg(test)]
+mod preview_clamp_tests {
+    use super::*;
+
+    fn blank(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::new(w, h))
+    }
+
+    #[test]
+    fn images_within_the_cap_are_returned_untouched() {
+        // 12MP phone capture — the shape most archival photography arrives in,
+        // and the reason the cap sits above 4032 rather than at 4000.
+        let out = clamp_preview_dimensions(blank(3024, 4032));
+        assert_eq!(out.dimensions(), (3024, 4032));
+    }
+
+    #[test]
+    fn oversized_images_clamp_the_long_edge_and_keep_aspect() {
+        // A 600 DPI broadsheet scan: the case that made WKWebView give up.
+        let out = clamp_preview_dimensions(blank(13000, 18000));
+        assert_eq!(out.height(), PREVIEW_MAX_LONG_EDGE_PX);
+        let ratio = out.width() as f32 / out.height() as f32;
+        assert!((ratio - 13000.0 / 18000.0).abs() < 0.01, "got {ratio}");
+    }
+
+    #[test]
+    fn clamps_on_width_for_landscape_sources() {
+        let out = clamp_preview_dimensions(blank(9000, 3000));
+        assert_eq!(out.width(), PREVIEW_MAX_LONG_EDGE_PX);
+        assert!(out.height() < PREVIEW_MAX_LONG_EDGE_PX);
+    }
+}
+
 /// Encodes a bitmap as a preview-grade JPEG. JPEG can't carry an alpha
 /// channel, so RGBA inputs are flattened to RGB first. For OCR-grade
 /// renders use the raw `DynamicImage` returned by `render_page_image_with`
@@ -127,6 +208,40 @@ pub fn encode_preview_jpeg(image: DynamicImage) -> AppResult<Vec<u8>> {
 /// letting PDFium try to allocate.
 pub const MAX_DPI: u32 = 600;
 
+/// Long-edge ceiling, in pixels, for whole-page OCR renders.
+///
+/// The whole-file runner ships the *entire* page to a vision model, and every
+/// current provider downsamples its input well below this (Claude tops out
+/// around 1568px on the long edge, GPT-4o tiles at 768/2000, Gemini around
+/// 3072). Rendering a broadsheet scan at a naive 300 DPI produces a
+/// 4605x6495 bitmap — ~114 MB decoded, times the page LRU, times a full-size
+/// copy per in-flight encode — and then the model throws most of it away. The
+/// pixels above this line cost memory and upload time and buy nothing.
+///
+/// The unit that matters here is *pixels the model receives*, not DPI: 4000
+/// on the long edge is still above every provider's own input resolution, so
+/// the clamp is lossless in practice even where it engages. Concretely, at
+/// 300 DPI: A4 (3508px) passes through untouched; A3 (4962px) clamps to 4000,
+/// i.e. an effective ~242 DPI; a broadsheet (6496px) clamps to 4000, i.e.
+/// ~185 DPI and a 2.6x cut in decoded bytes.
+///
+/// Deliberately *not* applied to the grouped path — that one crops small
+/// blocks out of the page and sends the crops, so page-level downscaling
+/// there is a real resolution loss rather than a free one.
+///
+/// Override with `XCVT_OCR_MAX_LONG_EDGE`; `0` disables the clamp entirely.
+pub const DEFAULT_OCR_MAX_LONG_EDGE_PX: u32 = 4000;
+
+/// Reads the effective whole-page OCR long-edge cap. Returns `None` when the
+/// clamp is disabled (`XCVT_OCR_MAX_LONG_EDGE=0`).
+pub fn ocr_max_long_edge() -> Option<u32> {
+    let configured = env::var("XCVT_OCR_MAX_LONG_EDGE")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT_OCR_MAX_LONG_EDGE_PX);
+    (configured > 0).then_some(configured)
+}
+
 /// Renders a page into an in-memory `DynamicImage` without the PNG
 /// encode/decode round-trip. Used by the OCR job runners — they crop and
 /// re-encode inside their own concurrency loop, so handing them a decoded
@@ -136,6 +251,20 @@ pub fn render_page_image_with(
     path: &Path,
     page: u32,
     dpi: u32,
+) -> AppResult<DynamicImage> {
+    render_page_image_capped_with(pdfium, path, page, dpi, None)
+}
+
+/// As [`render_page_image_with`], but clamps the render scale so the longer
+/// edge never exceeds `max_long_edge` pixels. The clamp is applied to the
+/// *render config*, not by downscaling afterwards — PDFium never allocates
+/// the oversized bitmap in the first place, which is the whole point.
+pub fn render_page_image_capped_with(
+    pdfium: &Pdfium,
+    path: &Path,
+    page: u32,
+    dpi: u32,
+    max_long_edge: Option<u32>,
 ) -> AppResult<DynamicImage> {
     if dpi == 0 {
         return Err(AppError::Pdf("dpi must be greater than 0".to_string()));
@@ -158,10 +287,33 @@ pub fn render_page_image_with(
         .pages()
         .get((page - 1) as u16)
         .map_err(map_pdfium_error)?;
+
+    let scale = render_scale_for(page.width().value, page.height().value, dpi, max_long_edge);
     let bitmap = page
-        .render_with_config(&PdfRenderConfig::new().scale_page_by_factor(dpi as f32 / 72.0))
+        .render_with_config(&PdfRenderConfig::new().scale_page_by_factor(scale))
         .map_err(map_pdfium_error)?;
     Ok(bitmap.as_image())
+}
+
+/// Scale factor (PDF points -> pixels) for `dpi`, reduced just enough to keep
+/// the longer rendered edge within `max_long_edge`. Pages that already fit
+/// keep the exact `dpi/72` factor, so the common case is bit-for-bit
+/// unchanged.
+fn render_scale_for(width_pt: f32, height_pt: f32, dpi: u32, max_long_edge: Option<u32>) -> f32 {
+    let scale = dpi as f32 / 72.0;
+    let Some(cap) = max_long_edge else {
+        return scale;
+    };
+    let long_edge_pt = width_pt.max(height_pt);
+    if long_edge_pt <= 0.0 {
+        return scale;
+    }
+    let capped = cap as f32 / long_edge_pt;
+    if capped < scale {
+        capped
+    } else {
+        scale
+    }
 }
 
 fn load_document<'a>(
@@ -350,6 +502,8 @@ enum PdfTask {
         path: PathBuf,
         page: u32,
         dpi: u32,
+        /// Long-edge pixel ceiling; `None` renders at exactly `dpi`.
+        max_long_edge: Option<u32>,
         resp: oneshot::Sender<AppResult<DynamicImage>>,
         cancel: Option<CancellationToken>,
     },
@@ -437,6 +591,7 @@ impl PdfWorker {
                             path,
                             page,
                             dpi,
+                            max_long_edge,
                             resp,
                             cancel,
                         } => {
@@ -451,7 +606,13 @@ impl PdfWorker {
                                 )));
                                 continue;
                             }
-                            let _ = resp.send(render_page_image_with(&pdfium, &path, page, dpi));
+                            let _ = resp.send(render_page_image_capped_with(
+                                &pdfium,
+                                &path,
+                                page,
+                                dpi,
+                                max_long_edge,
+                            ));
                         }
                         PdfTask::BuildChunks {
                             path,
@@ -555,6 +716,7 @@ impl PdfWorker {
         path: PathBuf,
         page: u32,
         dpi: u32,
+        max_long_edge: Option<u32>,
         cancel: Option<CancellationToken>,
     ) -> AppResult<DynamicImage> {
         let (rtx, rrx) = oneshot::channel();
@@ -563,6 +725,7 @@ impl PdfWorker {
                 path,
                 page,
                 dpi,
+                max_long_edge,
                 resp: rtx,
                 cancel,
             },
@@ -581,6 +744,68 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../src-tauri/tests/fixtures/sample.pdf"
         ))
+    }
+
+    // A4 and A3 in PDF points (72/inch).
+    const A4_PT: (f32, f32) = (595.0, 842.0);
+    const A3_PT: (f32, f32) = (842.0, 1191.0);
+    // Broadsheet newspaper, ~390x550mm.
+    const BROADSHEET_PT: (f32, f32) = (1105.0, 1559.0);
+
+    #[test]
+    fn render_scale_is_untouched_without_a_cap() {
+        let (w, h) = BROADSHEET_PT;
+        assert!((render_scale_for(w, h, 300, None) - 300.0 / 72.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn render_scale_leaves_pages_that_already_fit_exact() {
+        // A4 at 300 dpi is 3508px on the long edge — under the cap, so the
+        // factor must come through as exactly dpi/72, not merely close.
+        let (w, h) = A4_PT;
+        let scale = render_scale_for(w, h, 300, Some(DEFAULT_OCR_MAX_LONG_EDGE_PX));
+        assert!(
+            (scale - 300.0 / 72.0).abs() < f32::EPSILON,
+            "A4 should pass through unclamped, got {scale}"
+        );
+    }
+
+    #[test]
+    fn render_scale_clamps_oversized_pages_to_the_long_edge() {
+        // A3 (4962px at 300 dpi) and broadsheet (6496px) both exceed the cap.
+        let cap = DEFAULT_OCR_MAX_LONG_EDGE_PX;
+        for (w, h) in [A3_PT, BROADSHEET_PT] {
+            let scale = render_scale_for(w, h, 300, Some(cap));
+            assert!(scale < 300.0 / 72.0, "{w}x{h}pt at 300 dpi should clamp");
+
+            let long_edge_px = w.max(h) * scale;
+            assert!(
+                (long_edge_px - cap as f32).abs() < 1.0,
+                "clamped long edge should land on the cap, got {long_edge_px}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_scale_never_upscales_a_small_page() {
+        // A cap is a ceiling, not a target: a page already under it keeps its
+        // requested dpi rather than being stretched up to the cap.
+        let (w, h) = A4_PT;
+        let scale = render_scale_for(w, h, 150, Some(DEFAULT_OCR_MAX_LONG_EDGE_PX));
+        assert!((scale - 150.0 / 72.0).abs() < f32::EPSILON, "got {scale}");
+    }
+
+    #[test]
+    fn render_scale_tolerates_a_degenerate_page_size() {
+        assert!((render_scale_for(0.0, 0.0, 300, Some(4000)) - 300.0 / 72.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ocr_max_long_edge_defaults_and_can_be_disabled() {
+        // Not asserting on the env-var branches — the process-wide env is
+        // shared across parallel tests — just that the default is live.
+        assert_eq!(DEFAULT_OCR_MAX_LONG_EDGE_PX, 4000);
+        assert!(DEFAULT_OCR_MAX_LONG_EDGE_PX > 0);
     }
 
     #[test]
@@ -619,7 +844,7 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let err = worker
-            .render_image_cancellable(sample_pdf().to_path_buf(), 1, 150, Some(cancel))
+            .render_image_cancellable(sample_pdf().to_path_buf(), 1, 150, None, Some(cancel))
             .await
             .unwrap_err();
         match err {

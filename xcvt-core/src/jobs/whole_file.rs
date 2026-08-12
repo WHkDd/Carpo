@@ -205,6 +205,12 @@ async fn run_page_image(
     // Lazy bitmap loader. The LRU capacity tracks the provider's worker-pool
     // width plus one slack slot, so peak memory stays at a handful of decoded
     // pages instead of the full requested range.
+    //
+    // This runner ships whole pages to the model, so it also takes the
+    // long-edge clamp: every provider downsamples its input well below it,
+    // which makes the extra pixels pure memory and upload cost. The grouped
+    // runner deliberately does not (it sends small crops, where page-level
+    // downscaling would be a real resolution loss).
     let concurrency = ocr::concurrency_for(settings.provider);
     let loader = Arc::new(PageLoader::new(
         Arc::clone(&state),
@@ -212,6 +218,7 @@ async fn run_page_image(
         PathBuf::from(&req.path),
         ocr_dpi,
         concurrency + 1,
+        crate::pdf::ocr_max_long_edge(),
     ));
     let client = state.http.clone();
 
