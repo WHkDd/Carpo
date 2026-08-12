@@ -72,6 +72,35 @@ function GroupedRail() {
     [setOcrPanelHeight]
   );
 
+  const maxPanelHeight = Math.max(
+    OCR_PANEL_MIN_HEIGHT,
+    (asideRef.current?.getBoundingClientRect().height ?? 800) -
+      OCR_PANEL_MAX_RESERVE
+  );
+
+  // A separator that can only be dragged is a mouse-only control. Arrow keys
+  // resize by one step, ⇧+arrow by a coarse step, Home/End jump to the bounds
+  // — the same model as a native split view divider.
+  const onDividerKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const railH = asideRef.current?.getBoundingClientRect().height ?? 800;
+      const maxH = Math.max(OCR_PANEL_MIN_HEIGHT, railH - OCR_PANEL_MAX_RESERVE);
+      const step = e.shiftKey ? 48 : 12;
+      const current = useStore.getState().ocrPanelHeight;
+      let next: number | null = null;
+      // Up grows the panel below the divider, which is what moving the
+      // divider up actually does.
+      if (e.key === "ArrowUp") next = current + step;
+      else if (e.key === "ArrowDown") next = current - step;
+      else if (e.key === "Home") next = OCR_PANEL_MIN_HEIGHT;
+      else if (e.key === "End") next = maxH;
+      if (next === null) return;
+      e.preventDefault();
+      setOcrPanelHeight(Math.min(maxH, Math.max(OCR_PANEL_MIN_HEIGHT, next)));
+    },
+    [setOcrPanelHeight]
+  );
+
   const triggerLabel = state.starting
     ? t("rail.starting")
     : state.selectedCount > 0
@@ -89,7 +118,7 @@ function GroupedRail() {
         </div>
 
         {hasFile ? (
-          <div className="flex flex-col gap-3 overflow-y-auto px-1.5 pb-2">
+          <div className="flex flex-col gap-3 overflow-y-auto overscroll-contain px-1.5 pb-2">
             <MetadataInline />
             <BlockOpsPanel />
             <div className="border-t border-border/40" />
@@ -106,8 +135,13 @@ function GroupedRail() {
         role="separator"
         aria-orientation="horizontal"
         aria-label={t("rail.resizeOcrPanel")}
+        aria-valuemin={OCR_PANEL_MIN_HEIGHT}
+        aria-valuemax={maxPanelHeight}
+        aria-valuenow={ocrPanelHeight}
+        tabIndex={0}
         onPointerDown={onDividerDrag}
-        className="group relative h-1.5 shrink-0 cursor-row-resize"
+        onKeyDown={onDividerKeyDown}
+        className="group relative h-1.5 shrink-0 cursor-row-resize focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60 transition-colors group-hover:bg-border-strong" />
       </div>

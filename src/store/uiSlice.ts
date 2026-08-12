@@ -32,7 +32,12 @@ export interface UiSlice {
    *  above it takes whatever vertical space is left. In-memory only — the
    *  user re-sets per session. */
   ocrPanelHeight: number;
+  /** True while files are being dragged over the window. Drives the canvas
+   *  drop-target overlay — without it, hovering a file over the window looks
+   *  exactly like hovering it over dead space. */
+  dropTargetActive: boolean;
   setStatusText: (statusText: string) => void;
+  setDropTargetActive: (active: boolean) => void;
   toggleQueueCollapsed: () => void;
   setQueueCollapsed: (collapsed: boolean) => void;
   setRecognitionMode: (mode: RecognitionMode) => void;
@@ -67,9 +72,14 @@ export const createUiSlice: StateCreator<
   recognitionMode: "grouped",
   selectedArticleIds: [],
   ocrPanelHeight: DEFAULT_OCR_PANEL_HEIGHT,
+  dropTargetActive: false,
   setStatusText: (statusText) =>
     set((state) => {
       state.statusText = statusText;
+    }),
+  setDropTargetActive: (active) =>
+    set((state) => {
+      state.dropTargetActive = active;
     }),
   toggleQueueCollapsed: () =>
     set((state) => {

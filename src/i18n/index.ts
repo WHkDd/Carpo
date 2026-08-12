@@ -12,6 +12,11 @@ const CATALOGS: Record<Language, Record<MessageKey, string>> = { zh, en };
  *  would otherwise flash Chinese at an English user. */
 const STORAGE_KEY = "xcvt.language";
 
+function syncDocumentLanguage(language: Language): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+}
+
 export function isLanguage(value: unknown): value is Language {
   return value === "zh" || value === "en";
 }
@@ -31,6 +36,7 @@ function detectInitialLanguage(): Language {
 }
 
 let current: Language = detectInitialLanguage();
+syncDocumentLanguage(current);
 const listeners = new Set<() => void>();
 
 export function getLanguage(): Language {
@@ -47,6 +53,7 @@ export function setLanguage(next: Language): void {
     // Persisting the hint is best-effort; settings.json remains the source
     // of truth.
   }
+  syncDocumentLanguage(next);
   if (next === current) return;
   current = next;
   listeners.forEach((listener) => listener());

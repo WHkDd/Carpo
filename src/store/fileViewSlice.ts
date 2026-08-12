@@ -72,6 +72,7 @@ export const createFileViewSlice: StateCreator<
         ...previous,
         panX,
         panY,
+        isFit: false,
       };
     }),
   getFileView: (fileId) => get().fileViews[fileId] ?? DEFAULT_FILE_VIEW,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
 import {
@@ -23,6 +23,7 @@ import type {
 } from "@/lib/layout-document";
 import { DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS } from "@/lib/layout-document";
 import { useStore } from "@/store";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { t as translate, useT } from "@/i18n";
 import type { RecognizedPage } from "@/store/jobSlice";
 
@@ -139,6 +140,25 @@ export function PaddleJsonImportDialog({
   const [exportOptions, setExportOptions] = useState<LayoutPdfExportOptions>(
     DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS
   );
+
+  // Initial focus, focus trap, and focus restore on close.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const isOpen = open && path !== null;
+  useDialogFocus(isOpen, dialogRef);
+
+  // Escape dismisses, like every other dialog in the app and every native
+  // sheet. This one was the outlier.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
 
   const currentFile = useStore((s) =>
     s.currentFileId
@@ -269,20 +289,20 @@ export function PaddleJsonImportDialog({
   if (!open || !path) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="paddle-json-import-title"
-    >
-      <button
-        type="button"
-        aria-label={t("paddleJson.closeDialog")}
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div
+        role="presentation"
         className="absolute inset-0 bg-foreground/25"
         onClick={onClose}
       />
 
-      <div className="relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="paddle-json-import-title"
+        className="relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-[10px] border border-border bg-surface shadow-[0_20px_60px_-24px_rgba(0,0,0,0.22)]"
+      >
         <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <FileJson className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
@@ -433,7 +453,7 @@ aria-label={t("common.close")}
                     type="button"
                     onClick={commit}
                     disabled={state.status !== "ready" || !currentFileId}
-                    className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-7 rounded border border-border/60 px-3 text-[12px] text-foreground-muted hover:bg-surface hover:text-foreground active:bg-surface-overlay disabled:cursor-default disabled:opacity-50"
                     title={t("paddleJson.writeTo", { name: currentPdf.name })}
                   >
                     {t("paddleJson.writePageTexts")}
@@ -447,7 +467,7 @@ aria-label={t("common.close")}
                     state.status !== "ready" ||
                     !state.imported?.document.pages.length
                   }
-                  className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 active:bg-primary/80 disabled:cursor-default disabled:opacity-50"
                 >
                   {exportFormat === "pdf" ? (
                     <FileDown className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -616,8 +636,8 @@ function FormatToggle({
             onClick={() => onChange(key)}
             className={`h-5 rounded px-2 text-[11px] transition-colors ${
               active
-                ? "bg-primary font-medium text-primary-foreground"
-                : "text-foreground-muted hover:text-foreground"
+                ? "bg-primary font-medium text-primary-foreground active:bg-primary/80"
+                : "text-foreground-muted hover:text-foreground active:bg-surface-overlay"
             }`}
           >
             {EXPORT_FORMATS[key].label}
@@ -647,8 +667,8 @@ function OptionCheck({
     <label
       className={`flex h-7 items-center gap-2 rounded px-1.5 text-[12px] ${
         disabled
-          ? "cursor-not-allowed text-foreground-subtle"
-          : "cursor-pointer text-foreground hover:bg-surface"
+          ? "text-foreground-subtle"
+          : "text-foreground hover:bg-surface active:bg-surface-overlay"
       }`}
       title={disabled ? t("paddleJson.optionDisabled") : undefined}
     >
@@ -657,7 +677,7 @@ function OptionCheck({
         checked={checked && !disabled}
         disabled={disabled}
         onChange={(e) => onChange(e.currentTarget.checked)}
-        className="h-3.5 w-3.5 shrink-0 accent-primary disabled:cursor-not-allowed"
+        className="h-3.5 w-3.5 shrink-0 accent-primary disabled:cursor-default"
       />
       <span className="flex-1 truncate">{label}</span>
       {count != null && (
@@ -690,7 +710,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 export function usePaddleJsonImportFlow() {
   const [path, setPath] = useState<string | null>(null);
 
-  async function open(): Promise<void> {
+  const open = useCallback(async (): Promise<void> => {
     try {
       const selection = await openDialog({
         multiple: false,
@@ -704,12 +724,14 @@ export function usePaddleJsonImportFlow() {
         () => {}
       );
     }
-  }
+  }, []);
+
+  const close = useCallback(() => setPath(null), []);
 
   // `ipcAnalyzePaddleJson` isn't actually called from the flow — the
   // dialog uses `importPaddleJson` directly because it always needs the
   // full payload anyway. We re-export the symbol so the queue panel can
   // ergonomically lazy-call analyze in the future (e.g. for a quick
   // "compatibility check" without staging an import).
-  return { path, open, close: () => setPath(null), analyze: ipcAnalyzePaddleJson };
+  return { path, open, close, analyze: ipcAnalyzePaddleJson };
 }

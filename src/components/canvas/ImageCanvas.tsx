@@ -161,6 +161,7 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     } | null>(null);
     const [colorVersion, setColorVersion] = useState(0);
     const [resizeTargetId, setResizeTargetId] = useState<string | null>(null);
+    const [isPanning, setIsPanning] = useState(false);
 
     useImperativeHandle(ref, () => controller, [controller]);
 
@@ -239,8 +240,10 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       if (!container) return;
 
       const onContextMenu = (e: MouseEvent) => {
-        if (!useStore.getState().manualDrawMode) return;
+        // A Konva canvas never has useful WebKit editing actions. Suppress the
+        // browser menu in browse mode too, then optionally show our block menu.
         e.preventDefault();
+        if (!useStore.getState().manualDrawMode) return;
 
         const rect = container.getBoundingClientRect();
         const stageX = e.clientX - rect.left;
@@ -483,6 +486,22 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       [onDrawMouseDown]
     );
 
+    const onStageDragStart = useCallback((e: KonvaEventObject<DragEvent>) => {
+      if (e.target === e.target.getStage()) setIsPanning(true);
+    }, []);
+
+    const onStageDragEnd = useCallback(
+      (e: KonvaEventObject<DragEvent>) => {
+        if (e.target === e.target.getStage()) setIsPanning(false);
+        onDragEnd(e);
+      },
+      [onDragEnd]
+    );
+
+    useEffect(() => {
+      if (!isReady || manualDrawMode) setIsPanning(false);
+    }, [isReady, manualDrawMode]);
+
     const rubberBand =
       drawState.kind === "drawing"
         ? {
@@ -509,11 +528,20 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             scaleY={scale}
             draggable={isReady && !manualDrawMode}
             onWheel={onWheel}
-            onDragEnd={onDragEnd}
+            onDragStart={onStageDragStart}
+            onDragEnd={onStageDragEnd}
             onMouseDown={onStageMouseDown}
             onMouseMove={onDrawMouseMove}
             onMouseUp={onDrawMouseUp}
-            style={{ cursor: manualDrawMode ? "crosshair" : undefined }}
+            style={{
+              cursor: manualDrawMode
+                ? "crosshair"
+                : isReady
+                  ? isPanning
+                    ? "grabbing"
+                    : "grab"
+                  : "default",
+            }}
           >
             <Layer listening={false}>
               {/* Sized from the payload, not the bitmap's intrinsic size: the

@@ -6,6 +6,25 @@ import { clampZoomPercent } from "@/store/uiSlice";
 
 const SCALE_FACTOR = 1.15;
 const FIT_PADDING = 0.94;
+const WHEEL_ZOOM_SENSITIVITY = 0.002;
+
+export function wheelDeltaPixels(
+  delta: number,
+  deltaMode: number,
+  pageSize: number
+): number {
+  // WheelEvent constants are 1 (line) and 2 (page). Keep the helper free of a
+  // browser-global read so it remains usable during SSR and unit tests.
+  if (deltaMode === 1) return delta * 16;
+  if (deltaMode === 2) return delta * pageSize;
+  return delta;
+}
+
+export function wheelZoomFactor(deltaY: number): number {
+  // Bound a single malformed/page-mode event while preserving the continuous
+  // response of trackpad pinch and high-resolution mouse wheels.
+  return Math.min(2, Math.max(0.5, Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY)));
+}
 
 export interface PanZoomController {
   fit: () => void;
@@ -130,6 +149,18 @@ export function usePanZoom(args: UsePanZoomArgs) {
         x: anchor.x - (anchor.x - curPan.x) * ratio,
         y: anchor.y - (anchor.y - curPan.y) * ratio,
       };
+      stateRef.current = {
+        ...stateRef.current,
+        scale: finalScale,
+        pan: nextPan,
+        view: {
+          ...stateRef.current.view,
+          zoomPercent: percent,
+          panX: nextPan.x,
+          panY: nextPan.y,
+          isFit: false,
+        },
+      };
       setFileZoomAndPan(fid, percent, nextPan.x, nextPan.y);
     },
     [setFileZoomAndPan]
@@ -165,15 +196,38 @@ export function usePanZoom(args: UsePanZoomArgs) {
       e.evt.preventDefault();
       const stage = e.target.getStage();
       if (!stage) return;
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
-      const direction = e.evt.deltaY > 0 ? -1 : 1;
-      applyZoom(
-        stateRef.current.scale * Math.pow(SCALE_FACTOR, direction),
-        pointer
-      );
+      const event = e.evt;
+      const deltaX = wheelDeltaPixels(event.deltaX, event.deltaMode, cw);
+      const deltaY = wheelDeltaPixels(event.deltaY, event.deltaMode, ch);
+
+      if (event.ctrlKey || event.metaKey) {
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return;
+        applyZoom(stateRef.current.scale * wheelZoomFactor(deltaY), pointer);
+        return;
+      }
+
+      const fid = stateRef.current.fileId;
+      if (!fid) return;
+      const horizontal = event.shiftKey && deltaX === 0 ? deltaY : deltaX;
+      const vertical = event.shiftKey && deltaX === 0 ? 0 : deltaY;
+      const nextPan = {
+        x: stateRef.current.pan.x - horizontal,
+        y: stateRef.current.pan.y - vertical,
+      };
+      stateRef.current = {
+        ...stateRef.current,
+        pan: nextPan,
+        view: {
+          ...stateRef.current.view,
+          panX: nextPan.x,
+          panY: nextPan.y,
+          isFit: false,
+        },
+      };
+      setFilePan(fid, nextPan.x, nextPan.y);
     },
-    [applyZoom]
+    [applyZoom, ch, cw, setFilePan]
   );
 
   const onDragEnd = useCallback(
@@ -185,7 +239,18 @@ export function usePanZoom(args: UsePanZoomArgs) {
       if (!stage || e.target !== stage) return;
       const fid = stateRef.current.fileId;
       if (!fid) return;
-      setFilePan(fid, stage.x(), stage.y());
+      const nextPan = { x: stage.x(), y: stage.y() };
+      stateRef.current = {
+        ...stateRef.current,
+        pan: nextPan,
+        view: {
+          ...stateRef.current.view,
+          panX: nextPan.x,
+          panY: nextPan.y,
+          isFit: false,
+        },
+      };
+      setFilePan(fid, nextPan.x, nextPan.y);
     },
     [setFilePan]
   );

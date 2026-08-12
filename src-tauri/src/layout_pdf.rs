@@ -591,7 +591,7 @@ pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<Layou
     let loaded_font = load_cjk_font(&chars)?;
     push_missing_char_warning(&loaded_font, &mut warnings);
 
-    let mut doc = PdfDocument::new("Xcvt reading export");
+    let mut doc = PdfDocument::new("Carpo reading export");
     let font_id = doc.add_font(&loaded_font.font);
     let font_scale = req.options.font_scale.clamp(0.5, 2.0);
     let margin_scale = req.options.margin_scale.clamp(0.5, 2.0);
@@ -1081,8 +1081,8 @@ fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<Pa
 
 fn collect_item_chars(items: &[ReadingItem]) -> BTreeSet<char> {
     let mut chars: BTreeSet<char> = xcvt_core::tr!(
-        "Xcvt源文件第页〔〕［］图表格未嵌入",
-        "Xcvt[]:Source page image table not embedded"
+        "Carpo源文件第页〔〕［］图表格未嵌入",
+        "Carpo[]:Source page image table not embedded"
     )
     .chars()
     .collect();
