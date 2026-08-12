@@ -4,7 +4,7 @@ use ::image::DynamicImage;
 
 use crate::error::{AppError, AppResult};
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "bmp", "pdf"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "bmp", "dng", "pdf"];
 
 pub fn supported_extensions() -> &'static [&'static str] {
     SUPPORTED_EXTENSIONS
@@ -26,6 +26,14 @@ pub fn load_from_disk(path: &Path) -> AppResult<DynamicImage> {
         return Err(AppError::Image("unsupported format".to_string()));
     }
 
+    // DNG is a TIFF container, so `image::open` would happily open one and hand
+    // back whichever sub-image the tiff decoder lands on — usually the raw CFA
+    // mosaic, which renders as a green grid. Route it to the preview extractor
+    // before the extension reaches the generic decoder.
+    if has_extension(path, "dng") {
+        return crate::dng::load_preview(path);
+    }
+
     ::image::open(path).map_err(|e| AppError::Image(format!("{}: {e}", path.display())))
 }
 
@@ -37,6 +45,12 @@ fn is_supported_extension(path: &Path) -> bool {
             SUPPORTED_EXTENSIONS.contains(&ext.as_str())
         })
         .unwrap_or(false)
+}
+
+fn has_extension(path: &Path, want: &str) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(want))
 }
 
 #[cfg(test)]

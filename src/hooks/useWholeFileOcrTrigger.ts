@@ -91,7 +91,13 @@ export function useWholeFileOcrTrigger() {
 
   const showRange = !!file && file.kind === "pdf" && totalPages > 1;
 
-  const ready = !!file && pageCount > 0 && rangeState.error === null;
+  // `!file.loadError`: an unreadable file still occupies a queue slot so its
+  // failure is visible, but it has no decodable page — the job runner reloads
+  // through the same `load_from_disk` that already refused it. The grouped
+  // trigger needs no equivalent guard: it requires drawn blocks, and there is
+  // nothing to draw on.
+  const ready =
+    !!file && !file.loadError && pageCount > 0 && rangeState.error === null;
 
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);

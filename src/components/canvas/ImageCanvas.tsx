@@ -137,6 +137,15 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
     const isReady = !!image && status === "loaded" && cw > 0 && ch > 0;
     const showEmpty = !file;
+    // A file is open but there is no bitmap to draw. Two ways to get here:
+    // the backend refused the file at import and said why (`loadError`), or we
+    // hold an object URL the webview then failed to decode — a revoked one, or
+    // a bitmap too large for it. Without this the canvas just renders nothing
+    // and looks identical to "still loading", which is how a dead objectUrl
+    // used to go unnoticed indefinitely.
+    const loadErrorText = file?.loadError ?? null;
+    const showLoadFailed =
+      !!file && (!!loadErrorText || (!!payload?.objectUrl && status === "failed"));
 
     const blockRefs = useRef<Record<string, KRect>>({});
     const transformerRef = useRef<KTransformer>(null);
@@ -507,7 +516,19 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
             style={{ cursor: manualDrawMode ? "crosshair" : undefined }}
           >
             <Layer listening={false}>
-              {isReady && <KImage image={image} />}
+              {/* Sized from the payload, not the bitmap's intrinsic size: the
+                  backend clamps very large previews (see
+                  `pdf::clamp_preview_dimensions`) while still reporting native
+                  dimensions, because block rects are stored in native pixel
+                  coordinates. Letting Konva infer the size would shrink the
+                  image out from under every saved block. */}
+              {isReady && (
+                <KImage
+                  image={image}
+                  width={payload?.width ?? image.width}
+                  height={payload?.height ?? image.height}
+                />
+              )}
             </Layer>
             <Layer>
               {blocks.map((block) => (
@@ -686,6 +707,25 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               <ImageOff className="h-9 w-9 opacity-60" strokeWidth={1.4} />
               <div className="text-sm">{t("canvas.dropHint")}</div>
               <div className="font-mono text-xs">{t("canvas.formats")}</div>
+            </div>
+          </div>
+        )}
+
+        {showLoadFailed && (
+          <div
+            className="pointer-events-none absolute inset-0 grid place-items-center"
+            role="alert"
+          >
+            <div className="flex max-w-md flex-col items-center gap-3 px-8 text-center text-foreground-subtle">
+              <ImageOff className="h-9 w-9 opacity-60" strokeWidth={1.4} />
+              <div className="text-sm">{t("canvas.previewFailed")}</div>
+              {/* The backend's own wording. For a DNG this is the sentence that
+                  tells the user what to re-export, so it is worth the space. */}
+              {loadErrorText && (
+                <div className="text-xs leading-relaxed opacity-80">
+                  {loadErrorText}
+                </div>
+              )}
             </div>
           </div>
         )}
