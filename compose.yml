@@ -1,22 +1,22 @@
 services:
-  xcvt:
-    image: ghcr.io/whkdd/xcvt:latest
-    container_name: xcvt
+  carpo:
+    image: ghcr.io/whkdd/carpo:latest
+    container_name: carpo
     restart: unless-stopped
     ports:
-      - "${XCVT_HOST_PORT:-8787}:8787"
+      - "${CARPO_HOST_PORT:-8787}:8787"
     volumes:
-      - xcvt-data:/data
+      - carpo-data:/data
     environment:
-      XCVT_PORT: "8787"
-      XCVT_STATIC_DIR: /app/dist
-      XCVT_DATA_DIR: /data
-      XCVT_PDFIUM_LIBRARY_PATH: /app/libpdfium.so
+      CARPO_PORT: "8787"
+      CARPO_STATIC_DIR: /app/dist
+      CARPO_DATA_DIR: /data
+      CARPO_PDFIUM_LIBRARY_PATH: /app/libpdfium.so
       # Optional first-run seeds. Prefer entering keys in Settings after launch.
-      # XCVT_PADDLE_TOKEN: ""
-      # XCVT_OPENAI_KEY: ""
-      # XCVT_OPENROUTER_KEY: ""
-      # XCVT_OPENAI_COMPATIBLE_KEY: ""
+      # CARPO_PADDLE_TOKEN: ""
+      # CARPO_OPENAI_KEY: ""
+      # CARPO_OPENROUTER_KEY: ""
+      # CARPO_OPENAI_COMPATIBLE_KEY: ""
 
 volumes:
-  xcvt-data:
+  carpo-data:

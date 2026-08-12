@@ -11,8 +11,8 @@ use std::{
 };
 
 use axum::Router;
+use carpo_core::state::AppState as CoreState;
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use xcvt_core::state::AppState as CoreState;
 
 use crate::{app_state::ServerState, secrets_store::SecretsStore};
 
@@ -21,17 +21,17 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "xcvt_server=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "carpo_server=info,tower_http=info".into()),
         )
         .init();
 
-    let data_dir = env::var_os("XCVT_DATA_DIR")
+    let data_dir = env::var_os("CARPO_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("data"));
-    let static_dir = env::var_os("XCVT_STATIC_DIR")
+    let static_dir = env::var_os("CARPO_STATIC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("dist"));
-    let port = env::var("XCVT_PORT")
+    let port = env::var("CARPO_PORT")
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(8787);
@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("xcvt-server listening on http://{addr}");
+    tracing::info!("carpo-server listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -245,10 +245,10 @@ mod tests {
     }
 
     fn test_app() -> Option<(Router, TempDir)> {
-        let explicit_pdfium = std::env::var_os("XCVT_PDFIUM_LIBRARY_PATH").is_some();
+        let explicit_pdfium = std::env::var_os("CARPO_PDFIUM_LIBRARY_PATH").is_some();
         if !explicit_pdfium {
             let path = local_pdfium_path()?;
-            std::env::set_var("XCVT_PDFIUM_LIBRARY_PATH", path);
+            std::env::set_var("CARPO_PDFIUM_LIBRARY_PATH", path);
         }
 
         let data_dir = tempfile::tempdir().unwrap();
@@ -311,7 +311,7 @@ mod tests {
     }
 
     async fn upload_pdf_bytes(app: Router, filename: &str, bytes: &[u8]) -> Value {
-        const BOUNDARY: &str = "xcvt-test-boundary";
+        const BOUNDARY: &str = "carpo-test-boundary";
         let mut body = Vec::new();
         body.extend_from_slice(
             format!(

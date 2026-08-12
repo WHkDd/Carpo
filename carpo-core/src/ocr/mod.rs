@@ -162,7 +162,7 @@ pub async fn recognize(
 ///     PP-OCRv5 / PP-StructureV3 payloads have different fields.
 /// (b) The non-VL models are tuned for clean horizontal documents and perform
 ///     poorly on near-modern Chinese newspaper layouts (vertical / mixed /
-///     irregular columns) — the only workload xcvt is built for.
+///     irregular columns) — the only workload Carpo is built for.
 /// If a future workflow needs a non-VL model, gate it behind a per-model
 /// payload builder rather than just adding the id to this list.
 pub const PADDLE_MODELS: &[&str] = &["PaddleOCR-VL-1.6", "PaddleOCR-VL"];

@@ -7,13 +7,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use xcvt_core::{
+use carpo_core::{
     error::AppError,
     jobs::grouped::FileKind,
     pdf::{clamp_preview_dimensions, encode_preview_jpeg},
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{app_state::ServerState, error::ServerResult};
 
@@ -72,7 +72,7 @@ pub async fn raster(
         return Err(AppError::Image("file is not a raster image".into()).into());
     }
     let path: PathBuf = record.path;
-    let img = tokio::task::spawn_blocking(move || xcvt_core::image::load_from_disk(&path))
+    let img = tokio::task::spawn_blocking(move || carpo_core::image::load_from_disk(&path))
         .await
         .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
     let width = img.width();

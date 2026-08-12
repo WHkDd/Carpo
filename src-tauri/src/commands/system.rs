@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tauri::Manager;
 
-use xcvt_core::error::{AppError, AppResult};
+use carpo_core::error::{AppError, AppResult};
 
 /// Reveal the app log directory in the OS file manager.
 ///

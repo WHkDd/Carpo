@@ -3,9 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use xcvt_core::{
+use carpo_core::{
     config::{self, NonSecretSettings},
     error::AppError,
     jobs::{
@@ -16,6 +14,8 @@ use xcvt_core::{
     ocr,
     secrets::SecretProvider,
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{app_state::ServerState, error::ServerResult};
 
@@ -71,9 +71,9 @@ pub async fn start_grouped_ocr(
         newspaper_name: req.newspaper_name,
         newspaper_date: req.newspaper_date,
     };
-    xcvt_core::jobs::grouped::validate(&req)?;
+    carpo_core::jobs::grouped::validate(&req)?;
     let (id, token) = state.core.jobs.register(JobKind::GroupedOcr);
-    xcvt_core::jobs::grouped::spawn_with_settings(state.core.clone(), req, id, token, settings);
+    carpo_core::jobs::grouped::spawn_with_settings(state.core.clone(), req, id, token, settings);
     Ok(Json(JobStarted {
         job_id: id.to_string(),
     }))
@@ -94,9 +94,9 @@ pub async fn start_whole_file_ocr(
         newspaper_date: req.newspaper_date,
     };
     let settings = config::load(&state.data_dir)?;
-    xcvt_core::jobs::whole_file::validate(&req, &settings)?;
+    carpo_core::jobs::whole_file::validate(&req, &settings)?;
     let (id, token) = state.core.jobs.register(JobKind::WholeFile);
-    xcvt_core::jobs::whole_file::spawn(state.core.clone(), req, id, token);
+    carpo_core::jobs::whole_file::spawn(state.core.clone(), req, id, token);
     Ok(Json(JobStarted {
         job_id: id.to_string(),
     }))
@@ -112,7 +112,7 @@ pub async fn list_provider_models(
         _ => {
             state
                 .secrets
-                .get(xcvt_core::jobs::grouped::secret_key_for_provider(
+                .get(carpo_core::jobs::grouped::secret_key_for_provider(
                     settings.provider,
                 ))
                 .await?

@@ -4,15 +4,18 @@ use std::{
     sync::Mutex,
 };
 
+use carpo_core::image::supported_extensions;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
-use xcvt_core::image::supported_extensions;
 
-pub const OPEN_PATHS_AVAILABLE: &str = "xcvt://desktop/open-paths-available";
-pub const MENU_OPEN_FILES: &str = "xcvt://desktop/menu-open-files";
-pub const MENU_IMPORT_PADDLE_JSON: &str = "xcvt://desktop/menu-import-paddle-json";
-pub const MENU_SETTINGS: &str = "xcvt://desktop/menu-settings";
-pub const NOTIFICATION_OPEN_FILE: &str = "xcvt://desktop/notification-open-file";
+pub const OPEN_PATHS_AVAILABLE: &str = "carpo://desktop/open-paths-available";
+#[cfg(target_os = "macos")]
+pub const MENU_OPEN_FILES: &str = "carpo://desktop/menu-open-files";
+#[cfg(target_os = "macos")]
+pub const MENU_IMPORT_PADDLE_JSON: &str = "carpo://desktop/menu-import-paddle-json";
+#[cfg(target_os = "macos")]
+pub const MENU_SETTINGS: &str = "carpo://desktop/menu-settings";
+pub const NOTIFICATION_OPEN_FILE: &str = "carpo://desktop/notification-open-file";
 
 #[derive(Default)]
 pub struct DesktopState {
@@ -153,7 +156,7 @@ pub async fn notify_ocr_result(
 }
 
 fn cancel_active_jobs<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(state) = app.try_state::<std::sync::Arc<xcvt_core::state::AppState>>() {
+    if let Some(state) = app.try_state::<std::sync::Arc<carpo_core::state::AppState>>() {
         for entry in state.jobs.list() {
             if let Ok(uuid) = uuid::Uuid::parse_str(&entry.job_id) {
                 state.jobs.cancel(uuid);
@@ -206,16 +209,21 @@ pub fn native_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu:
                 }
             }
         }
-        let settings =
-            MenuItem::with_id(app, "xcvt-settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        let settings = MenuItem::with_id(
+            app,
+            "carpo-settings",
+            "Settings…",
+            true,
+            Some("CmdOrCtrl+,"),
+        )?;
         app_menu.insert(&settings, 1)?;
     }
 
     if let Some(MenuItemKind::Submenu(file_menu)) = top_level.get(1) {
-        let open = MenuItem::with_id(app, "xcvt-open-files", "Open…", true, Some("CmdOrCtrl+O"))?;
+        let open = MenuItem::with_id(app, "carpo-open-files", "Open…", true, Some("CmdOrCtrl+O"))?;
         let import_json = MenuItem::with_id(
             app,
-            "xcvt-import-paddle-json",
+            "carpo-import-paddle-json",
             "Import Paddle JSON…",
             true,
             None::<&str>,
@@ -230,9 +238,9 @@ pub fn native_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu:
 #[cfg(target_os = "macos")]
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
     let event_name = match event.id().as_ref() {
-        "xcvt-open-files" => Some(MENU_OPEN_FILES),
-        "xcvt-import-paddle-json" => Some(MENU_IMPORT_PADDLE_JSON),
-        "xcvt-settings" => Some(MENU_SETTINGS),
+        "carpo-open-files" => Some(MENU_OPEN_FILES),
+        "carpo-import-paddle-json" => Some(MENU_IMPORT_PADDLE_JSON),
+        "carpo-settings" => Some(MENU_SETTINGS),
         _ => None,
     };
     if let Some(event_name) = event_name {
@@ -245,7 +253,7 @@ mod tests {
     use std::{collections::BTreeSet, path::Path};
 
     use super::collect_open_paths;
-    use xcvt_core::image::supported_extensions;
+    use carpo_core::image::supported_extensions;
 
     #[test]
     fn bundle_file_associations_match_the_import_allowlist() {

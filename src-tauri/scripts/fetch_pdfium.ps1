@@ -10,12 +10,12 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $tauriDir = Split-Path -Parent $scriptDir
 $pdfiumDir = Join-Path $tauriDir "pdfium"
 $version = (Get-Content (Join-Path $pdfiumDir "VERSION") -Raw).Trim()
-$cacheRoot = if ($env:XCVT_PDFIUM_CACHE_DIR) {
-  $env:XCVT_PDFIUM_CACHE_DIR
+$cacheRoot = if ($env:CARPO_PDFIUM_CACHE_DIR) {
+  $env:CARPO_PDFIUM_CACHE_DIR
 } elseif ($env:LOCALAPPDATA) {
-  Join-Path $env:LOCALAPPDATA "xcvt\pdfium"
+  Join-Path $env:LOCALAPPDATA "carpo\pdfium"
 } else {
-  Join-Path $HOME ".cache\xcvt\pdfium"
+  Join-Path $HOME ".cache\carpo\pdfium"
 }
 
 switch ($Arch) {

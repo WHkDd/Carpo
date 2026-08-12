@@ -1,8 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
+use carpo_core::{error::AppResult, state::AppState};
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Response, State};
-use xcvt_core::{error::AppResult, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct PdfInfo {

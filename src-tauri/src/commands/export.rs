@@ -2,7 +2,7 @@
 
 use tauri::async_runtime;
 
-use xcvt_core::error::{AppError, AppResult};
+use carpo_core::error::{AppError, AppResult};
 
 use crate::layout_pdf::{
     self, LayoutPdfExportRequest, LayoutPdfExportResult, ReadingMarkdownExportResult,
