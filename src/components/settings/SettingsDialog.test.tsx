@@ -16,11 +16,16 @@ vi.mock("@/lib/tauri", () => ({
 }));
 
 const setCommitted = vi.fn();
+const mergeCredentialPresence = vi.fn();
 const committed = { ...DEFAULT_SETTINGS, language: "zh" as const };
 
 vi.mock("@/store", () => ({
   useStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({ settings: committed, setSettings: setCommitted }),
+    selector({
+      settings: committed,
+      setSettings: setCommitted,
+      mergeCredentialPresence,
+    }),
 }));
 
 describe("SettingsDialog language selection", () => {
@@ -39,7 +44,7 @@ describe("SettingsDialog language selection", () => {
   it("previews the picked language and saves it with the settings", async () => {
     render(<SettingsDialog open onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "语言 / Language" }));
+    fireEvent.click(screen.getByRole("tab", { name: "语言 / Language" }));
     fireEvent.change(screen.getByLabelText("界面语言"), {
       target: { value: "en" },
     });
@@ -65,7 +70,7 @@ describe("SettingsDialog language selection", () => {
     const onClose = vi.fn();
     render(<SettingsDialog open onClose={onClose} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "语言 / Language" }));
+    fireEvent.click(screen.getByRole("tab", { name: "语言 / Language" }));
     fireEvent.change(screen.getByLabelText("界面语言"), {
       target: { value: "en" },
     });

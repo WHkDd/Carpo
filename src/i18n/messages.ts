@@ -172,6 +172,8 @@ export const zh = {
   "article.deselectAll": "取消全选",
   "article.clearAll": "全清",
   "article.empty": "尚未标记报道",
+  "article.editTitle": "编辑标题",
+  "article.removeNamed": "删除报道「{title}」",
 
   "metadata.newspaperName": "报刊名",
   "metadata.date": "日期",
@@ -182,6 +184,7 @@ export const zh = {
   "canvas.deleteConfirmTitle": "删除选中的版块？",
   "canvas.deleteConfirmBody": "将删除 {count} 个版块。此操作不会删除原始图像。",
   "canvas.dropHint": "将扫描件拖入此处，或使用顶栏「添加文件」",
+  "canvas.dropTarget": "松开以导入",
   "canvas.formats": "支持 PDF · PNG · JPG · TIFF · BMP · DNG(iPhone)",
   "canvas.previewFailed": "预览加载失败，切换文件或重新导入可重试",
 
@@ -250,6 +253,10 @@ export const zh = {
   "import.uploadingMany": "正在上传 {count} 个文件",
   "import.uploadFailed": "上传失败 · {name}",
   "import.renderFailed": "渲染失败 · 第 {page} 页",
+  "import.rejectedSome": "已跳过 {count} 个不支持的文件（{ext}）",
+  "import.rejectedAll": "不支持的文件格式（{ext}），未导入",
+  "import.noExtension": "无扩展名",
+  "import.clipboardFailed": "剪贴板导入失败：{message}",
 
   "runtime.logDirDesktopOnly": "日志目录只在桌面版可用",
   "runtime.paddleJsonDesktopOnly": "Paddle JSON 导入只在桌面版可用",
@@ -269,6 +276,11 @@ export const zh = {
   "job.recognizeFailed": "[识别失败：{message}]",
   "job.notRecognized": "[未识别]",
   "job.noResultReturned": "未返回识别结果",
+
+  "notification.doneTitle": "OCR 识别完成",
+  "notification.doneBody": "「{name}」的识别结果已就绪。",
+  "notification.failedTitle": "OCR 识别失败",
+  "notification.failedBody": "「{name}」未能完成识别。",
 
   "doc.untitledArticle": "（无标题）",
 
@@ -473,6 +485,8 @@ export const en: Record<MessageKey, string> = {
   "article.deselectAll": "Deselect all",
   "article.clearAll": "Clear all",
   "article.empty": "No articles marked yet",
+  "article.editTitle": "Edit title",
+  "article.removeNamed": "Remove article “{title}”",
 
   "metadata.newspaperName": "Newspaper",
   "metadata.date": "Date",
@@ -484,6 +498,7 @@ export const en: Record<MessageKey, string> = {
   "canvas.deleteConfirmBody":
     "{count} blocks will be deleted. The source image is left untouched.",
   "canvas.dropHint": "Drop scans here, or use “Add files” in the sidebar",
+  "canvas.dropTarget": "Release to import",
   "canvas.formats": "Supports PDF · PNG · JPG · TIFF · BMP · DNG (iPhone)",
   "canvas.previewFailed":
     "The preview could not be loaded — switch files or re-import to retry",
@@ -555,6 +570,10 @@ export const en: Record<MessageKey, string> = {
   "import.uploadingMany": "Uploading {count} files",
   "import.uploadFailed": "Upload failed · {name}",
   "import.renderFailed": "Render failed · page {page}",
+  "import.rejectedSome": "Skipped {count} unsupported file(s) ({ext})",
+  "import.rejectedAll": "Unsupported file format ({ext}) — nothing imported",
+  "import.noExtension": "no extension",
+  "import.clipboardFailed": "Clipboard import failed: {message}",
 
   "runtime.logDirDesktopOnly": "The log directory is only available in the desktop app",
   "runtime.paddleJsonDesktopOnly":
@@ -579,6 +598,11 @@ export const en: Record<MessageKey, string> = {
   "job.recognizeFailed": "[OCR failed: {message}]",
   "job.notRecognized": "[not recognized]",
   "job.noResultReturned": "No OCR result returned",
+
+  "notification.doneTitle": "OCR complete",
+  "notification.doneBody": "Results for “{name}” are ready.",
+  "notification.failedTitle": "OCR failed",
+  "notification.failedBody": "OCR could not finish for “{name}”.",
 
   "doc.untitledArticle": "(untitled)",
 

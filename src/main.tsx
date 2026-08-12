@@ -2,8 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { logError } from "./lib/runtime";
+import { applyStartupAppearance, prewarmFallbackFonts } from "./lib/startup";
 import "katex/dist/katex.min.css";
 import "./styles/globals.css";
+
+applyStartupAppearance();
+prewarmFallbackFonts();
 
 // Forward uncaught frontend errors into the Tauri log file so post-mortem
 // debugging works without DevTools. Both handlers swallow their own failures

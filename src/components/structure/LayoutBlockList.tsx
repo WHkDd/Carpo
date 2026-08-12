@@ -74,7 +74,7 @@ export function LayoutBlockList({ fileId, page, layout }: LayoutBlockListProps) 
   }, [layout]);
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border/40 bg-background px-2.5 py-2">
+    <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-border/40 bg-background px-2.5 py-2">
       <p className="mb-2 px-0.5 text-[10px] text-foreground-muted">
         {t("blocks.hint")}
       </p>

@@ -214,7 +214,7 @@ export function ProgressPill() {
                     ? t("progress.cancelling")
                     : t("progress.cancel")
                 }
-                className="grid h-5 w-5 shrink-0 place-items-center rounded text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="grid h-5 w-5 shrink-0 place-items-center rounded text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay disabled:cursor-default disabled:opacity-50"
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.8} />
               </button>

@@ -112,6 +112,26 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* App chrome should not acquire blue text selections when dragged. Editing
+   * controls and OCR output opt back into selection and the native copy menu. */
+  .app-chrome {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .app-chrome input,
+  .app-chrome textarea,
+  .app-chrome [contenteditable="true"],
+  .app-chrome [data-native-context-menu] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .app-chrome :where(button, a, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--ring)) !important;
+    outline-offset: -2px;
+  }
+
   /* Tabular numbers everywhere counts matter */
   .tabular-nums,
   kbd,

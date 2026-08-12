@@ -4,6 +4,7 @@ import { appErrorMessage } from "@/lib/ipc-types";
 import { isTauriRuntime, logError } from "@/lib/runtime";
 import {
   getPdfInfo,
+  importClipboardImage,
   listSupportedExtensions,
   loadRasterImage,
   renderPage,
@@ -30,6 +31,20 @@ function classify(ext: string): FileKind {
   return ext === "pdf" ? "pdf" : "image";
 }
 
+export function partitionBySupportedExtension<T>(
+  items: T[],
+  nameOf: (item: T) => string,
+  supported: string[]
+): { accepted: T[]; rejected: T[] } {
+  const supportedSet = new Set(supported.map((ext) => ext.toLowerCase()));
+  const accepted: T[] = [];
+  const rejected: T[] = [];
+  for (const item of items) {
+    (supportedSet.has(extensionOf(nameOf(item))) ? accepted : rejected).push(item);
+  }
+  return { accepted, rejected };
+}
+
 function makeId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -37,9 +52,24 @@ function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Explains what was thrown away, so a drop that half-worked doesn't look
+ *  like a drop that silently half-failed. Names the first rejected extension
+ *  because in practice a mixed drop is one stray format, not five. */
+function rejectionMessage(rejected: string[], acceptedCount: number): string {
+  const ext = extensionOf(rejected[0]!);
+  const params = {
+    count: rejected.length,
+    ext: ext.length > 0 ? `.${ext}` : t("import.noExtension"),
+  };
+  return acceptedCount > 0
+    ? t("import.rejectedSome", params)
+    : t("import.rejectedAll", params);
+}
+
 export function useFileImport() {
   const addFile = useStore((s) => s.addFile);
   const setStatusText = useStore((s) => s.setStatusText);
+  const setDropTargetActive = useStore((s) => s.setDropTargetActive);
   const cache = usePageBitmapCacheContext();
 
   const supportedRef = useRef<string[] | null>(null);
@@ -55,8 +85,19 @@ export function useFileImport() {
     async (paths: string[]) => {
       if (paths.length === 0) return;
       const supported = await getSupported();
-      const accepted = paths.filter((p) => supported.includes(extensionOf(p)));
-      if (accepted.length === 0) return;
+      const { accepted, rejected } = partitionBySupportedExtension(
+        paths,
+        (path) => path,
+        supported
+      );
+      // Filtering used to be silent in both directions: drop five files with
+      // two `.docx` among them and three appeared with no explanation for the
+      // rest; drop only unsupported files and absolutely nothing happened,
+      // which reads as a frozen app.
+      if (accepted.length === 0) {
+        if (rejected.length > 0) setStatusText(rejectionMessage(rejected, 0));
+        return;
+      }
 
       setStatusText(
         accepted.length === 1
@@ -153,7 +194,11 @@ export function useFileImport() {
         };
       }
 
-      if (okCount > 0) {
+      // Rejections outrank the success line: the successes are visible in the
+      // queue, the rejections are only visible here.
+      if (rejected.length > 0) {
+        setStatusText(rejectionMessage(rejected, accepted.length));
+      } else if (okCount > 0) {
         setStatusText(
           okCount === 1
             ? t("common.ready")
@@ -168,10 +213,17 @@ export function useFileImport() {
     async (files: File[]) => {
       if (files.length === 0) return;
       const supported = await getSupported();
-      const accepted = files.filter((file) =>
-        supported.includes(extensionOf(file.name))
+      const { accepted, rejected } = partitionBySupportedExtension(
+        files,
+        (file) => file.name,
+        supported
       );
-      if (accepted.length === 0) return;
+      if (accepted.length === 0) {
+        if (rejected.length > 0) {
+          setStatusText(rejectionMessage(rejected.map((file) => file.name), 0));
+        }
+        return;
+      }
 
       setStatusText(
         accepted.length === 1
@@ -276,7 +328,14 @@ export function useFileImport() {
         };
       }
 
-      if (okCount > 0) {
+      if (rejected.length > 0) {
+        setStatusText(
+          rejectionMessage(
+            rejected.map((file) => file.name),
+            accepted.length
+          )
+        );
+      } else if (okCount > 0) {
         setStatusText(
           okCount === 1
             ? t("common.ready")
@@ -315,23 +374,78 @@ export function useFileImport() {
     await importPaths(paths);
   }, [getSupported, importFiles, importPaths]);
 
+  // Guards against a second paste starting while the first is still writing
+  // its PNG. Independent pastes are meant to produce independent queue items,
+  // so this only collapses the overlapping case (key repeat, double-tap).
+  const pastingRef = useRef(false);
+
+  const pasteClipboardImage = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    if (pastingRef.current) return;
+    pastingRef.current = true;
+    try {
+      const imported = await importClipboardImage();
+      // No image on the clipboard — the common case for ⌘V. Stay silent.
+      if (!imported) return;
+      // Straight into the normal path-import chain: preview caching, entry
+      // construction and error handling all stay in one place, and the OCR
+      // pipeline gets a real file to re-read.
+      await importPaths([imported.path]);
+    } catch (err) {
+      const message = appErrorMessage(err);
+      void logError(`clipboard image import failed: ${message}`);
+      setStatusText(t("import.clipboardFailed", { message }));
+    } finally {
+      pastingRef.current = false;
+    }
+  }, [importPaths, setStatusText]);
+
   useEffect(() => {
     if (!isTauriRuntime()) {
+      let dragDepth = 0;
+      const onDragEnter = (event: DragEvent) => {
+        if (!event.dataTransfer?.types.includes("Files")) return;
+        event.preventDefault();
+        dragDepth += 1;
+        setDropTargetActive(true);
+      };
       const onDragOver = (event: DragEvent) => {
         if (event.dataTransfer?.types.includes("Files")) {
           event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      };
+      const onDragLeave = (event: DragEvent) => {
+        if (!event.dataTransfer?.types.includes("Files")) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0 || event.relatedTarget === null) {
+          dragDepth = 0;
+          setDropTargetActive(false);
         }
       };
       const onDrop = (event: DragEvent) => {
         if (!event.dataTransfer?.files.length) return;
         event.preventDefault();
+        dragDepth = 0;
+        setDropTargetActive(false);
         void importFiles(Array.from(event.dataTransfer.files));
       };
+      const clearDragState = () => {
+        dragDepth = 0;
+        setDropTargetActive(false);
+      };
+      window.addEventListener("dragenter", onDragEnter);
       window.addEventListener("dragover", onDragOver);
+      window.addEventListener("dragleave", onDragLeave);
       window.addEventListener("drop", onDrop);
+      window.addEventListener("blur", clearDragState);
       return () => {
+        window.removeEventListener("dragenter", onDragEnter);
         window.removeEventListener("dragover", onDragOver);
+        window.removeEventListener("dragleave", onDragLeave);
         window.removeEventListener("drop", onDrop);
+        window.removeEventListener("blur", clearDragState);
+        clearDragState();
       };
     }
 
@@ -341,8 +455,23 @@ export function useFileImport() {
     (async () => {
       const { getCurrentWebview } = await import("@tauri-apps/api/webview");
       const fn = await getCurrentWebview().onDragDropEvent((event) => {
-        if (event.payload.type === "drop") {
-          void importPaths(event.payload.paths);
+        switch (event.payload.type) {
+          case "enter":
+          case "over":
+            setDropTargetActive(true);
+            break;
+          case "drop":
+            // Clear unconditionally and *before* the await: if the import
+            // throws, the overlay must still come down.
+            setDropTargetActive(false);
+            void importPaths(event.payload.paths);
+            break;
+          default:
+            // "leave" — and the same event fires when the pointer exits the
+            // window entirely, which is the path that would otherwise leave
+            // the overlay stuck on screen forever.
+            setDropTargetActive(false);
+            break;
         }
       });
       if (cancelled) {
@@ -354,12 +483,13 @@ export function useFileImport() {
 
     return () => {
       cancelled = true;
+      setDropTargetActive(false);
       if (unlisten) unlisten();
     };
-  }, [importFiles, importPaths]);
+  }, [importFiles, importPaths, setDropTargetActive]);
 
   return useMemo(
-    () => ({ openFiles, importPaths, importFiles }),
-    [openFiles, importPaths, importFiles]
+    () => ({ openFiles, importPaths, importFiles, pasteClipboardImage }),
+    [openFiles, importPaths, importFiles, pasteClipboardImage]
   );
 }

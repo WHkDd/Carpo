@@ -210,6 +210,7 @@ function useBulkOcrText() {
   const getLayoutDocument = useCallback(() => layoutDocument, [layoutDocument]);
 
   return {
+    fileId,
     getBulkText,
     getLayoutDocument,
     fileLabel: fileEntry?.name ?? translate("common.untitledFile"),
@@ -278,7 +279,13 @@ export function OcrBulkActions() {
     } catch (e) {
       setSaveError(t("ocr.saveFailed", { message: appErrorMessage(e) }));
     }
-  }, [getBulkText, fileLabel, recognitionMode, showSavedTip, t]);
+  }, [
+    getBulkText,
+    fileLabel,
+    recognitionMode,
+    showSavedTip,
+    t,
+  ]);
 
   const onExportLayoutPdf = useCallback(async () => {
     const document = getLayoutDocument();
@@ -304,7 +311,12 @@ export function OcrBulkActions() {
     } finally {
       setExportingLayoutPdf(false);
     }
-  }, [getLayoutDocument, fileLabel, showSavedTip, t]);
+  }, [
+    getLayoutDocument,
+    fileLabel,
+    showSavedTip,
+    t,
+  ]);
 
   if (!hasFile) return null;
 
@@ -694,11 +706,14 @@ export function OcrTextPanel() {
                 scheduleWriteBack(e.target.value);
               }}
               spellCheck={false}
-              className="min-h-0 flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-foreground outline-none focus:border-border-strong"
+              className="min-h-0 flex-1 resize-none overscroll-contain rounded-md border border-border/40 bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-foreground outline-none focus:border-border-strong"
             />
           </div>
         ) : (
-          <div className="prose-ocr min-h-0 flex-1 overflow-auto rounded-md border border-border/40 bg-background px-3 py-2">
+          <div
+            className="prose-ocr min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-border/40 bg-background px-3 py-2"
+            data-native-context-menu
+          >
             {draft.length > MARKDOWN_RENDER_LIMIT_CHARS ? (
               <>
                 <div

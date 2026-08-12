@@ -1,4 +1,4 @@
-# Xcvt
+# Carpo
 
 桌面 OCR 工具，专门处理近代中文报刊扫描件以及扫描版书籍。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
@@ -37,17 +37,17 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
 
-- macOS Apple Silicon：`Xcvt_*_aarch64.dmg`
-- Windows：`Xcvt_*_x64-setup.exe` 或 `Xcvt_*_x64_en-US.msi`（Windows版本理论可用，未测试）
+- macOS Apple Silicon：`Carpo_*_aarch64.dmg`
+- Windows：`Carpo_*_x64-setup.exe` 或 `Carpo_*_x64_en-US.msi`（Windows版本理论可用，未测试）
 
 ### macOS 首次启动
 
 当前首次双击会触发 Gatekeeper 拦截。
 
-**终端命令**：把 dmg 里的 `Xcvt.app` 拖到 `/Applications`，然后运行
+**终端命令**：把 dmg 里的 `Carpo.app` 拖到 `/Applications`，然后运行
 
    ```bash
-   xattr -dr com.apple.quarantine /Applications/Xcvt.app
+   xattr -dr com.apple.quarantine /Applications/Carpo.app
    ```
 
 ### Windows 首次启动

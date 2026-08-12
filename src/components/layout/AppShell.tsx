@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
+import {
+  PaddleJsonImportDialog,
+  usePaddleJsonImportFlow,
+} from "@/components/queue/PaddleJsonImportDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
+import { useFileImport } from "@/hooks/useFileImport";
+import { useDesktopIntegration } from "@/hooks/useDesktopIntegration";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
+import { isImeCommit } from "@/lib/ime";
 import { assembleDocument } from "@/lib/format-doc";
 import { clearPendingJob, loadPendingJob } from "@/lib/job-persistence";
 import { isTauriRuntime, logWarn } from "@/lib/runtime";
+import { notifyOcrResult } from "@/lib/desktop";
 import { getJobResult, getSettings, listJobs } from "@/lib/tauri";
 import {
   appErrorMessage,
@@ -34,6 +42,13 @@ function isHotkeyTarget(target: EventTarget | null): boolean {
   return true;
 }
 
+function allowsNativeContextMenu(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return target.closest(
+    'input, textarea, [contenteditable="true"], [data-native-context-menu]'
+  ) !== null;
+}
+
 export function AppShell() {
   return (
     <PageBitmapCacheProvider>
@@ -47,6 +62,8 @@ function AppShellInner() {
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
+  const dropTargetActive = useStore((s) => s.dropTargetActive);
+  const statusText = useStore((s) => s.statusText);
   const recognitionMode = useStore((s) => s.recognitionMode);
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
@@ -59,8 +76,35 @@ function AppShellInner() {
   const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
   const setRecognizedPages = useStore((s) => s.setRecognizedPages);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+
+  // One `useFileImport` instance for the whole shell. The hook owns the
+  // drag-drop subscription and the supported-extension cache, so mounting it
+  // in more than one place would double-import every drop; the queue panel
+  // now receives `openFiles` as a prop instead of calling the hook itself.
+  const fileImport = useFileImport();
+  const { openFiles, importPaths, pasteClipboardImage } = fileImport;
+  const paddleJson = usePaddleJsonImportFlow();
+
+  useDesktopIntegration({
+    openFiles,
+    importPaths,
+    openPaddleJson: paddleJson.open,
+    openSettings,
+  });
 
   usePdfPageSync();
+
+  // WebKit's generic page menu is useful only where the user can edit or copy
+  // text. Canvas/chrome menus expose browser actions that do not belong in a
+  // desktop utility, while OCR text keeps native Copy and Look Up.
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      if (!allowsNativeContextMenu(event.target)) event.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
 
   // Hydrate persisted settings into the slice on mount. Failures are
   // non-fatal — the slice's DEFAULT_SETTINGS keep the UI usable.
@@ -111,7 +155,12 @@ function AppShellInner() {
       // current activeJob and the run wasn't cancelled. Done payloads for
       // stale or cancelled jobs are not assembled, but the slice still
       // records terminal status for the progress pill.
-      if (job && job.jobId === payload.job_id && !payload.cancelled) {
+      if (
+        job &&
+        job.jobId === payload.job_id &&
+        !payload.cancelled &&
+        useStore.getState().files.some((file) => file.id === job.fileId)
+      ) {
         if (job.kind === "grouped_ocr") {
           const grouped = payload as GroupedJobDone;
           // Build a per-article text map for the articles that were part
@@ -199,8 +248,36 @@ function AppShellInner() {
           }
           setRecognizedPages(job.fileId, perPage);
         }
+
+        const fileName =
+          useStore.getState().files.find((file) => file.id === job.fileId)?.name ??
+          t("common.untitledFile");
+        void notifyOcrResult({
+          fileId: job.fileId,
+          title: t("notification.doneTitle"),
+          body: t("notification.doneBody", { name: fileName }),
+        });
       }
       applyJobDone(payload);
+    };
+
+    const handleError = (payload: JobError) => {
+      const job = useStore.getState().activeJob;
+      if (
+        job &&
+        job.jobId === payload.job_id &&
+        useStore.getState().files.some((file) => file.id === job.fileId)
+      ) {
+        const fileName =
+          useStore.getState().files.find((file) => file.id === job.fileId)?.name ??
+          t("common.untitledFile");
+        void notifyOcrResult({
+          fileId: job.fileId,
+          title: t("notification.failedTitle"),
+          body: t("notification.failedBody", { name: fileName }),
+        });
+      }
+      applyJobError(payload);
     };
 
     // Web/Docker only: a `broadcast`-channel SSE stream never replays past
@@ -236,7 +313,7 @@ function AppShellInner() {
         if (cached.kind === "done") {
           handleDone(cached.payload as JobDone);
         } else if (cached.kind === "error") {
-          applyJobError(cached.payload as JobError);
+          handleError(cached.payload as JobError);
         }
       } catch (e) {
         void logWarn(`job reconcile failed: ${appErrorMessage(e)}`);
@@ -261,7 +338,7 @@ function AppShellInner() {
         source.addEventListener("error", (event) => {
           const data = (event as MessageEvent).data;
           if (typeof data === "string" && data.length > 0) {
-            applyJobError(JSON.parse(data) as JobError);
+            handleError(JSON.parse(data) as JobError);
           }
         });
         return;
@@ -270,7 +347,7 @@ function AppShellInner() {
       const subs = await Promise.all([
         listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => applyProgress(e.payload)),
         listen<JobDone>(EVENTS.JOB_DONE, (e) => handleDone(e.payload)),
-        listen<JobError>(EVENTS.JOB_ERROR, (e) => applyJobError(e.payload)),
+        listen<JobError>(EVENTS.JOB_ERROR, (e) => handleError(e.payload)),
       ]);
       if (cancelled) {
         subs.forEach((u) => u());
@@ -295,7 +372,24 @@ function AppShellInner() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Never act on a key that belongs to an IME composition, and never let
+      // a held-down shortcut fire once per repeat.
+      if (isImeCommit(e) || e.repeat) return;
+
       const meta = e.metaKey || e.ctrlKey;
+
+      // macOS receives Cmd+O through the native File menu. Other desktop
+      // platforms use Ctrl+O here; browser builds keep the platform-native
+      // modifier because they do not have a Tauri menu.
+      if (
+        meta &&
+        e.key.toLowerCase() === "o" &&
+        (!isTauriRuntime() || !e.metaKey)
+      ) {
+        e.preventDefault();
+        void openFiles();
+        return;
+      }
 
       // ⌘, opens settings from anywhere, even when an input is focused.
       if (meta && e.key === ",") {
@@ -305,6 +399,17 @@ function AppShellInner() {
       }
 
       if (!isHotkeyTarget(e.target)) return;
+
+      // ⌘V / Ctrl+V imports a screenshot — but only outside a text field.
+      // `isHotkeyTarget` above already excluded inputs, textareas, selects and
+      // contentEditable, so ordinary text pasting is untouched. Handled ahead
+      // of the zoom shortcuts so "v" never reaches the draw-mode toggle.
+      if (meta && e.key.toLowerCase() === "v") {
+        if (e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        void pasteClipboardImage();
+        return;
+      }
 
       if (meta) {
         const ctl = canvasRef.current;
@@ -348,12 +453,24 @@ function AppShellInner() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [prevPage, nextPage, recognitionMode, markSelectionAsArticle, toggleDrawMode]);
+  }, [
+    prevPage,
+    nextPage,
+    recognitionMode,
+    markSelectionAsArticle,
+    toggleDrawMode,
+    openFiles,
+    pasteClipboardImage,
+  ]);
 
   return (
     <>
+      {/* min-w 1180 = 244 (queue) + 620 (canvas min) + 304 (rail) + borders,
+          and matches `minWidth` in tauri.conf.json. The old 1100 sat below the
+          three-column floor, so the right rail got clipped at the smallest
+          window size the OS would allow. */}
       <main
-        className="grid h-screen min-w-[1100px] overflow-hidden bg-background text-foreground"
+        className="app-chrome grid h-screen min-w-[1180px] overflow-hidden bg-background text-foreground"
         style={{
           gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
           gridTemplateRows: "44px minmax(0,1fr)",
@@ -371,12 +488,37 @@ function AppShellInner() {
         <div className="bg-surface" data-tauri-drag-region aria-hidden />
 
         {/* Row 2: body */}
-        <QueuePanel onOpenSettings={() => setSettingsOpen(true)} />
+        <QueuePanel
+          onOpenFiles={openFiles}
+          onImportPaddleJson={paddleJson.open}
+          onOpenSettings={openSettings}
+        />
         <section className="min-h-0 min-w-0 overflow-hidden px-2 pt-2 pb-2">
           <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
             <ImageCanvas ref={canvasRef} />
+            {dropTargetActive && (
+              <div
+                className="pointer-events-none absolute inset-0 z-40 grid place-items-center border-2 border-primary/70 bg-background/75"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="rounded-md border border-border bg-background px-3 py-2 text-[13px] font-medium text-foreground shadow-sm">
+                  {t("canvas.dropTarget")}
+                </span>
+              </div>
+            )}
             <ProgressPill />
             <StatusBar canvasRef={canvasRef} />
+            {statusText !== t("common.ready") && !dropTargetActive && (
+              <div
+                className="pointer-events-none absolute bottom-[2.5px] right-2 z-20 max-w-[55%] truncate rounded-lg border border-border/60 bg-background/85 px-2.5 py-1.5 text-[11px] text-foreground-muted"
+                role="status"
+                aria-live="polite"
+                title={statusText}
+              >
+                {statusText}
+              </div>
+            )}
           </div>
         </section>
         <StructureRail />
@@ -385,6 +527,13 @@ function AppShellInner() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+      {isTauriRuntime() && (
+        <PaddleJsonImportDialog
+          open={paddleJson.path !== null}
+          path={paddleJson.path}
+          onClose={paddleJson.close}
+        />
+      )}
     </>
   );
 }

@@ -15,7 +15,15 @@ import {
   type NonSecretSettings,
   type OcrProfile as IpcOcrProfile,
   type Provider,
+  type SecretKey,
 } from "@/lib/ipc-types";
+
+/** What we know about whether a credential exists — *not* the credential.
+ *  A missing key means "never checked": the UI must stay silent rather than
+ *  claim a provider is unconfigured, because nothing has read the Keychain
+ *  yet and reading it just to decorate a menu is what used to pop a system
+ *  password prompt on an empty cold start. */
+export type CredentialPresence = Partial<Record<SecretKey, boolean>>;
 
 export type OcrProfile = IpcOcrProfile;
 
@@ -87,6 +95,11 @@ export interface SettingsSlice {
    *  M4-era `ProfileToggle` selector (`s.ocrProfile`) still works after
    *  the slice grew. New code should read `s.settings.ocr_profile`. */
   ocrProfile: OcrProfile;
+  /** Populated only by code that had a reason to touch the Keychain anyway
+   *  (the settings dialog opening, a save, a delete). Read-only decoration
+   *  for the rest of the UI — never a trigger to go query the Keychain. */
+  credentialPresence: CredentialPresence;
+  mergeCredentialPresence: (entries: CredentialPresence) => void;
 }
 
 export const createSettingsSlice: StateCreator<
@@ -104,13 +117,17 @@ export const createSettingsSlice: StateCreator<
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
   ocrProfile: DEFAULT_SETTINGS.ocr_profile,
+  credentialPresence: {},
+  mergeCredentialPresence: (entries) =>
+    set((state) => {
+      Object.assign(state.credentialPresence, entries);
+    }),
   setSettings: (next) =>
     set((state) => {
       // Always spread so the reference changes even when callers pass the same
       // object back (e.g. the settings dialog saves a secret without touching
       // any non-secret field — draft stays === committed, and without this
-      // spread immer would no-op the assignment and subscribers like the
-      // StatusBar's Keychain probe wouldn't re-fire.
+      // spread immer would no-op the assignment).
       state.settings = { ...next };
       state.settingsLoaded = true;
       state.ocrProfile = next.ocr_profile;
