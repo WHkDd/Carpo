@@ -9,8 +9,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 pub const OPEN_PATHS_AVAILABLE: &str = "carpo://desktop/open-paths-available";
+#[cfg(target_os = "macos")]
 pub const MENU_OPEN_FILES: &str = "carpo://desktop/menu-open-files";
+#[cfg(target_os = "macos")]
 pub const MENU_IMPORT_PADDLE_JSON: &str = "carpo://desktop/menu-import-paddle-json";
+#[cfg(target_os = "macos")]
 pub const MENU_SETTINGS: &str = "carpo://desktop/menu-settings";
 pub const NOTIFICATION_OPEN_FILE: &str = "carpo://desktop/notification-open-file";
 
