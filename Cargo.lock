@@ -678,6 +678,75 @@ dependencies = [
 ]
 
 [[package]]
+name = "carpo"
+version = "0.3.0"
+dependencies = [
+ "carpo-core",
+ "keyring",
+ "log",
+ "notify-rust",
+ "printpdf",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-log",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-plugin-window-state",
+ "tempfile",
+ "tokio",
+ "ttf-parser",
+ "uuid",
+]
+
+[[package]]
+name = "carpo-core"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "image",
+ "log",
+ "parking_lot",
+ "pdfium-render",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "carpo-server"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "carpo-core",
+ "futures",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6716,75 +6785,6 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
-
-[[package]]
-name = "xcvt"
-version = "0.2.14"
-dependencies = [
- "keyring",
- "log",
- "notify-rust",
- "printpdf",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-log",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-plugin-window-state",
- "tempfile",
- "tokio",
- "ttf-parser",
- "uuid",
- "xcvt-core",
-]
-
-[[package]]
-name = "xcvt-core"
-version = "0.2.14"
-dependencies = [
- "base64 0.22.1",
- "futures",
- "image",
- "log",
- "parking_lot",
- "pdfium-render",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "xcvt-server"
-version = "0.2.14"
-dependencies = [
- "anyhow",
- "axum",
- "futures",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "xcvt-core",
-]
 
 [[package]]
 name = "yoke"

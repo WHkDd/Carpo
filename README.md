@@ -35,7 +35,7 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 ## 安装
 
-正式包从 [Releases](https://github.com/WHkDd/xcvt-tauri/releases/latest) 下载：
+正式包从 [Releases](https://github.com/WHkDd/carpo/releases/latest) 下载：
 
 - macOS Apple Silicon：`Carpo_*_aarch64.dmg`
 - Windows：`Carpo_*_x64-setup.exe` 或 `Carpo_*_x64_en-US.msi`（Windows版本理论可用，未测试）
@@ -76,11 +76,11 @@ docker compose up -d
 
 ```bash
 docker run -d \
-  --name xcvt \
+  --name carpo \
   --restart unless-stopped \
   -p 8787:8787 \
-  -v xcvt-data:/data \
-  ghcr.io/whkdd/xcvt:latest
+  -v carpo-data:/data \
+  ghcr.io/whkdd/carpo:latest
 ```
 
 ## 桌面版与 Docker/Web 版功能对比

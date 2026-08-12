@@ -1,5 +1,5 @@
 //! Desktop settings persistence. The `NonSecretSettings` type and its
-//! defaults live in `xcvt-core::config` (shared with the web/Docker server);
+//! defaults live in `carpo-core::config` (shared with the web/Docker server);
 //! this module only supplies the Tauri-specific storage backend
 //! (`tauri-plugin-store`, which keeps settings in the OS app-data dir and
 //! handles atomic writes for us) so existing desktop installs don't need a
@@ -8,9 +8,9 @@
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
-pub use xcvt_core::config::NonSecretSettings;
-use xcvt_core::error::{AppError, AppResult};
-use xcvt_core::i18n;
+pub use carpo_core::config::NonSecretSettings;
+use carpo_core::error::{AppError, AppResult};
+use carpo_core::i18n;
 
 const STORE_FILE: &str = "settings.json";
 const STORE_KEY: &str = "settings";

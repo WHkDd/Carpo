@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use parking_lot::RwLock;
-use xcvt_core::{
+use carpo_core::{
     error::{AppError, AppResult},
     secrets::{SecretFuture, SecretKey, SecretProvider},
 };

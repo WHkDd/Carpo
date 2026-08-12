@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use parking_lot::Mutex;
 use uuid::Uuid;
-use xcvt_core::{jobs::grouped::FileKind, state::AppState as CoreState};
+use carpo_core::{jobs::grouped::FileKind, state::AppState as CoreState};
 
 use crate::secrets_store::SecretsStore;
 

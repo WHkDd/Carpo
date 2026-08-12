@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tauri::Manager;
 use tauri_plugin_window_state::StateFlags;
-use xcvt_core::{error::AppError, state::AppState};
+use carpo_core::{error::AppError, state::AppState};
 
 use crate::secrets::KeychainSecretProvider;
 

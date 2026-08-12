@@ -7,7 +7,7 @@ use axum::{
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
-use xcvt_core::{error::AppError, jobs::grouped::FileKind};
+use carpo_core::{error::AppError, jobs::grouped::FileKind};
 
 use crate::{
     app_state::{FileRecord, ServerState},

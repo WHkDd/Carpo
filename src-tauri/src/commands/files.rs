@@ -6,7 +6,7 @@ use tauri::ipc::Response;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use xcvt_core::{
+use carpo_core::{
     error::{AppError, AppResult},
     image::{encode_rgba_png, load_from_disk, supported_extensions},
     pdf::{clamp_preview_dimensions, encode_preview_jpeg},
@@ -163,7 +163,7 @@ fn write_atomic(target: &Path, bytes: &[u8]) -> AppResult<()> {
 
 /// Empties the clipboard-import cache on launch.
 ///
-/// Scoped to `<app cache dir>/clipboard-imports` and to the files Xcvt itself
+/// Scoped to `<app cache dir>/clipboard-imports` and to the files Carpo itself
 /// writes there. It never walks the cache dir itself and never touches a
 /// user-chosen directory — the pasted PNG lives in a cache dir precisely so
 /// that deleting it is always safe.

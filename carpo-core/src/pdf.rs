@@ -229,13 +229,13 @@ pub const MAX_DPI: u32 = 600;
 /// blocks out of the page and sends the crops, so page-level downscaling
 /// there is a real resolution loss rather than a free one.
 ///
-/// Override with `XCVT_OCR_MAX_LONG_EDGE`; `0` disables the clamp entirely.
+/// Override with `CARPO_OCR_MAX_LONG_EDGE`; `0` disables the clamp entirely.
 pub const DEFAULT_OCR_MAX_LONG_EDGE_PX: u32 = 4000;
 
 /// Reads the effective whole-page OCR long-edge cap. Returns `None` when the
-/// clamp is disabled (`XCVT_OCR_MAX_LONG_EDGE=0`).
+/// clamp is disabled (`CARPO_OCR_MAX_LONG_EDGE=0`).
 pub fn ocr_max_long_edge() -> Option<u32> {
-    let configured = env::var("XCVT_OCR_MAX_LONG_EDGE")
+    let configured = env::var("CARPO_OCR_MAX_LONG_EDGE")
         .ok()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
         .unwrap_or(DEFAULT_OCR_MAX_LONG_EDGE_PX);
@@ -339,7 +339,7 @@ fn load_document<'a>(
 fn pdfium_library_candidates() -> AppResult<Vec<PathBuf>> {
     let mut candidates = Vec::new();
 
-    if let Some(path) = env::var_os("XCVT_PDFIUM_LIBRARY_PATH") {
+    if let Some(path) = env::var_os("CARPO_PDFIUM_LIBRARY_PATH") {
         candidates.push(PathBuf::from(path));
     }
 
@@ -413,7 +413,7 @@ fn shared_pdfium_library_path() -> Option<PathBuf> {
         "libpdfium.dylib"
     };
 
-    let cache_root = env::var_os("XCVT_PDFIUM_CACHE_DIR")
+    let cache_root = env::var_os("CARPO_PDFIUM_CACHE_DIR")
         .map(PathBuf::from)
         .or_else(default_pdfium_cache_root)?;
     let version = include_str!("../pdfium/VERSION").trim().replace('/', "_");
@@ -426,18 +426,18 @@ fn default_pdfium_cache_root() -> Option<PathBuf> {
         env::var_os("HOME").map(PathBuf::from).map(|home| {
             home.join("Library")
                 .join("Caches")
-                .join("xcvt")
+                .join("carpo")
                 .join("pdfium")
         })
     } else if cfg!(target_os = "windows") {
         env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
-            .map(|local| local.join("xcvt").join("pdfium"))
+            .map(|local| local.join("carpo").join("pdfium"))
     } else if cfg!(target_os = "linux") {
         env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-            .map(|cache| cache.join("xcvt").join("pdfium"))
+            .map(|cache| cache.join("carpo").join("pdfium"))
     } else {
         None
     }
@@ -460,7 +460,7 @@ fn build_chunks_blocking(
     config: &ChunkConfig,
 ) -> AppResult<ChunkBuildOutput> {
     let temp_dir = tempfile::Builder::new()
-        .prefix("xcvt-paddle-chunks-")
+        .prefix("carpo-paddle-chunks-")
         .tempdir()
         .map_err(|e| AppError::Internal(format!("create temp chunk dir: {e}")))?;
     let manifests = pdf_chunk::build_chunks(
@@ -562,7 +562,7 @@ impl PdfWorker {
         // oneshot channel so PdfWorker::spawn surfaces init failures.
         let (init_tx, init_rx) = std::sync::mpsc::channel::<AppResult<()>>();
         std::thread::Builder::new()
-            .name("xcvt-pdfium".into())
+            .name("carpo-pdfium".into())
             .spawn(move || {
                 let pdfium = match init_pdfium() {
                     Ok(p) => {

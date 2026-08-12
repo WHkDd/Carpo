@@ -2,11 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime, logWarn } from "./runtime";
 
 export const DESKTOP_EVENTS = {
-  OPEN_PATHS_AVAILABLE: "xcvt://desktop/open-paths-available",
-  MENU_OPEN_FILES: "xcvt://desktop/menu-open-files",
-  MENU_IMPORT_PADDLE_JSON: "xcvt://desktop/menu-import-paddle-json",
-  MENU_SETTINGS: "xcvt://desktop/menu-settings",
-  NOTIFICATION_OPEN_FILE: "xcvt://desktop/notification-open-file",
+  OPEN_PATHS_AVAILABLE: "carpo://desktop/open-paths-available",
+  MENU_OPEN_FILES: "carpo://desktop/menu-open-files",
+  MENU_IMPORT_PADDLE_JSON: "carpo://desktop/menu-import-paddle-json",
+  MENU_SETTINGS: "carpo://desktop/menu-settings",
+  NOTIFICATION_OPEN_FILE: "carpo://desktop/notification-open-file",
 } as const;
 
 export interface NotificationOpenPayload {

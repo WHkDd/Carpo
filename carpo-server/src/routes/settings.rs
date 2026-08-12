@@ -4,7 +4,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use xcvt_core::{
+use carpo_core::{
     config::{self, NonSecretSettings},
     error::AppError,
     secrets::SecretKey,

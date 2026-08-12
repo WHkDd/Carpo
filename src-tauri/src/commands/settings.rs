@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime, State};
-use xcvt_core::{
+use carpo_core::{
     error::AppResult,
     secrets::{SecretKey, SecretProvider},
 };

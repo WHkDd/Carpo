@@ -25,10 +25,10 @@ impl SecretKey {
 
     pub fn env_var(self) -> &'static str {
         match self {
-            SecretKey::PaddleToken => "XCVT_PADDLE_TOKEN",
-            SecretKey::OpenaiKey => "XCVT_OPENAI_KEY",
-            SecretKey::OpenrouterKey => "XCVT_OPENROUTER_KEY",
-            SecretKey::OpenaiCompatibleKey => "XCVT_OPENAI_COMPATIBLE_KEY",
+            SecretKey::PaddleToken => "CARPO_PADDLE_TOKEN",
+            SecretKey::OpenaiKey => "CARPO_OPENAI_KEY",
+            SecretKey::OpenrouterKey => "CARPO_OPENROUTER_KEY",
+            SecretKey::OpenaiCompatibleKey => "CARPO_OPENAI_COMPATIBLE_KEY",
         }
     }
 }

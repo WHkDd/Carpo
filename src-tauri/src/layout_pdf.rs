@@ -34,7 +34,7 @@ use printpdf::{
 use serde::{Deserialize, Serialize};
 use ttf_parser::Face;
 
-use xcvt_core::{
+use carpo_core::{
     error::{AppError, AppResult},
     ocr::paddle_json::{LayoutBlock, LayoutDocument, LayoutPage},
 };
@@ -227,7 +227,7 @@ fn ordered_blocks(page: &LayoutPage) -> Vec<&LayoutBlock> {
 /// contents entries and cover noise, which made anchors jump or repeat. Source
 /// page indices are less pretty but reliable for citation back to the PDF.
 fn page_anchor_label(page: &LayoutPage) -> String {
-    xcvt_core::trf!("源文件第 {} 页", "Source page {}", page.index)
+    carpo_core::trf!("源文件第 {} 页", "Source page {}", page.index)
 }
 
 /// Strip leading Markdown heading/quote markers (`#`, `>`) and a single layer of
@@ -342,7 +342,7 @@ fn build_reading_items(
                 BlockRole::Table => {
                     if cleaned.is_empty() {
                         empty_table_notice = true;
-                        xcvt_core::tr!("［表格］", "[table]").to_string()
+                        carpo_core::tr!("［表格］", "[table]").to_string()
                     } else {
                         cleaned
                     }
@@ -374,7 +374,7 @@ fn build_reading_items(
     if image_notice {
         if options.include_images {
             warnings.push(
-                xcvt_core::tr!(
+                        carpo_core::tr!(
                     "图片内嵌尚未实现，图片区块已用占位说明表示",
                     "Embedding images is not implemented yet — image blocks are shown as placeholders"
                 )
@@ -382,7 +382,7 @@ fn build_reading_items(
             );
         } else {
             warnings.push(
-                xcvt_core::tr!(
+                        carpo_core::tr!(
                     "图片区块未嵌入，已用占位说明表示",
                     "Image blocks were not embedded — they are shown as placeholders"
                 )
@@ -392,7 +392,7 @@ fn build_reading_items(
     }
     if empty_table_notice {
         warnings.push(
-            xcvt_core::tr!(
+            carpo_core::tr!(
                 "部分表格无文本内容，已用占位说明表示",
                 "Some tables carry no text — they are shown as placeholders"
             )
@@ -400,14 +400,14 @@ fn build_reading_items(
         );
     }
     if inferred_furniture_count > 0 {
-        warnings.push(xcvt_core::trf!(
+        warnings.push(carpo_core::trf!(
             "已过滤 {} 个重复页眉/页脚块",
             "Filtered out {} repeated header/footer blocks",
             inferred_furniture_count
         ));
     }
     if scanner_artifact_count > 0 {
-        warnings.push(xcvt_core::trf!(
+        warnings.push(carpo_core::trf!(
             "已过滤 {} 个扫描/封装元数据块",
             "Filtered out {} scanner / container metadata blocks",
             scanner_artifact_count
@@ -419,9 +419,9 @@ fn build_reading_items(
 fn image_placeholder(image_ref: Option<&str>) -> String {
     match image_ref.and_then(display_image_ref) {
         Some(source) => {
-            xcvt_core::trf!("［图片：未嵌入：{}］", "[image: not embedded: {}]", source)
+            carpo_core::trf!("［图片：未嵌入：{}］", "[image: not embedded: {}]", source)
         }
-        None => xcvt_core::tr!("［图片：未嵌入］", "[image: not embedded]").to_string(),
+        None => carpo_core::tr!("［图片：未嵌入］", "[image: not embedded]").to_string(),
     }
 }
 
@@ -578,7 +578,7 @@ pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<Layou
     let mut warnings = Vec::new();
     if req.options.mode == LayoutPdfExportMode::Bbox {
         warnings.push(
-            xcvt_core::tr!(
+            carpo_core::tr!(
                 "bbox 版式重建已改为阅读版导出",
                 "bbox layout reconstruction now exports the reading view instead"
             )
@@ -977,7 +977,7 @@ pub fn export_reading_markdown_to_path(
     let mut warnings = Vec::new();
     if req.options.mode == LayoutPdfExportMode::Bbox {
         warnings.push(
-            xcvt_core::tr!(
+            carpo_core::tr!(
                 "bbox 版式重建已改为阅读版导出",
                 "bbox layout reconstruction now exports the reading view instead"
             )
@@ -1058,12 +1058,12 @@ fn one_line(text: &str) -> String {
 fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<PathBuf> {
     if target_path.trim().is_empty() {
         return Err(AppError::Config(
-            xcvt_core::tr!("缺少导出路径", "No export path given").into(),
+            carpo_core::tr!("缺少导出路径", "No export path given").into(),
         ));
     }
     if document.pages.is_empty() {
         return Err(AppError::Config(
-            xcvt_core::tr!(
+            carpo_core::tr!(
                 "没有可导出的版式页面",
                 "There are no layout pages to export"
             )
@@ -1080,7 +1080,7 @@ fn validate_target(target_path: &str, document: &LayoutDocument) -> AppResult<Pa
 }
 
 fn collect_item_chars(items: &[ReadingItem]) -> BTreeSet<char> {
-    let mut chars: BTreeSet<char> = xcvt_core::tr!(
+    let mut chars: BTreeSet<char> = carpo_core::tr!(
         "Carpo源文件第页〔〕［］图表格未嵌入",
         "Carpo[]:Source page image table not embedded"
     )
@@ -1102,7 +1102,7 @@ fn push_missing_char_warning(loaded_font: &LoadedFont, warnings: &mut Vec<String
         return;
     }
     let preview: String = loaded_font.missing_chars.iter().take(12).collect();
-    warnings.push(xcvt_core::trf!(
+    warnings.push(carpo_core::trf!(
         "字体 {} 缺少 {} 个字符（{}{}），缺字会显示为空白或替代字形",
         "Font {} is missing {} characters ({}{}) — they render as blanks or fallback glyphs",
         loaded_font.path.display(),
@@ -1159,7 +1159,7 @@ fn load_cjk_font(required_chars: &BTreeSet<char>) -> AppResult<LoadedFont> {
     }
 
     Err(AppError::Config(
-        xcvt_core::tr!(
+        carpo_core::tr!(
             "未找到可用中文字体；请安装 Noto Sans CJK、Arial Unicode、微软雅黑或宋体后重试",
             "No usable CJK font found — install Noto Sans CJK, Arial Unicode, Microsoft YaHei or SimSun and try again"
         )
@@ -1264,12 +1264,12 @@ fn font_candidates() -> Vec<FontCandidate> {
             }),
         );
     }
-    if let Some(path) = env::var_os("XCVT_LAYOUT_PDF_FONT") {
+    if let Some(path) = env::var_os("CARPO_LAYOUT_PDF_FONT") {
         out.insert(
             0,
             FontCandidate {
                 path: PathBuf::from(path),
-                index: env::var("XCVT_LAYOUT_PDF_FONT_INDEX")
+                index: env::var("CARPO_LAYOUT_PDF_FONT_INDEX")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0),
@@ -1684,20 +1684,20 @@ mod tests {
     }
 
     /// Manual end-to-end check against a real Paddle JSON export. Run with:
-    /// `XCVT_SAMPLE_JSON=/path/book.json cargo test --manifest-path src-tauri/Cargo.toml
+    /// `CARPO_SAMPLE_JSON=/path/book.json cargo test --manifest-path src-tauri/Cargo.toml
     ///  reading_export_from_real_json -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn reading_export_from_real_json() {
-        let json_path = std::env::var("XCVT_SAMPLE_JSON").expect("set XCVT_SAMPLE_JSON");
-        let import = xcvt_core::ocr::paddle_json::analyze_path(std::path::Path::new(&json_path))
+        let json_path = std::env::var("CARPO_SAMPLE_JSON").expect("set CARPO_SAMPLE_JSON");
+        let import = carpo_core::ocr::paddle_json::analyze_path(std::path::Path::new(&json_path))
             .expect("analyze json");
         let stem = std::path::Path::new(&json_path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("sample")
             .to_string();
-        let out_dir = std::env::var("XCVT_OUT_DIR").unwrap_or_else(|_| "/tmp".into());
+        let out_dir = std::env::var("CARPO_OUT_DIR").unwrap_or_else(|_| "/tmp".into());
         let pdf = format!("{out_dir}/{stem}_阅读版.pdf");
         let md = format!("{out_dir}/{stem}_阅读版.md");
         let pdf_res = export_layout_pdf_to_path(LayoutPdfExportRequest {
