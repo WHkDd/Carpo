@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { useStore } from "@/store";
+import { useScrollMemory } from "@/hooks/useScrollMemory";
 import { t as translate, useT } from "@/i18n";
 import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
@@ -542,6 +543,15 @@ export function OcrTextPanel() {
     }
   }, [hasLayout, viewMode]);
 
+  // Which document this panel is currently showing. The preview and the
+  // source editor keep their own offsets: switching between them is a change
+  // of representation, and the same line is nowhere near the same pixel.
+  const scrollKey = `${fileId ?? ""}:${recognitionMode}:${
+    pinnedArticleId ?? ""
+  }:${currentPage}:${viewMode}`;
+  const preview = useScrollMemory<HTMLDivElement>(scrollKey);
+  const source = useScrollMemory<HTMLTextAreaElement>(scrollKey);
+
   const onCopy = useCallback(async () => {
     setSaveError(null);
     try {
@@ -700,6 +710,8 @@ export function OcrTextPanel() {
               </p>
             )}
             <textarea
+              ref={source.ref}
+              onScroll={source.onScroll}
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value);
@@ -711,6 +723,8 @@ export function OcrTextPanel() {
           </div>
         ) : (
           <div
+            ref={preview.ref}
+            onScroll={preview.onScroll}
             className="prose-ocr min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-border/40 bg-background px-3 py-2"
             data-native-context-menu
           >

@@ -206,7 +206,7 @@ function PageRangeChip({
                   setOpen(false);
                 }
               }}
-              className={`h-7 w-full rounded border bg-surface px-2 font-mono text-[12px] tabular-nums outline-none placeholder:text-foreground-subtle focus:border-border-strong ${
+              className={`h-7 w-full rounded border bg-surface px-2 font-mono text-[12px] tabular-nums outline-none placeholder:text-foreground-placeholder focus:border-border-strong ${
                 draftValidation.error ? "border-destructive" : "border-border/60"
               }`}
             />

@@ -35,7 +35,7 @@ export function MetadataInline() {
           value={docState.newspaperName}
           onChange={handleNameChange}
           placeholder="—"
-          className="h-7 w-full rounded-md border border-border/60 bg-background px-2 text-[12px] text-foreground outline-none placeholder:text-foreground-subtle/50 focus:border-border-strong"
+          className="h-7 w-full rounded-md border border-border/60 bg-background px-2 text-[12px] text-foreground outline-none placeholder:text-foreground-placeholder focus:border-border-strong"
         />
       </div>
       <div>
@@ -47,7 +47,7 @@ export function MetadataInline() {
           value={docState.newspaperDate}
           onChange={handleDateChange}
           placeholder="—"
-          className="h-7 w-full rounded-md border border-border/60 bg-background px-2 text-[12px] text-foreground outline-none placeholder:text-foreground-subtle/50 focus:border-border-strong"
+          className="h-7 w-full rounded-md border border-border/60 bg-background px-2 text-[12px] text-foreground outline-none placeholder:text-foreground-placeholder focus:border-border-strong"
         />
       </div>
     </div>

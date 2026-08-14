@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useStore } from "@/store";
 import { Pencil, Trash2 } from "lucide-react";
-import { useListKeyboard } from "@/hooks/useListKeyboard";
+import { isRowCommandTarget, useListKeyboard } from "@/hooks/useListKeyboard";
 import { articleHsl } from "@/lib/article-color-token";
 import { isImeCommit } from "@/lib/ime";
 import { confirmDestructive } from "@/lib/confirm";
@@ -71,11 +71,13 @@ const ArticleRow = forwardRef<HTMLDivElement, ArticleRowProps>(function ArticleR
   }, [draft, onEndEdit, onUpdateTitle]);
 
   return (
-    // The row itself is the listbox option — one tab stop for the whole list.
-    // Row commands sit outside it as siblings rather than nested buttons,
-    // which is both invalid and the reason the old clickable <div> could not
-    // be reached by keyboard at all.
+    // A grid row, not a listbox option: the row carries inline commands, and
+    // ARIA lets a listbox own only options — which left those buttons as
+    // children the container was not allowed to have and no arrow key could
+    // reach. Selection cell first, then one cell per command.
     <div
+      role="row"
+      aria-selected={isSelected}
       className={`group flex items-start gap-2 rounded-lg border px-2 py-1.5 transition-colors ${
         isSelected
           ? "border-border-strong bg-surface-2"
@@ -84,8 +86,7 @@ const ArticleRow = forwardRef<HTMLDivElement, ArticleRowProps>(function ArticleR
     >
       <div
         ref={ref}
-        role="option"
-        aria-selected={isSelected}
+        role="gridcell"
         tabIndex={tabbable && !isEditing ? 0 : -1}
         onClick={onClick}
         className="flex min-w-0 flex-1 items-start gap-2 rounded focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -144,7 +145,10 @@ const ArticleRow = forwardRef<HTMLDivElement, ArticleRowProps>(function ArticleR
       </div>
 
       {!isEditing && (
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <div
+          role="gridcell"
+          className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        >
           <button
             type="button"
             tabIndex={-1}
@@ -297,6 +301,17 @@ export function ArticleList() {
       // While a title is being edited the row owns the keyboard entirely —
       // including every letter, which would otherwise trigger type-ahead.
       if (editingId !== null) return;
+      // Once → has moved focus onto a row command, that button owns Enter and
+      // Space. Without this, Delete on the focused rename button would still
+      // delete the article.
+      if (isRowCommandTarget(e.target)) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") {
+          if (e.key === "Enter" || e.key === " ") return;
+          if (e.key === "Delete" || e.key === "Backspace") return;
+        }
+        onKeyDown(e);
+        return;
+      }
       if (e.key === "Enter" || e.key === "F2") {
         const article = articles[keyboardIndex];
         if (article) {
@@ -364,9 +379,8 @@ export function ArticleList() {
         </div>
       ) : (
         <div
-          role="listbox"
+          role="grid"
           aria-label={t("rail.groupedTitle")}
-          aria-orientation="vertical"
           aria-multiselectable
           onKeyDown={onListKeyDown}
           className="flex flex-col gap-1"

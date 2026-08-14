@@ -8,6 +8,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
 
@@ -74,7 +75,34 @@ fn join(base_url: &str, suffix: &str) -> String {
     format!("{trimmed}{suffix}")
 }
 
+/// One chat-completions OCR call.
+///
+/// `cancel` races the in-flight request, not just the gaps around it. A single
+/// whole-page image against a slow model can occupy the connection for most of
+/// the client's 120s ceiling (see `AppState::new`), and without this the user's
+/// Cancel would leave the job sitting in "cancelling" until the server replied
+/// or the timeout elapsed. Dropping the `send()`/`json()` future is how reqwest
+/// aborts a request, so returning out of `select!` is sufficient.
+#[allow(clippy::too_many_arguments)]
 pub async fn recognize(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    model: &str,
+    prompt: &str,
+    image_bytes: &[u8],
+    provider_label: &str,
+    cancel: &CancellationToken,
+) -> AppResult<String> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(AppError::Cancelled(provider_label.into())),
+        result = recognize_inner(client, base_url, key, model, prompt, image_bytes, provider_label) => result,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn recognize_inner(
     client: &reqwest::Client,
     base_url: &str,
     key: &str,
@@ -214,6 +242,7 @@ pub async fn list_models(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::{Duration, Instant};
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -240,6 +269,7 @@ mod tests {
             "prompt",
             b"PNGBYTES",
             "openai",
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -275,6 +305,7 @@ mod tests {
             "扫一扫",
             b"ABC",
             "openai",
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -298,6 +329,7 @@ mod tests {
             "p",
             b"x",
             "openai",
+            &CancellationToken::new(),
         )
         .await
         .unwrap_err();
@@ -321,10 +353,63 @@ mod tests {
             "p",
             b"x",
             "openai",
+            &CancellationToken::new(),
         )
         .await
         .unwrap_err();
         assert!(!err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn cancel_aborts_an_in_flight_request() {
+        let server = MockServer::start().await;
+        // Far longer than the assertion below tolerates: if cancellation only
+        // took effect between calls, this test would hang for 30s and then
+        // return Ok instead of Cancelled.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(30))
+                    .set_body_json(json!({
+                        "choices": [{ "message": { "content": "too late" } }]
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            token.cancel();
+        });
+
+        let started = Instant::now();
+        let err = recognize(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "gpt-4o",
+            "p",
+            b"x",
+            "openai",
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, AppError::Cancelled(_)), "got {err:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancel waited for the response instead of dropping the request"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_is_not_retryable() {
+        // `recognize_with_retry` must not resubmit the image after a cancel.
+        assert!(!AppError::Cancelled("openai".into()).is_retryable());
     }
 
     #[tokio::test]

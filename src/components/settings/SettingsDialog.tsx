@@ -234,7 +234,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    // `app-chrome` because this renders as a sibling of the shell's <main>,
+    // not inside it: without the class the chrome rules in globals.css stop
+    // at the dialog's edge, and every label in the app's most text-dense
+    // surface becomes drag-selectable — the plainest "this is a web page"
+    // tell there is. It also restores the fallback focus ring.
+    <div className="app-chrome fixed inset-0 z-50 flex items-center justify-center">
       {/* Scrim. Not focusable: a dialog's dismissal target should not be a
           tab stop competing with the controls inside it — Escape and the
           close button are the keyboard paths. */}
@@ -503,7 +508,7 @@ function TabButton({ id, active, label, onClick, badge, dot }: TabButtonProps) {
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-            dot === "configured" ? "bg-success" : "bg-foreground-subtle/60"
+            dot === "configured" ? "bg-success" : "bg-foreground-subtle/80"
           }`}
         />
       )}
@@ -649,7 +654,7 @@ function ProviderPanel({
                 setDraft((d) => ({ ...d, paddle_url: e.target.value }))
               }
               placeholder={DEFAULT_SETTINGS.paddle_url}
-              className="h-8 w-full rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-subtle/70 focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+              className="h-8 w-full rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-placeholder focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
             />
           </Field>
         )}
@@ -666,7 +671,7 @@ function ProviderPanel({
                 }))
               }
               placeholder="https://…/v1"
-              className="h-8 w-full rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-subtle/70 focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+              className="h-8 w-full rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-placeholder focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
             />
           </Field>
         )}
@@ -678,7 +683,7 @@ function ProviderPanel({
               value={secretInputValue}
               onChange={(e) => onSecretEdit(e.target.value)}
               placeholder={secretPlaceholder}
-              className="h-8 flex-1 rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-subtle/70 focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+              className="h-8 flex-1 rounded border border-border bg-background px-2.5 font-mono text-[12px] text-foreground placeholder:text-foreground-placeholder focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
             />
             <button
               type="button"
@@ -1102,7 +1107,7 @@ function PromptPanel({ value, onChange }: PromptPanelProps) {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={defaultOcrPrompt()}
-          className="min-h-[140px] rounded border border-border bg-background p-2.5 text-[13px] leading-relaxed text-foreground placeholder:text-foreground-subtle/70 focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+          className="min-h-[140px] rounded border border-border bg-background p-2.5 text-[13px] leading-relaxed text-foreground placeholder:text-foreground-placeholder focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
         />
         <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
           <span>{t("settings.promptEmptyNote")}</span>

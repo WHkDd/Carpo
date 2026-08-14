@@ -375,6 +375,10 @@ function AppShellInner() {
       // Never act on a key that belongs to an IME composition, and never let
       // a held-down shortcut fire once per repeat.
       if (isImeCommit(e) || e.repeat) return;
+      // A component nearer the focus already claimed this key. Notably the
+      // queue and article lists use ←/→ to reach a row's commands, and this
+      // handler binds the same keys to page turns.
+      if (e.defaultPrevented) return;
 
       const meta = e.metaKey || e.ctrlKey;
 

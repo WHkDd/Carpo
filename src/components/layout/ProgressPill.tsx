@@ -156,11 +156,13 @@ export function ProgressPill() {
   }
 
   return (
-    <div
-      className="absolute left-2 top-2 z-10 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]"
-      role="status"
-      aria-live="polite"
-    >
+    // Deliberately not a live region as a whole. It used to wrap the page
+    // controls, the cancel button and the progress bar in `aria-live`, so a
+    // 40-page run announced "3 / 40", "4 / 40" … forty times. A `progressbar`
+    // is polled by the screen reader on demand — announcing it is the web
+    // habit, not what a native progress indicator does. Only the phase
+    // headline below, which changes a handful of times per job, is live.
+    <div className="absolute left-2 top-2 z-10 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]">
       <div className="flex h-7 items-stretch text-[12px]">
         {showPageNav && (
           <div className="flex items-center gap-1.5 px-2">
@@ -180,6 +182,8 @@ export function ProgressPill() {
         {showOcr && (
           <div className="flex min-w-0 max-w-[420px] items-center gap-2 px-2">
             <span
+              role="status"
+              aria-live="polite"
               className={cn(
                 "shrink-0 font-medium",
                 status === "error"

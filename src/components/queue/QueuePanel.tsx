@@ -119,9 +119,8 @@ export function QueuePanel({
             {files.length > 0 && (
               <div className="min-h-0 overflow-y-auto overscroll-contain pb-3">
                 <div
-                  role="listbox"
+                  role="grid"
                   aria-label={t("queue.title")}
-                  aria-orientation="vertical"
                   onKeyDown={onListKeyDown}
                   className="flex flex-col items-center gap-1"
                 >
@@ -163,7 +162,7 @@ export function QueuePanel({
           <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5 text-[11px] font-semibold text-foreground-subtle">
             <div className="flex min-w-0 items-center gap-2">
               <span>{t("queue.title")}</span>
-              <span className="font-mono text-foreground-subtle/80">
+              <span className="font-mono text-foreground-subtle">
                 {files.length === 0
                   ? t("queue.empty")
                   : t("queue.count", { count: files.length })}
@@ -214,9 +213,8 @@ export function QueuePanel({
             </button>
           ) : (
             <div
-              role="listbox"
+              role="grid"
               aria-label={t("queue.title")}
-              aria-orientation="vertical"
               onKeyDown={onListKeyDown}
               className="min-h-0 space-y-1 overflow-y-auto overscroll-contain pb-3 pr-1"
             >
