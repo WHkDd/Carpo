@@ -58,6 +58,10 @@ export function PageJumpControl({
       : "h-5 w-9 rounded border border-border/60 bg-background/70 px-1 text-center font-mono text-[11px] tabular-nums text-foreground outline-none focus:border-border-strong";
 
   return (
+    // The `/40` on the two arrows is the disabled state, and disabled
+    // controls are exempt from the WCAG contrast minimum — the faintness is
+    // the affordance. Every other alpha on `foreground-subtle` was removed
+    // when that token was darkened to meet AA; these two stay on purpose.
     <div className={cn("flex shrink-0 items-center gap-1 whitespace-nowrap", className)}>
       <button
         type="button"

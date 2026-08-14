@@ -18,6 +18,27 @@ export interface UseListKeyboardArgs {
   focusAt: (index: number) => void;
 }
 
+/** The focusable commands in the row that currently holds focus — the rename
+ *  and remove buttons, each in its own `gridcell`. Read from the DOM rather
+ *  than from refs because the caller already owns one ref array per row and a
+ *  second, ragged one per row would have to be rebuilt on every render. */
+function rowCommands(from: Element | null): HTMLElement[] {
+  const row = from?.closest('[role="row"]');
+  if (!row) return [];
+  return Array.from(
+    row.querySelectorAll<HTMLElement>('[role="gridcell"] button:not([disabled])')
+  );
+}
+
+/** True when the event came from a row command rather than from the row's
+ *  own selection cell. Callers use it to keep row-level bindings (Enter to
+ *  rename, Delete to remove) from firing on top of a button's own activation. */
+export function isRowCommandTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && target.closest('[role="gridcell"] button') !== null
+  );
+}
+
 /**
  * The keyboard model of a native list (Finder sidebar, Mail message list),
  * not of a web form.
@@ -30,6 +51,14 @@ export interface UseListKeyboardArgs {
  *
  * Selection follows focus here, as it does in the platform lists above: ↑/↓
  * both move and select, so there is no separate "commit" step.
+ *
+ * The container is a `grid`, not a `listbox`, because these rows carry inline
+ * commands. ARIA lets a listbox own only `option` elements, so the hover
+ * buttons sat inside the listbox as children it is not allowed to have, and
+ * no arrow key reached them. A layout grid owns rows of cells and may put
+ * widgets in those cells — which is also how AppKit exposes a table row
+ * (AXRow with AXCell children). →/← move between the selection cell and the
+ * row's commands.
  */
 export function useListKeyboard({
   itemCount,
@@ -103,6 +132,26 @@ export function useListKeyboard({
           e.preventDefault();
           go(itemCount - 1);
           return;
+        case "ArrowRight": {
+          const active = document.activeElement;
+          const commands = rowCommands(active);
+          if (commands.length === 0) return;
+          e.preventDefault();
+          const at = commands.findIndex((c) => c === active);
+          // From the selection cell (`at === -1`) step onto the first
+          // command; from the last one, stay put rather than wrapping.
+          (commands[at + 1] ?? commands[at])?.focus();
+          return;
+        }
+        case "ArrowLeft": {
+          const active = document.activeElement;
+          const at = rowCommands(active).findIndex((c) => c === active);
+          if (at < 0) return; // already on the selection cell
+          e.preventDefault();
+          if (at === 0) focusAt(activeIndex < 0 ? 0 : activeIndex);
+          else rowCommands(active)[at - 1]?.focus();
+          return;
+        }
         default:
           break;
       }
@@ -115,7 +164,7 @@ export function useListKeyboard({
         typeAhead(e.key);
       }
     },
-    [activeIndex, go, itemCount, typeAhead]
+    [activeIndex, focusAt, go, itemCount, typeAhead]
   );
 
   return { onKeyDown };

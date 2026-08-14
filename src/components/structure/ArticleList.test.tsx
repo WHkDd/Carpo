@@ -40,7 +40,9 @@ describe("ArticleList title editing", () => {
   });
 
   function startEditing(): HTMLInputElement {
-    fireEvent.keyDown(screen.getByRole("option"), { key: "Enter" });
+    // The row's selection cell — the list is a grid so the row can also own
+    // its rename/remove commands as sibling cells.
+    fireEvent.keyDown(screen.getAllByRole("gridcell")[0]!, { key: "Enter" });
     return screen.getByRole("textbox", { name: "编辑标题" });
   }
 

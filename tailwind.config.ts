@@ -19,6 +19,8 @@ export default {
         foreground: "hsl(var(--foreground) / <alpha-value>)",
         "foreground-muted": "hsl(var(--foreground-muted) / <alpha-value>)",
         "foreground-subtle": "hsl(var(--foreground-subtle) / <alpha-value>)",
+        "foreground-placeholder":
+          "hsl(var(--foreground-placeholder) / <alpha-value>)",
         surface: "hsl(var(--surface) / <alpha-value>)",
         "surface-2": "hsl(var(--surface-2) / <alpha-value>)",
         "surface-overlay": "hsl(var(--surface-overlay) / <alpha-value>)",

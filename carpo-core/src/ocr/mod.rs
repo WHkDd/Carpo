@@ -113,6 +113,7 @@ pub async fn recognize(
                 req.prompt,
                 req.image_bytes,
                 "openai",
+                cancel,
             )
             .await
         }
@@ -126,6 +127,7 @@ pub async fn recognize(
                 req.prompt,
                 req.image_bytes,
                 "openrouter",
+                cancel,
             )
             .await
         }
@@ -148,6 +150,7 @@ pub async fn recognize(
                 req.prompt,
                 req.image_bytes,
                 "openai_compatible",
+                cancel,
             )
             .await
         }

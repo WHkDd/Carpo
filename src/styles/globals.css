@@ -20,9 +20,22 @@
     --surface-overlay: 220 10% 92%;
     --canvas: 220 12% 93%;
 
+    /* Contrast against --background (WCAG 2.1, 4.5:1 for body text):
+     * foreground 17.21:1, foreground-muted 6.19:1, foreground-subtle 4.86:1.
+     * foreground-subtle also has to clear the bar on --surface-2, which is
+     * what a hovered or selected row sits on — that is the binding case and
+     * it lands at 4.51:1. It was 58% lightness (2.98:1 / 2.76:1) and carried
+     * file extensions, block counts and page numbers at 10-12px.
+     *
+     * foreground-placeholder is deliberately weaker (3.08:1): a placeholder
+     * that reads as strongly as a real value is worse than a faint one. It
+     * exists as its own token because the previous spelling — subtle at 50%
+     * or 70% opacity — could not be reasoned about, and no amount of
+     * darkening the base fixes an alpha that low. */
     --foreground: 0 0% 9%;             /* oklch(0.21 0 0) */
     --foreground-muted: 0 0% 37%;
-    --foreground-subtle: 220 4% 58%;
+    --foreground-subtle: 220 4% 44%;
+    --foreground-placeholder: 220 4% 57%;
 
     --border: 220 8% 82%;
     --border-strong: 220 6% 70%;
@@ -43,8 +56,12 @@
     --destructive: 4 37% 45%;
     --destructive-foreground: 60 3% 97%;
 
-    --success: 135 12% 42%;
-    --warning: 42 28% 40%;
+    /* Both are read as text, and both appear over a tint of themselves or
+     * over --surface-2 rather than over plain white — the case that decides
+     * the value. success 5.44:1 on background / 5.05:1 on surface-2;
+     * warning 5.38:1 on background / 4.72:1 on its own 10% tint. */
+    --success: 135 12% 38%;
+    --warning: 42 28% 36%;
 
     --card: 60 7% 98%;
     --card-foreground: 0 0% 9%;
