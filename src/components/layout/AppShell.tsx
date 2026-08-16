@@ -7,6 +7,7 @@ import {
 } from "@/components/queue/PaddleJsonImportDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
+import { useElementSize } from "@/hooks/useElementSize";
 import { useFileImport } from "@/hooks/useFileImport";
 import { useDesktopIntegration } from "@/hooks/useDesktopIntegration";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
@@ -28,6 +29,12 @@ import {
 import { useStore } from "@/store";
 import { getLanguage, t } from "@/i18n";
 import { defaultOcrPrompt } from "@/store/settingsSlice";
+import {
+  CANVAS_MIN_WIDTH,
+  QUEUE_COLLAPSED_WIDTH,
+  QUEUE_WIDTH,
+  railMaxWidth,
+} from "@/store/uiSlice";
 import type { RecognizedPage, RecognizedPageSourceMode } from "@/store/jobSlice";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
@@ -59,6 +66,7 @@ export function AppShell() {
 
 function AppShellInner() {
   const canvasRef = useRef<CanvasController>(null);
+  const shellRef = useRef<HTMLElement>(null);
   const prevPage = useStore((s) => s.prevPage);
   const nextPage = useStore((s) => s.nextPage);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
@@ -75,8 +83,25 @@ function AppShellInner() {
   const setDocumentResult = useStore((s) => s.setDocumentResult);
   const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
   const setRecognizedPages = useStore((s) => s.setRecognizedPages);
+  const railWidth = useStore((s) => s.railWidth);
+  const setRailWidth = useStore((s) => s.setRailWidth);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
+
+  // The rail's ceiling depends on how much room the shell has left after the
+  // queue panel and the canvas floor, so it moves when the window is resized
+  // or the queue is collapsed. Measure the shell rather than the viewport:
+  // `min-w` means the two can differ in a browser build.
+  const { width: shellWidth } = useElementSize(shellRef);
+  const queueWidth = queueCollapsed ? QUEUE_COLLAPSED_WIDTH : QUEUE_WIDTH;
+  const maxRailWidth = railMaxWidth(shellWidth, queueWidth);
+
+  // Shrinking the window (or expanding the queue) can leave the rail wider
+  // than the shell now allows; pull it back in rather than letting `main`'s
+  // `overflow-hidden` clip the rail's right edge off-screen.
+  useEffect(() => {
+    if (shellWidth > 0 && railWidth > maxRailWidth) setRailWidth(maxRailWidth);
+  }, [shellWidth, railWidth, maxRailWidth, setRailWidth]);
 
   // One `useFileImport` instance for the whole shell. The hook owns the
   // drag-drop subscription and the supported-extension cache, so mounting it
@@ -469,14 +494,17 @@ function AppShellInner() {
 
   return (
     <>
-      {/* min-w 1180 = 244 (queue) + 620 (canvas min) + 304 (rail) + borders,
-          and matches `minWidth` in tauri.conf.json. The old 1100 sat below the
+      {/* min-w 1180 = 244 (queue) + 632 (canvas) + 304 (rail) + borders, and
+          matches `minWidth` in tauri.conf.json. The old 1100 sat below the
           three-column floor, so the right rail got clipped at the smallest
-          window size the OS would allow. */}
+          window size the OS would allow. The canvas column's own floor is
+          lower (CANVAS_MIN_WIDTH) — it is what the rail may eat into when
+          dragged wider, and never binds at the default rail width. */}
       <main
+        ref={shellRef}
         className="app-chrome grid h-screen min-w-[1180px] overflow-hidden bg-background text-foreground"
         style={{
-          gridTemplateColumns: `${queueCollapsed ? "76px" : "244px"} minmax(620px, 1fr) 304px`,
+          gridTemplateColumns: `${queueWidth}px minmax(${CANVAS_MIN_WIDTH}px, 1fr) ${railWidth}px`,
           gridTemplateRows: "44px minmax(0,1fr)",
         }}
       >
@@ -525,7 +553,7 @@ function AppShellInner() {
             )}
           </div>
         </section>
-        <StructureRail />
+        <StructureRail maxWidth={maxRailWidth} />
       </main>
       <SettingsDialog
         open={settingsOpen}

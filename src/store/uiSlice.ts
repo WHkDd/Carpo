@@ -15,6 +15,30 @@ export const OCR_PANEL_MIN_HEIGHT = 120;
 export const OCR_PANEL_MAX_RESERVE = 200;
 const DEFAULT_OCR_PANEL_HEIGHT = 280;
 
+/** Grid column widths of the left queue panel, in its two states. */
+export const QUEUE_WIDTH = 244;
+export const QUEUE_COLLAPSED_WIDTH = 76;
+
+/** Drag-resizable right rail. 304 is both the design default and the floor —
+ *  the rail is already as narrow as its content allows, so dragging only ever
+ *  widens it (up to double) to give the OCR text panel more room. */
+export const RAIL_MIN_WIDTH = 304;
+export const RAIL_MAX_WIDTH = 608;
+
+/** Floor for the canvas column. Only binds once the rail is dragged wide: at
+ *  the default rail width the canvas is far above it even in the smallest
+ *  window the OS will allow. */
+export const CANVAS_MIN_WIDTH = 480;
+
+/** Widest the rail may get inside a shell of `shellWidth`, leaving the queue
+ *  panel and the canvas floor intact. Below RAIL_MIN_WIDTH there is nothing
+ *  left to give, so the floor wins and the canvas is squeezed instead — that
+ *  only happens in a window narrower than the configured minimum. */
+export function railMaxWidth(shellWidth: number, queueWidth: number): number {
+  const available = shellWidth - queueWidth - CANVAS_MIN_WIDTH;
+  return Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, available));
+}
+
 /** Top-level recognition workflow. `grouped` is the article / box-marking
  *  flow; `whole_file` is the page-by-page OCR flow with no marking tools. */
 export type RecognitionMode = "grouped" | "whole_file";
@@ -32,6 +56,9 @@ export interface UiSlice {
    *  above it takes whatever vertical space is left. In-memory only — the
    *  user re-sets per session. */
   ocrPanelHeight: number;
+  /** Pixel width of the right rail. In-memory only, like `ocrPanelHeight` —
+   *  widening it is a per-document reading gesture, not a lasting preference. */
+  railWidth: number;
   /** True while files are being dragged over the window. Drives the canvas
    *  drop-target overlay — without it, hovering a file over the window looks
    *  exactly like hovering it over dead space. */
@@ -50,6 +77,9 @@ export interface UiSlice {
    *  raw setter so the drag handler can recompute bounds against the live
    *  rail height. */
   setOcrPanelHeight: (height: number) => void;
+  /** Set the rail width. Like `setOcrPanelHeight` this is a raw setter — the
+   *  caller clamps against the live shell width, which only it knows. */
+  setRailWidth: (width: number) => void;
 }
 
 export const clampZoomPercent = (zoomPercent: number): number =>
@@ -72,6 +102,7 @@ export const createUiSlice: StateCreator<
   recognitionMode: "grouped",
   selectedArticleIds: [],
   ocrPanelHeight: DEFAULT_OCR_PANEL_HEIGHT,
+  railWidth: RAIL_MIN_WIDTH,
   dropTargetActive: false,
   setStatusText: (statusText) =>
     set((state) => {
@@ -136,5 +167,9 @@ export const createUiSlice: StateCreator<
   setOcrPanelHeight: (height) =>
     set((state) => {
       state.ocrPanelHeight = height;
+    }),
+  setRailWidth: (width) =>
+    set((state) => {
+      state.railWidth = width;
     }),
 });
