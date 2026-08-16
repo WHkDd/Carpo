@@ -1,7 +1,11 @@
 import { useCallback, useRef } from "react";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
-import { OCR_PANEL_MAX_RESERVE, OCR_PANEL_MIN_HEIGHT } from "@/store/uiSlice";
+import {
+  OCR_PANEL_MAX_RESERVE,
+  OCR_PANEL_MIN_HEIGHT,
+  RAIL_MIN_WIDTH,
+} from "@/store/uiSlice";
 import { MetadataInline } from "@/components/structure/MetadataInline";
 import { BlockOpsPanel } from "@/components/structure/BlockOpsPanel";
 import { ArticleList } from "@/components/structure/ArticleList";
@@ -12,17 +16,98 @@ import {
 import { useGroupedOcrTrigger } from "@/hooks/useGroupedOcrTrigger";
 import { useWholeFileOcrTrigger } from "@/hooks/useWholeFileOcrTrigger";
 
-export function StructureRail() {
+export interface StructureRailProps {
+  /** Widest the rail may be dragged right now — the shell computes it from
+   *  the space left over once the queue panel and canvas floor are served. */
+  maxWidth: number;
+}
+
+export function StructureRail({ maxWidth }: StructureRailProps) {
   const recognitionMode = useStore((s) => s.recognitionMode);
 
   return recognitionMode === "grouped" ? (
-    <GroupedRail />
+    <GroupedRail maxWidth={maxWidth} />
   ) : (
-    <WholeFileRail />
+    <WholeFileRail maxWidth={maxWidth} />
   );
 }
 
-function GroupedRail() {
+/** Left edge of the rail, dragged to widen it. The rail sits at its narrowest
+ *  by default, so this only ever trades canvas width for text width. */
+function RailResizeHandle({ maxWidth }: StructureRailProps) {
+  const t = useT();
+  const railWidth = useStore((s) => s.railWidth);
+  const setRailWidth = useStore((s) => s.setRailWidth);
+
+  const clamp = useCallback(
+    (width: number) => Math.min(maxWidth, Math.max(RAIL_MIN_WIDTH, width)),
+    [maxWidth]
+  );
+
+  const onDrag = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = useStore.getState().railWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onMove = (ev: PointerEvent) => {
+        // Dragging the left edge leftwards widens the rail.
+        setRailWidth(clamp(startWidth - (ev.clientX - startX)));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [clamp, setRailWidth]
+  );
+
+  // Same keyboard model as the horizontal divider below: arrows step, ⇧+arrow
+  // takes a coarse step, Home/End jump to the bounds.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const step = e.shiftKey ? 48 : 12;
+      const current = useStore.getState().railWidth;
+      let next: number | null = null;
+      if (e.key === "ArrowLeft") next = current + step;
+      else if (e.key === "ArrowRight") next = current - step;
+      else if (e.key === "Home") next = RAIL_MIN_WIDTH;
+      else if (e.key === "End") next = maxWidth;
+      if (next === null) return;
+      e.preventDefault();
+      setRailWidth(clamp(next));
+    },
+    [clamp, maxWidth, setRailWidth]
+  );
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t("rail.resizeWidth")}
+      aria-valuemin={RAIL_MIN_WIDTH}
+      aria-valuemax={maxWidth}
+      aria-valuenow={railWidth}
+      tabIndex={0}
+      onPointerDown={onDrag}
+      onKeyDown={onKeyDown}
+      // Reset to the default width — the usual escape hatch from a divider
+      // dragged somewhere unhelpful.
+      onDoubleClick={() => setRailWidth(RAIL_MIN_WIDTH)}
+      className="group absolute inset-y-0 left-0 z-10 w-1.5 -translate-x-1/2 cursor-col-resize focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+    >
+      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/60 transition-colors group-hover:bg-border-strong" />
+    </div>
+  );
+}
+
+function GroupedRail({ maxWidth }: StructureRailProps) {
   const t = useT();
   const ocrPanelHeight = useStore((s) => s.ocrPanelHeight);
   const setOcrPanelHeight = useStore((s) => s.setOcrPanelHeight);
@@ -108,7 +193,11 @@ function GroupedRail() {
       : t("rail.recognizeSelected");
 
   return (
-    <aside ref={asideRef} className="flex min-h-0 flex-col bg-surface">
+    <aside
+      ref={asideRef}
+      className="relative flex min-h-0 flex-col bg-surface"
+    >
+      <RailResizeHandle maxWidth={maxWidth} />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-px pb-2">
         <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5">
           <span className="text-[13px] font-semibold text-foreground">
@@ -177,7 +266,7 @@ function GroupedRail() {
   );
 }
 
-function WholeFileRail() {
+function WholeFileRail({ maxWidth }: StructureRailProps) {
   const t = useT();
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const file = useStore((s) =>
@@ -199,7 +288,8 @@ function WholeFileRail() {
       : t("rail.startWholeFile");
 
   return (
-    <aside className="flex min-h-0 flex-col bg-surface">
+    <aside className="relative flex min-h-0 flex-col bg-surface">
+      <RailResizeHandle maxWidth={maxWidth} />
       <div className="flex h-8 shrink-0 items-center justify-between gap-2 px-3">
         <span className="text-[13px] font-semibold text-foreground">
           {t("rail.wholeFileTitle")}

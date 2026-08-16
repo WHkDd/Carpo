@@ -156,6 +156,7 @@ export const zh = {
   "rail.groupedTitle": "扫描文本结构",
   "rail.groupedEmpty": "完成版块标注后，此处将显示报道结构与阅读顺序。",
   "rail.resizeOcrPanel": "拖动调整 OCR 文本区高度",
+  "rail.resizeWidth": "拖动调整侧栏宽度",
   "rail.starting": "正在启动…",
   "rail.recognizeSelected": "识别选中报道",
   "rail.recognizeSelectedCount": "识别选中报道 ({count})",
@@ -469,6 +470,7 @@ export const en: Record<MessageKey, string> = {
   "rail.groupedEmpty":
     "Once blocks are marked up, the article structure and reading order show up here.",
   "rail.resizeOcrPanel": "Drag to resize the OCR text area",
+  "rail.resizeWidth": "Drag to resize the sidebar",
   "rail.starting": "Starting…",
   "rail.recognizeSelected": "OCR selected articles",
   "rail.recognizeSelectedCount": "OCR selected articles ({count})",
