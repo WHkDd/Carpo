@@ -85,7 +85,6 @@
     --canvas-accent-strong: 221 83% 53%;  /* blue-600 */
 
     /* Low-chroma article hues, reserved for canvas grouping. */
-    --article-saturation-multiplier: 0.55;
     --article-1:  220 18% 43%;  /* blue gray */
     --article-2:  145 15% 38%;  /* green gray */
     --article-3:  285 16% 45%;  /* violet gray */

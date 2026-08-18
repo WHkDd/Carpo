@@ -71,6 +71,17 @@ docker compose up -d
 > `127.0.0.1`，需要对外监听时显式设置 `CARPO_BIND=0.0.0.0`（Docker 镜像已内置该值，
 > 容器内监听全部接口、对外暴露由 `ports:` 决定）。
 
+> **自建模型服务的 Base URL。** 服务端模式下，Settings 里填的模型 Base URL 必须是
+> `https` 且不得指向环回或内网地址——这条限制防的是有人通过设置接口让服务器带着你的
+> key 去打内网。如果你的模型服务（Ollama、vLLM 等）本来就跑在内网，把它的主机名加进
+> `CARPO_BASE_URL_ALLOWLIST` 豁免即可，逗号分隔，支持 `host` 或 `host:port`：
+>
+> ```
+> CARPO_BASE_URL_ALLOWLIST=ollama:11434,vllm.internal
+> ```
+>
+> 桌面版不受此限制（调用方就是本机自己）。
+
 升级：
 
 ```bash
