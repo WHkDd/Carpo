@@ -1,6 +1,6 @@
 # Carpo
 
-**中文文档**: [简体中文](./README_zh.md)
+ [简体中文](./README_zh.md)
 
 A desktop OCR tool built for scanned modern Chinese newspapers and scanned books. Import images or PDFs, select a news article block or run whole-page recognition, choose from multiple providers, and export the results as Markdown / plain text.
 
