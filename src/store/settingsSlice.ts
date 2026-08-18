@@ -83,7 +83,7 @@ export const DEFAULT_SETTINGS: NonSecretSettings = {
     restructurePages: true,
   },
   openai_model: "gpt-4o",
-  openrouter_model: "google/gemini-2.5-flash-preview",
+  openrouter_model: "google/gemini-2.5-flash",
   openai_compatible_base_url: "",
   openai_compatible_model: "",
   proofread_provider: null,

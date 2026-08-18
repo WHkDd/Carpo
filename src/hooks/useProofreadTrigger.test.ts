@@ -201,14 +201,14 @@ describe("useProofreadTrigger", () => {
 
   it("sends the confirmed proofread settings as the request snapshot", async () => {
     state.settings.proofread_provider = "openrouter";
-    state.settings.proofread_model = "anthropic/claude-sonnet-4-6";
+    state.settings.proofread_model = "anthropic/claude-sonnet-4.6";
     state.settings.proofread_prompt = "自定义提示词";
     const { result } = renderHook(() => useProofreadTrigger());
     await act(() => result.current.triggerCurrent());
     expect(startProofread).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openrouter",
-        model: "anthropic/claude-sonnet-4-6",
+        model: "anthropic/claude-sonnet-4.6",
         prompt: "自定义提示词",
       })
     );

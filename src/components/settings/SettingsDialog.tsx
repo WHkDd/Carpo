@@ -1088,8 +1088,8 @@ function modelOptions(
       break;
     case "openrouter":
       seeds.push(
-        "google/gemini-2.5-flash-preview",
-        "anthropic/claude-sonnet-4-6",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-sonnet-4.6",
         "openai/gpt-4o"
       );
       break;
