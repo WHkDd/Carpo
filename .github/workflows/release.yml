@@ -43,6 +43,9 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Tag builds are one-shot; don't persist a ~140MB cache entry
+          # that will never be read again.
+          save-if: false
 
       # PDFium binary — fetched per-arch and bundled via the matching overlay
       # config (`tauri.<arch>.conf.json`). The base `tauri.conf.json` defaults
@@ -84,6 +87,10 @@ jobs:
             target/${{ matrix.target }}/release/bundle/msi/*.msi
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: ignore
+          # Release assets are already attached to the GitHub Release via
+          # action-gh-release below; the artifact copy is just a convenience
+          # download, so expire it quickly to protect the 0.5GB storage quota.
+          retention-days: 3
 
       - if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

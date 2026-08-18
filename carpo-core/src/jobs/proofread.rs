@@ -630,7 +630,7 @@ mod tests {
             paddle_model: String::new(),
             paddle_document_options: config::PaddleDocumentOptions::default(),
             openai_model: "gpt-4o".into(),
-            openrouter_model: "google/gemini-2.5-flash-preview".into(),
+            openrouter_model: "google/gemini-2.5-flash".into(),
             openai_compatible_base_url: String::new(),
             openai_compatible_model: String::new(),
             proofread_provider,
@@ -954,7 +954,7 @@ mod tests {
         let settings = settings_with(Provider::Paddleocr, None);
         let mut req = req_with(vec![unit("page:1", "本埠新聞")]);
         req.provider = Some(Provider::Openrouter);
-        req.model = Some("google/gemini-2.5-flash-preview".into());
+        req.model = Some("google/gemini-2.5-flash".into());
         assert!(validate(&req, &settings).is_ok());
     }
 

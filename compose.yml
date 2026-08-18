@@ -22,6 +22,11 @@ services:
       # CARPO_OPENAI_KEY: ""
       # CARPO_OPENROUTER_KEY: ""
       # CARPO_OPENAI_COMPATIBLE_KEY: ""
+      # Server mode refuses model base URLs that are plaintext http or resolve
+      # to a loopback/private address. List the hosts of your own in-network
+      # model servers here to exempt them, comma separated, `host` or
+      # `host:port` (e.g. "ollama:11434,vllm.internal"). Empty = no exemptions.
+      CARPO_BASE_URL_ALLOWLIST: "${CARPO_BASE_URL_ALLOWLIST:-}"
 
 volumes:
   carpo-data:

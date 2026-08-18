@@ -42,7 +42,7 @@ function settings(overrides: Partial<NonSecretSettings>): NonSecretSettings {
     paddle_model: "",
     paddle_document_options: {},
     openai_model: "gpt-4o",
-    openrouter_model: "google/gemini-2.5-flash-preview",
+    openrouter_model: "google/gemini-2.5-flash",
     openai_compatible_base_url: "",
     openai_compatible_model: "",
     proofread_provider: null,
@@ -331,10 +331,10 @@ describe("resolveProofread*", () => {
   it("prefers the explicit provider and model", () => {
     const s = settings({
       proofread_provider: "openrouter",
-      proofread_model: "anthropic/claude-sonnet-4-6",
+      proofread_model: "anthropic/claude-sonnet-4.6",
     });
     expect(resolveProofreadProvider(s)).toBe("openrouter");
-    expect(resolveProofreadModel(s)).toBe("anthropic/claude-sonnet-4-6");
+    expect(resolveProofreadModel(s)).toBe("anthropic/claude-sonnet-4.6");
   });
 
   it("falls back to the provider's OCR model field", () => {
@@ -342,7 +342,7 @@ describe("resolveProofread*", () => {
       resolveProofreadModel(
         settings({ proofread_provider: "openrouter", proofread_model: "" })
       )
-    ).toBe("google/gemini-2.5-flash-preview");
+    ).toBe("google/gemini-2.5-flash");
   });
 });
 

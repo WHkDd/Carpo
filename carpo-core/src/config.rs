@@ -174,7 +174,7 @@ impl Default for NonSecretSettings {
             paddle_model: "PaddleOCR-VL-1.6".to_string(),
             paddle_document_options: PaddleDocumentOptions::default(),
             openai_model: "gpt-4o".to_string(),
-            openrouter_model: "google/gemini-2.5-flash-preview".to_string(),
+            openrouter_model: "google/gemini-2.5-flash".to_string(),
             openai_compatible_base_url: String::new(),
             openai_compatible_model: String::new(),
             proofread_provider: None,

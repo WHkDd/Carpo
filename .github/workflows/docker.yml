@@ -50,4 +50,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min keeps the shared cache entry small; mode=max roughly
+          # doubles the stored size and only speeds up the first rebuild.
+          cache-to: type=gha,mode=min
