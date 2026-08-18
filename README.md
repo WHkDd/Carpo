@@ -20,15 +20,15 @@ Cross-platform desktop app covering macOS (Apple Silicon) and Windows. **Windows
 
 **Full-text recognition**
 
-![Full-text recognition UI](docs/screenshots/full-text-ocr.png)
+![Full-text recognition UI](docs/screenshots/Full_text.png)
 
 **Selection recognition**
 
-![Selection recognition UI](docs/screenshots/selection-ocr.png)
+![Selection recognition UI](docs/screenshots/selection.png)
 
 **Paddle JSON import**
 
-![Paddle JSON import UI](docs/screenshots/json-import-simplified.png)
+![Paddle JSON import UI](docs/screenshots/json.png)
 
 ## Installation
 
