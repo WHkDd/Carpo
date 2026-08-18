@@ -99,6 +99,11 @@ describe("queueSlice", () => {
         sourceMode: "page_image",
       },
     });
+    store.getState().setEditingBlock("file-1", { page: 1, blockId: "b1" });
+    store.getState().setEditingLayoutBlock("file-1", { page: 1, index: 0 });
+    store.getState().setFocusedRegion("file-1", {
+      rects: [{ page: 1, rect: { x: 0, y: 0, width: 10, height: 10 } }],
+    });
 
     store.getState().removeFile("file-1");
 
@@ -110,5 +115,8 @@ describe("queueSlice", () => {
     expect(store.getState().documentStates["file-1"]).toBeUndefined();
     expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
     expect(store.getState().pageOcrTexts["file-1"]).toBeUndefined();
+    expect(store.getState().editingBlock["file-1"]).toBeUndefined();
+    expect(store.getState().editingLayoutBlock["file-1"]).toBeUndefined();
+    expect(store.getState().focusedRegion["file-1"]).toBeUndefined();
   });
 });

@@ -33,10 +33,28 @@
 //!   `prunedResult.markdown.text`. When that's missing too, we synthesise
 //!   the page text by joining `block_content` in `block_order` so the
 //!   right panel still has something to show.
-//! - `prunedResult.page_size` (or `pageSize`) for page width/height; if
-//!   absent we estimate from the max bbox extent. Layout-export accuracy
-//!   depends on this, so the preflight surfaces a warning when nothing
-//!   reasonable is available.
+//! - `prunedResult.page_size` (or `pageSize`) for page width/height, then
+//!   the serving envelope's `dataInfo` (whose `pages[].width/height` are the
+//!   pixel dimensions of the page images the *server* rendered — exactly the
+//!   coordinate space `block_bbox` lives in). Those two are the only real
+//!   *measurements* of that space the format offers. When neither is present
+//!   the size is inferred once for the whole document from the bbox extent
+//!   and every affected page is flagged `dimensions_approximate` — see
+//!   [`resolve_document_dimensions`].
+//!
+//! ## Why the `inputImage` / `outputImages` echoes are not a size source
+//!
+//! They look authoritative and are not. The hosted PaddleOCR-VL API caps the
+//! images it echoes back at 2000px on the long side while running layout on
+//! a larger internal render, so their header describes a downscaled preview,
+//! *not* the space `block_bbox` lives in. On a real 88-page export (TNA
+//! `FO 17/1007`, A3 landscape scans) every echo came back 2000×1413 while
+//! the bboxes on the same pages ran out to x=2145 — a ~9% systematic error.
+//! Worse, it is an undetectable one: the echo keeps the page's aspect ratio
+//! exactly, so a mapping built from it sails through the canvas overlay's
+//! isotropy check and draws a confidently misplaced highlight. Reading them
+//! (inline base64 or by URL) was strictly worse than admitting we don't know
+//! the size, so this module does neither.
 //!
 //! All output page indices are **1-based**, matching the rest of the
 //! `RecognizedPages` store.
@@ -68,6 +86,18 @@ pub struct LayoutPage {
     pub width: f64,
     pub height: f64,
     pub blocks: Vec<LayoutBlock>,
+    /// True when `width`/`height` were *inferred* from the document's bbox
+    /// extent rather than measured from `page_size` / `dataInfo`.
+    ///
+    /// Consumers must not read an inferred pair as two independent numbers.
+    /// The inference is reliable in one respect only — the long side, taken
+    /// across the whole document — while the short side is whatever content
+    /// happened to reach furthest down the page, so the *ratio* of the two
+    /// carries no information. The canvas overlay therefore maps an
+    /// approximate page with a single long-side scale factor and skips its
+    /// aspect-ratio guard, which would otherwise be measuring noise.
+    #[serde(default)]
+    pub dimensions_approximate: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,6 +137,11 @@ pub struct PaddleJsonPreflightReport {
     pub has_markdown: bool,
     pub has_images: bool,
     pub has_output_images: bool,
+    /// 1-based indices (page position, not `LayoutPage.index`) of pages
+    /// whose width/height were inferred rather than measured — the same set
+    /// as `document.pages[i].dimensions_approximate`, hoisted here so the
+    /// import dialog can report it before anything is written to the store.
+    pub estimated_dimension_pages: Vec<u32>,
     pub warnings: Vec<String>,
 }
 
@@ -139,8 +174,12 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
     let pages_raw = extract_pages_array(&root)?;
     let model_settings = extract_model_settings(&root, &pages_raw);
     let markdown_ignore_labels = extract_ignore_labels(&model_settings);
+    // The serving envelope's `dataInfo` lives next to `layoutParsingResults`,
+    // so page items unwrapped from that array no longer carry it — it has to
+    // be captured here and index-matched back to the pages.
+    let root_data_info = extract_data_info(&root);
 
-    let mut layout_pages = Vec::with_capacity(pages_raw.len());
+    let mut parsed_pages: Vec<ParsedPage> = Vec::with_capacity(pages_raw.len());
     let mut page_texts = Vec::with_capacity(pages_raw.len());
     let mut label_counts: BTreeMap<String, u32> = BTreeMap::new();
     let mut block_count = 0u32;
@@ -155,7 +194,7 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
 
     for (idx, page_value) in pages_raw.iter().enumerate() {
         let page_index = (idx + 1) as u32;
-        let parsed = parse_page(page_index, page_value);
+        let mut parsed = parse_page(page_index, page_value, root_data_info.as_ref());
 
         block_count += parsed.blocks.len() as u32;
         for block in &parsed.blocks {
@@ -172,17 +211,16 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
             missing_dim_pages.push(page_index);
         }
 
-        layout_pages.push(LayoutPage {
-            index: page_index,
-            width: parsed.width,
-            height: parsed.height,
-            blocks: parsed.blocks,
-        });
         page_texts.push(PageText {
             page: page_index,
-            text: parsed.text,
+            text: std::mem::take(&mut parsed.text),
         });
+        parsed_pages.push(parsed);
     }
+    // Deliberately after the loop: a page's own bbox extent is a poor
+    // stand-in for its size, but the extent seen across the *document* is a
+    // good one, and no page can be sized until every page has been read.
+    let layout_pages = resolve_document_dimensions(parsed_pages);
 
     let mut warnings: Vec<String> = Vec::new();
     if pages_raw.is_empty() {
@@ -234,25 +272,8 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
             .into(),
         );
     }
-    if !missing_dim_pages.is_empty() {
-        let preview = missing_dim_pages
-            .iter()
-            .take(5)
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>()
-            .join("、");
-        let suffix = if missing_dim_pages.len() > 5 {
-            "…"
-        } else {
-            ""
-        };
-        warnings.push(crate::trf!(
-            "{} 页未提供页面尺寸，已根据 bbox 估算（第 {}{} 页）",
-            "{} pages carry no page size — estimated from their bboxes (pages {}{})",
-            missing_dim_pages.len(),
-            preview,
-            suffix,
-        ));
+    if let Some(warning) = missing_dimensions_warning(&missing_dim_pages) {
+        warnings.push(warning);
     }
 
     let preflight = PaddleJsonPreflightReport {
@@ -268,6 +289,7 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
         has_markdown: any_markdown,
         has_images: any_images,
         has_output_images: any_output_images,
+        estimated_dimension_pages: missing_dim_pages,
         warnings,
     };
 
@@ -279,6 +301,129 @@ pub fn analyze_value(root: serde_json::Value) -> AppResult<PaddleJsonImport> {
         },
         page_texts,
     })
+}
+
+/// Percentage added to an inferred extent so a block flush with the page
+/// edge doesn't end up sized to exactly the page (which renders at width 0
+/// in the layout PDF export). Applied once, to the document-level figure —
+/// never per page, which is what made the old estimate swing.
+const EXTENT_PADDING: f64 = 0.02;
+
+/// Turns parsed pages into [`LayoutPage`]s, inferring a size for every page
+/// that carried no measured one.
+///
+/// The inference rests on one property of the producers: a document is
+/// rendered server-side at a single scale (PaddleOCR-VL renders PDF pages
+/// at 2×, i.e. 144 DPI), so every page of a document lands in the same
+/// coordinate space. Two consequences:
+///
+/// 1. The **longest bbox extent seen anywhere in the document** is a far
+///    better estimate of that space's long side than any single page's own
+///    extent: a page whose text stops halfway down no longer shrinks its own
+///    page, because some other page reached the margin. On the `FO 17/1007`
+///    export the per-page estimate missed the true page shape by anywhere
+///    from −49% to +88%.
+/// 2. Orientation buckets share their evidence. A portrait page's height
+///    and a landscape page's width measure the same quantity — the render
+///    scale times the paper's long edge — so both are pooled, and the
+///    result is handed back per page in that page's own orientation.
+///
+/// Both sides come out as *lower bounds*: content stops short of the paper's
+/// edge, so the figures are systematically small (2273×1645 against a true
+/// 2382×1684 on the file above). That is why every inferred page is flagged
+/// `dimensions_approximate`, and why the canvas overlay treats the pair as
+/// two bounds on one scale factor rather than as a page shape.
+///
+/// Known limitation: a document mixing *page sizes* (not merely
+/// orientations) shares one estimate across all of them, so the smaller
+/// pages come out over-sized. Mixed orientations are handled; mixed sizes
+/// are rare in scanned archival material and would need per-page evidence
+/// this format doesn't carry.
+fn resolve_document_dimensions(parsed: Vec<ParsedPage>) -> Vec<LayoutPage> {
+    let pad = |v: f64| {
+        if v > 0.0 {
+            v * (1.0 + EXTENT_PADDING)
+        } else {
+            v
+        }
+    };
+
+    let mut long_side = 0.0_f64;
+    let mut short_side = 0.0_f64;
+    for page in &parsed {
+        let (long, short) = if page.width >= page.height {
+            (page.width, page.height)
+        } else {
+            (page.height, page.width)
+        };
+        if page.had_explicit_dimensions {
+            // A measured page pins the render scale exactly: no padding, and
+            // it outranks any content extent from the same document.
+            long_side = long_side.max(long);
+            short_side = short_side.max(short);
+            continue;
+        }
+        long_side = long_side.max(pad(long));
+        short_side = short_side.max(pad(short));
+    }
+
+    parsed
+        .into_iter()
+        .enumerate()
+        .map(|(idx, page)| {
+            let index = (idx + 1) as u32;
+            if page.had_explicit_dimensions {
+                return LayoutPage {
+                    index,
+                    width: page.width,
+                    height: page.height,
+                    blocks: page.blocks,
+                    dimensions_approximate: false,
+                };
+            }
+            // Orientation is this module's only guess — it reads it off the
+            // page's own block extents. The canvas re-derives it from the
+            // bitmap and is built not to care if the two disagree.
+            let (width, height) = if page.width >= page.height {
+                (long_side, short_side)
+            } else {
+                (short_side, long_side)
+            };
+            LayoutPage {
+                index,
+                width,
+                height,
+                blocks: page.blocks,
+                dimensions_approximate: true,
+            }
+        })
+        .collect()
+}
+
+/// Formats the "N pages have no measured size" warning, or `None` when the
+/// list is empty.
+fn missing_dimensions_warning(missing_dim_pages: &[u32]) -> Option<String> {
+    if missing_dim_pages.is_empty() {
+        return None;
+    }
+    let preview = missing_dim_pages
+        .iter()
+        .take(5)
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join("、");
+    let suffix = if missing_dim_pages.len() > 5 {
+        "…"
+    } else {
+        ""
+    };
+    Some(crate::trf!(
+        "{} 页未提供页面尺寸，已按整份文件的 bbox 外延推算，区块定位为近似（第 {}{} 页）",
+        "{} pages carry no page size — inferred from the document's bbox extent, so block positions are approximate (pages {}{})",
+        missing_dim_pages.len(),
+        preview,
+        suffix,
+    ))
 }
 
 fn parse_jsonl_bytes(bytes: &[u8]) -> Result<Vec<serde_json::Value>, String> {
@@ -494,8 +639,12 @@ struct ParsedPage {
     had_explicit_dimensions: bool,
 }
 
-fn parse_page(page_index: u32, value: &serde_json::Value) -> ParsedPage {
-    let _ = page_index;
+fn parse_page(
+    page_index: u32,
+    value: &serde_json::Value,
+    root_data_info: Option<&serde_json::Value>,
+) -> ParsedPage {
+    let idx = (page_index as usize).saturating_sub(1);
     let pruned = value
         .get("prunedResult")
         .or_else(|| value.get("pruned_result"))
@@ -572,12 +721,28 @@ fn parse_page(page_index: u32, value: &serde_json::Value) -> ParsedPage {
         })
         .unwrap_or(false);
 
-    // Page dimensions: prefer explicit page_size, fall back to estimation
-    // from the largest bbox extent so the layout exporter has a non-zero
-    // page to render onto.
+    // Page dimensions, measured sources only:
+    // 1. Explicit page-size fields (`page_size` / `pageSize` / …).
+    // 2. `dataInfo` from the serving envelope (per row, then the root): its
+    //    `pages[].width/height` are the pixel size of the page image the
+    //    server itself rendered from the PDF, i.e. the exact coordinate
+    //    space of every `block_bbox`.
+    //
+    // Neither present means this page's size is simply not in the file. The
+    // raw bbox extent goes out as a *placeholder* that `analyze_value`
+    // replaces with a document-level figure once every page has been read —
+    // see [`resolve_document_dimensions`]. The `inputImage` / `outputImages`
+    // echoes are not consulted; the module docs explain why they cannot be.
     let (width, height, had_explicit_dimensions) = extract_dimensions(&pruned, value)
+        .or_else(|| {
+            extract_data_info(value)
+                .as_ref()
+                .or(root_data_info)
+                .and_then(|info| dims_from_data_info(info, idx))
+                .map(|(w, h)| (w, h, true))
+        })
         .unwrap_or_else(|| {
-            let (w, h) = estimate_dimensions_from_bboxes(&blocks);
+            let (w, h) = bbox_extent(&blocks);
             (w, h, false)
         });
 
@@ -803,7 +968,69 @@ fn extract_dimensions(
     None
 }
 
-fn estimate_dimensions_from_bboxes(blocks: &[LayoutBlock]) -> (f64, f64) {
+/// Finds the serving envelope's `dataInfo` on a value: either directly on
+/// the object or under its `result` wrapper (the JSONL row shape).
+fn extract_data_info(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let obj = value.as_object()?;
+    for key in ["dataInfo", "data_info"] {
+        if let Some(info) = obj.get(key) {
+            if info.is_object() {
+                return Some(info.clone());
+            }
+        }
+    }
+    if let Some(inner) = obj.get("result").and_then(|v| v.as_object()) {
+        for key in ["dataInfo", "data_info"] {
+            if let Some(info) = inner.get(key) {
+                if info.is_object() {
+                    return Some(info.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reads page dimensions out of a serving `dataInfo` object.
+///
+/// Two shapes exist (see PaddleX `serving/infra/models.py`): `ImageInfo`
+/// (`{width, height, type: "image"}`) and `PDFInfo` / `TIFFInfo`
+/// (`{numPages, pages: [{width, height}], type}`). The widths/heights are
+/// taken from the numpy arrays the server actually ran on
+/// (`image.shape[1]` / `image.shape[0]`), so for a PDF they are the pixel
+/// size of the *server-side render* — the coordinate space of `block_bbox`.
+///
+/// `idx` is the 0-based page position. A single-entry `pages` list is
+/// treated as "this row's own page" regardless of `idx`, because a JSONL
+/// row carrying its own `dataInfo` describes only itself while the row's
+/// global position can be anywhere in the requested range.
+fn dims_from_data_info(info: &serde_json::Value, idx: usize) -> Option<(f64, f64)> {
+    let obj = info.as_object()?;
+    let read_dims = |o: &serde_json::Map<String, serde_json::Value>| -> Option<(f64, f64)> {
+        let w = o.get("width").and_then(|v| v.as_f64())?;
+        let h = o.get("height").and_then(|v| v.as_f64())?;
+        if w > 0.0 && h > 0.0 {
+            Some((w, h))
+        } else {
+            None
+        }
+    };
+    if let Some(pages) = obj.get("pages").and_then(|v| v.as_array()) {
+        let entry = if pages.len() == 1 {
+            pages.first()
+        } else {
+            pages.get(idx)
+        };
+        return entry.and_then(|p| p.as_object()).and_then(read_dims);
+    }
+    read_dims(obj)
+}
+
+/// The outer extent of a page's blocks: a lower bound on the page's size,
+/// and on its own a bad estimate of it (see [`resolve_document_dimensions`]
+/// for what is done with it instead). Unpadded — padding is applied once,
+/// document-wide.
+fn bbox_extent(blocks: &[LayoutBlock]) -> (f64, f64) {
     let mut max_x = 0.0_f64;
     let mut max_y = 0.0_f64;
     for block in blocks {
@@ -816,12 +1043,7 @@ fn estimate_dimensions_from_bboxes(blocks: &[LayoutBlock]) -> (f64, f64) {
             }
         }
     }
-    // Pad slightly so a block sitting flush with the right margin doesn't
-    // render at width=0 in the export. The estimated dimensions are only
-    // used when the JSON omits page size — accuracy is best-effort.
-    let pad_x = if max_x > 0.0 { max_x * 0.02 } else { 0.0 };
-    let pad_y = if max_y > 0.0 { max_y * 0.02 } else { 0.0 };
-    (max_x + pad_x, max_y + pad_y)
+    (max_x, max_y)
 }
 
 #[cfg(test)]
@@ -1051,6 +1273,145 @@ mod tests {
     }
 
     #[test]
+    fn reads_dimensions_from_row_level_data_info() {
+        // A JSONL row: its own `result.dataInfo` describes only this page
+        // (single-entry `pages`), regardless of the row's global position.
+        let rows = json!([
+            { "result": {
+                "layoutParsingResults": [{ "prunedResult": {
+                    "parsing_res_list": [
+                        { "block_label": "text", "block_content": "甲", "block_bbox": [10, 10, 900, 500] }
+                    ]
+                }}],
+                "dataInfo": { "numPages": 1, "pages": [{ "width": 1654, "height": 2339 }], "type": "pdf" }
+            }},
+            { "result": {
+                "layoutParsingResults": [{ "prunedResult": {
+                    "parsing_res_list": [
+                        { "block_label": "text", "block_content": "乙", "block_bbox": [10, 10, 800, 400] }
+                    ]
+                }}],
+                "dataInfo": { "numPages": 1, "pages": [{ "width": 1240, "height": 1754 }], "type": "pdf" }
+            }}
+        ]);
+        let import = analyze_value(rows).unwrap();
+        assert_eq!(import.document.pages[0].width, 1654.0);
+        assert_eq!(import.document.pages[0].height, 2339.0);
+        assert_eq!(import.document.pages[1].width, 1240.0);
+        assert_eq!(import.document.pages[1].height, 1754.0);
+        assert!(!import
+            .preflight
+            .warnings
+            .iter()
+            .any(|w| w.contains("页面尺寸")));
+    }
+
+    #[test]
+    fn reads_dimensions_from_root_data_info_by_page_index() {
+        // The serving envelope: `dataInfo.pages` sits next to
+        // `layoutParsingResults` and is index-matched to the pages.
+        let root = json!({ "result": {
+            "layoutParsingResults": [
+                { "prunedResult": { "parsing_res_list": [
+                    { "block_label": "text", "block_content": "甲", "block_bbox": [10, 10, 900, 500] }
+                ]}},
+                { "prunedResult": { "parsing_res_list": [
+                    { "block_label": "text", "block_content": "乙", "block_bbox": [10, 10, 800, 400] }
+                ]}}
+            ],
+            "dataInfo": {
+                "numPages": 2,
+                "pages": [
+                    { "width": 1654, "height": 2339 },
+                    { "width": 1240, "height": 1754 }
+                ],
+                "type": "pdf"
+            }
+        }});
+        let import = analyze_value(root).unwrap();
+        assert_eq!(import.document.pages.len(), 2);
+        assert_eq!(import.document.pages[0].width, 1654.0);
+        assert_eq!(import.document.pages[1].width, 1240.0);
+    }
+
+    #[test]
+    fn reads_dimensions_from_image_data_info() {
+        // Image input: `dataInfo` is a flat `ImageInfo`, no `pages` list.
+        let root = json!({ "result": {
+            "layoutParsingResults": [{ "prunedResult": { "parsing_res_list": [
+                { "block_label": "text", "block_content": "甲", "block_bbox": [10, 10, 900, 500] }
+            ]}}],
+            "dataInfo": { "width": 3000, "height": 4000, "type": "image" }
+        }});
+        let import = analyze_value(root).unwrap();
+        assert_eq!(import.document.pages[0].width, 3000.0);
+        assert_eq!(import.document.pages[0].height, 4000.0);
+    }
+
+    #[test]
+    fn explicit_page_size_beats_data_info() {
+        let root = json!({ "result": {
+            "layoutParsingResults": [{ "prunedResult": {
+                "page_size": [2000, 3000],
+                "parsing_res_list": [
+                    { "block_label": "text", "block_content": "甲", "block_bbox": [10, 10, 900, 500] }
+                ]
+            }}],
+            "dataInfo": { "width": 999, "height": 999, "type": "image" }
+        }});
+        let import = analyze_value(root).unwrap();
+        assert_eq!(import.document.pages[0].width, 2000.0);
+        assert_eq!(import.document.pages[0].height, 3000.0);
+    }
+
+    #[test]
+    fn ignores_a_base64_input_image_echo() {
+        // A 20×30 PNG inline on `inputImage`. Before this module stopped
+        // reading echoes it would have become the page size; the echo is a
+        // downscaled preview of the render, not the bbox space, so the page
+        // must stay on the document-level inference and keep its warning.
+        let mut png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&20u32.to_be_bytes());
+        png.extend_from_slice(&30u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0]);
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let root = json!([{
+            "prunedResult": { "parsing_res_list": [
+                { "block_label": "text", "block_content": "甲", "block_bbox": [1, 1, 15, 20] }
+            ]},
+            "inputImage": STANDARD.encode(&png)
+        }]);
+        let import = analyze_value(root).unwrap();
+        assert_ne!(import.document.pages[0].width, 20.0);
+        assert!(import.document.pages[0].dimensions_approximate);
+        assert_eq!(import.preflight.estimated_dimension_pages, vec![1]);
+        assert!(import
+            .preflight
+            .warnings
+            .iter()
+            .any(|w| w.contains("页面尺寸")));
+    }
+
+    #[test]
+    fn ignores_a_url_input_image_echo() {
+        let root = json!([{
+            "prunedResult": { "parsing_res_list": [
+                { "block_label": "text", "block_content": "甲", "block_bbox": [0, 0, 1000, 1500] }
+            ]},
+            "inputImage": "https://example.com/page.jpg?sig=abc"
+        }]);
+        let import = analyze_value(root).unwrap();
+        assert!(import.document.pages[0].dimensions_approximate);
+        assert!(import
+            .preflight
+            .warnings
+            .iter()
+            .any(|w| w.contains("页面尺寸")));
+    }
+
+    #[test]
     fn accepts_polygon_as_flat_number_array() {
         let root = json!([{
             "prunedResult": {
@@ -1116,5 +1477,305 @@ mod tests {
         let import = analyze_value(root).unwrap();
         assert_eq!(import.preflight.page_count, 1);
         assert_eq!(import.page_texts[0].text, "solo");
+    }
+
+    // ---------------------------------------------------------------
+    // Document-level dimension inference.
+    //
+    // The extents below are transcribed from a real PaddleOCR-VL 1.6 export
+    // (TNA `FO 17/1007`, 88 A3 pages, no `page_size` and no `dataInfo`
+    // anywhere). Its landscape pages are 1191×842pt and the server rendered
+    // them at 2×, so `block_bbox` lives in a 2382×1684 space.
+    //
+    // That number is not in the file, and was not guessed: the export's own
+    // `outputImages.layout_det_res` visualization is 2000×1413 and draws the
+    // page's boxes down to y=1308 where the tallest bbox is y=1559, giving
+    // 1559 × 1413 / 1308 = 1684 for the height and 1684 × 1191/842 = 2382
+    // for the width. The point of these tests is how close the inference
+    // gets to it with none of that available.
+    // ---------------------------------------------------------------
+
+    /// The true landscape render size the pages below were produced in.
+    const REAL_RENDER: (f64, f64) = (2382.0, 1684.0);
+
+    fn extent_page(max_x: f64, max_y: f64) -> serde_json::Value {
+        json!({
+            "prunedResult": { "parsing_res_list": [
+                { "block_label": "header", "block_content": "TNA reference", "block_bbox": [2, 0, 649, 44] },
+                { "block_label": "text", "block_content": "x", "block_bbox": [100, 100, max_x, max_y] }
+            ]},
+            // URL echoes exactly as the real export carries them — a 2000px
+            // preview that must not become the page size.
+            "inputImage": "https://pplines-online.bj.bcebos.com/x/input_img_0.jpg?authorization=sig",
+            "outputImages": { "layout_det_res": "https://pplines-online.bj.bcebos.com/x/layout_det_res_0.jpg?authorization=sig" }
+        })
+    }
+
+    /// Landscape extents from pages 1, 15, 21 and 88 of the real export.
+    /// Page 15 is the pathological one: its content stops at y=1252, so its
+    /// *own* extent claims an aspect ratio of 1.73 against the page's true
+    /// 1.414 — a 22% error that the old per-page estimate handed straight
+    /// to the canvas. Page 21 reaches furthest right (x=2273) and page 88
+    /// furthest down (y=1645); no page reaches both, which is exactly why
+    /// the two sides are pooled across the document.
+    fn real_landscape_extents() -> Vec<(f64, f64)> {
+        vec![
+            (2145.0, 1559.0),
+            (2167.0, 1252.0),
+            (2273.0, 1550.0),
+            (2195.0, 1645.0),
+        ]
+    }
+
+    #[test]
+    fn infers_one_document_wide_size_for_every_unmeasured_page() {
+        let root = serde_json::Value::Array(
+            real_landscape_extents()
+                .into_iter()
+                .map(|(x, y)| extent_page(x, y))
+                .collect(),
+        );
+        let import = analyze_value(root).unwrap();
+
+        let first = &import.document.pages[0];
+        for page in &import.document.pages {
+            assert!(
+                page.dimensions_approximate,
+                "page {} has no measured size and must say so",
+                page.index
+            );
+            assert_eq!(
+                (page.width, page.height),
+                (first.width, first.height),
+                "page {} must share the document-level size, not its own extent",
+                page.index
+            );
+        }
+        assert_eq!(import.preflight.estimated_dimension_pages, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn both_inferred_sides_are_close_lower_bounds_on_the_real_render() {
+        let root = serde_json::Value::Array(
+            real_landscape_extents()
+                .into_iter()
+                .map(|(x, y)| extent_page(x, y))
+                .collect(),
+        );
+        let import = analyze_value(root).unwrap();
+
+        for page in &import.document.pages {
+            let long = page.width.max(page.height);
+            let short = page.width.min(page.height);
+            // Lower bounds by construction — content stops short of the
+            // paper's edge — give or take the one padding step.
+            let slack = 1.0 + EXTENT_PADDING;
+            assert!(
+                long <= REAL_RENDER.0 * slack && short <= REAL_RENDER.1 * slack,
+                "page {}: {long}x{short} is not a bound on {REAL_RENDER:?}",
+                page.index
+            );
+            // Close ones: the canvas turns the pair into a scale factor and
+            // needs the tighter of the two to be near the mark.
+            assert!(
+                (long / REAL_RENDER.0 - 1.0).abs() < 0.05,
+                "page {}: long side {long} vs real {}",
+                page.index,
+                REAL_RENDER.0
+            );
+            assert!(
+                (short / REAL_RENDER.1 - 1.0).abs() < 0.02,
+                "page {}: short side {short} vs real {}",
+                page.index,
+                REAL_RENDER.1
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_whose_content_stops_early_is_no_longer_sized_by_its_own_extent() {
+        // Page 15 alone. On its own it is all the evidence there is, so the
+        // inference can only reproduce its extent — the regression guard is
+        // that adding the rest of the document fixes it, which is exactly
+        // what the per-page estimate could never do.
+        let solo = analyze_value(json!([extent_page(2167.0, 1252.0)])).unwrap();
+        let solo_aspect = solo.document.pages[0].width / solo.document.pages[0].height;
+        assert!(
+            (solo_aspect - 1.414).abs() > 0.2,
+            "single-page inference cannot know better: {solo_aspect}"
+        );
+
+        let root = serde_json::Value::Array(
+            real_landscape_extents()
+                .into_iter()
+                .map(|(x, y)| extent_page(x, y))
+                .collect(),
+        );
+        let full = analyze_value(root).unwrap();
+        let page15 = &full.document.pages[2];
+        let aspect = page15.width / page15.height;
+        assert!(
+            (aspect / (REAL_RENDER.0 / REAL_RENDER.1) - 1.0).abs() < 0.05,
+            "in document context page 15's aspect must come back to the page's: {aspect}"
+        );
+    }
+
+    #[test]
+    fn mixed_orientations_pool_their_evidence_into_one_transposed_pair() {
+        // Page 25 of the same export is portrait (the PDF has 81 landscape
+        // pages and 7 portrait ones).
+        let mut pages: Vec<serde_json::Value> = real_landscape_extents()
+            .into_iter()
+            .map(|(x, y)| extent_page(x, y))
+            .collect();
+        pages.push(extent_page(1530.0, 2125.0));
+        let import = analyze_value(serde_json::Value::Array(pages)).unwrap();
+
+        let landscape = &import.document.pages[0];
+        let portrait = &import.document.pages[4];
+        assert!(landscape.width > landscape.height);
+        assert!(portrait.height > portrait.width);
+        // One render scale, so the two orientations are the same pair
+        // transposed — the portrait pages' own extents (1530×2125) are
+        // nowhere near the paper and would be a much worse estimate on their
+        // own than the landscape pages' evidence makes them.
+        assert_eq!(landscape.width, portrait.height);
+        assert_eq!(landscape.height, portrait.width);
+        assert!(
+            (portrait.height / REAL_RENDER.0 - 1.0).abs() < 0.05,
+            "portrait long side {} vs real {}",
+            portrait.height,
+            REAL_RENDER.0
+        );
+    }
+
+    #[test]
+    fn a_measured_page_pins_the_size_for_the_unmeasured_ones() {
+        // Mixed evidence: one page carries `page_size`, the rest carry
+        // nothing. A measurement outranks any extent — and is not padded.
+        let mut pages = vec![json!({
+            "prunedResult": {
+                "page_size": [2382, 1684],
+                "parsing_res_list": [
+                    { "block_label": "text", "block_content": "x", "block_bbox": [0, 0, 2145, 1559] }
+                ]
+            }
+        })];
+        pages.push(extent_page(2145.0, 1559.0));
+        let import = analyze_value(serde_json::Value::Array(pages)).unwrap();
+
+        assert!(!import.document.pages[0].dimensions_approximate);
+        assert_eq!(import.document.pages[0].width, 2382.0);
+        let inferred = &import.document.pages[1];
+        assert!(inferred.dimensions_approximate);
+        assert_eq!(
+            (inferred.width, inferred.height),
+            (2382.0, 1684.0),
+            "the measured page states the render scale; the inferred page must adopt it"
+        );
+        assert_eq!(import.preflight.estimated_dimension_pages, vec![2]);
+    }
+
+    #[test]
+    fn measured_pages_are_never_flagged_approximate() {
+        let root = json!([{
+            "prunedResult": { "page_size": [800, 1000], "parsing_res_list": [
+                { "block_label": "text", "block_content": "x", "block_bbox": [0, 0, 10, 10] }
+            ]}
+        }]);
+        let import = analyze_value(root).unwrap();
+        assert!(!import.document.pages[0].dimensions_approximate);
+        assert_eq!(import.document.pages[0].width, 800.0);
+        assert_eq!(import.document.pages[0].height, 1000.0);
+        assert!(import.preflight.estimated_dimension_pages.is_empty());
+    }
+
+    #[test]
+    fn a_page_without_blocks_still_gets_the_document_size() {
+        let mut pages = vec![json!({ "prunedResult": { "parsing_res_list": [] } })];
+        pages.push(extent_page(2145.0, 1559.0));
+        let import = analyze_value(serde_json::Value::Array(pages)).unwrap();
+        assert!(import.document.pages[0].width > 0.0);
+        assert!(import.document.pages[0].height > 0.0);
+    }
+
+    /// End-to-end check against a real Paddle web-export JSON on disk. No
+    /// network — the whole point of the change is that none is needed. Run:
+    /// `CARPO_SAMPLE_JSON=/path/file.json cargo test --manifest-path carpo-core/Cargo.toml
+    ///  real_json_dimensions_are_isotropic -- --ignored --nocapture`
+    ///
+    /// Set `CARPO_SAMPLE_RENDER_LONG` *and* `CARPO_SAMPLE_RENDER_SHORT` to the
+    /// true size of the producer's render (for a PDF put through
+    /// PaddleOCR-VL: the page's edges in points × 2) to also assert the scale
+    /// factor the canvas would derive.
+    #[test]
+    #[ignore]
+    fn real_json_dimensions_are_isotropic() {
+        let json_path = std::env::var("CARPO_SAMPLE_JSON").expect("set CARPO_SAMPLE_JSON");
+        let import = analyze_path(std::path::Path::new(&json_path)).expect("analyze json");
+        println!(
+            "{} pages, {} inferred",
+            import.preflight.page_count,
+            import.preflight.estimated_dimension_pages.len()
+        );
+        let sizes: std::collections::BTreeSet<String> = import
+            .document
+            .pages
+            .iter()
+            .filter(|p| p.dimensions_approximate)
+            .map(|p| format!("{:.1}x{:.1}", p.width.max(p.height), p.width.min(p.height)))
+            .collect();
+        println!("distinct inferred sizes (long x short): {sizes:?}");
+        assert!(
+            sizes.len() <= 1,
+            "every inferred page must share one size, got {sizes:?}"
+        );
+        for page in &import.document.pages {
+            assert!(
+                page.width > 0.0 && page.height > 0.0,
+                "page {} has a zero side",
+                page.index
+            );
+        }
+
+        if let Ok(real_long) = std::env::var("CARPO_SAMPLE_RENDER_LONG") {
+            let real_long: f64 = real_long.parse().expect("a number");
+            let real_short: f64 = std::env::var("CARPO_SAMPLE_RENDER_SHORT")
+                .expect("set CARPO_SAMPLE_RENDER_SHORT too")
+                .parse()
+                .expect("a number");
+            let page = import
+                .document
+                .pages
+                .iter()
+                .find(|p| p.dimensions_approximate)
+                .expect("nothing was inferred — nothing to check");
+            let long = page.width.max(page.height);
+            let short = page.width.min(page.height);
+            // The page bitmap the canvas draws. Its own resolution cancels
+            // out of the ratios, so the render's own size stands in for it —
+            // what matters is that it carries the *page's* aspect ratio and
+            // not the inferred one, which is the whole source of the second,
+            // independent bound.
+            let (image_long, image_short) = (real_long, real_short);
+            // What `layoutCanvasMapping` does for an approximate page: both
+            // sides are lower bounds, so both ratios bound the scale from
+            // above and the smaller is the estimate.
+            let scale = (image_long / long).min(image_short / short);
+            let error = (scale - 1.0).abs();
+            println!(
+                "inferred {long:.1}x{short:.1} vs real long {real_long}: \
+                 canvas scale error {:.2}%",
+                error * 100.0
+            );
+            assert!(
+                error < 0.01,
+                "the derived scale is {:.2}% off; a highlight would visibly miss",
+                error * 100.0
+            );
+        }
+        for w in &import.preflight.warnings {
+            println!("warn: {w}");
+        }
     }
 }

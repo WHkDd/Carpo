@@ -26,11 +26,83 @@ export function wheelZoomFactor(deltaY: number): number {
   return Math.min(2, Math.max(0.5, Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY)));
 }
 
+/** A rect in canvas space — the page's native pixel coordinates, which is
+ *  what block rects and layout bboxes are stored in. */
+export interface CanvasRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The same rect after projection into the stage container's screen space. */
+export interface ScreenRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Projects a canvas-space rect through the stage transform: `screen = canvas
+ *  * scale + pan`. Pure so the reveal maths stay unit-testable outside the
+ *  hook. */
+export function projectRect(
+  rect: CanvasRect,
+  scale: number,
+  pan: { x: number; y: number }
+): ScreenRect {
+  const left = rect.x * scale + pan.x;
+  const top = rect.y * scale + pan.y;
+  return {
+    left,
+    top,
+    right: (rect.x + rect.width) * scale + pan.x,
+    bottom: (rect.y + rect.height) * scale + pan.y,
+  };
+}
+
+/** True when the whole rect lies inside the 0..cw × 0..ch viewport. A rect
+ *  flush against an edge still counts — it is fully readable. */
+export function isFullyVisible(
+  rect: ScreenRect,
+  viewportWidth: number,
+  viewportHeight: number
+): boolean {
+  return (
+    rect.left >= 0 &&
+    rect.top >= 0 &&
+    rect.right <= viewportWidth &&
+    rect.bottom <= viewportHeight
+  );
+}
+
+/** The pan that puts the rect's centre at the viewport's centre, at the
+ *  current zoom (the zoom level itself is never touched — changing it would
+ *  make the user lose their bearings). Centring rather than minimal-edge
+ *  translation is deliberate: this pan fires on keyboard focus, and a
+ *  centred block reads as "here", not as "somewhere near the edge". */
+export function panToCenterRect(
+  rect: CanvasRect,
+  scale: number,
+  viewportWidth: number,
+  viewportHeight: number
+): { x: number; y: number } {
+  return {
+    x: viewportWidth / 2 - (rect.x + rect.width / 2) * scale,
+    y: viewportHeight / 2 - (rect.y + rect.height / 2) * scale,
+  };
+}
+
 export interface PanZoomController {
   fit: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
   setPercent: (p: number) => void;
+  /** Bring a canvas-space rect into view. Fully visible → no-op (repeated
+   *  calls are idempotent); otherwise pan so the rect is centred, keeping the
+   *  current zoom. The jump is instant — this tracks keyboard focus, and an
+   *  animated pan under a held-down Tab key would smear (ship-readiness #43). */
+  revealRect: (x: number, y: number, w: number, h: number) => void;
 }
 
 export interface UsePanZoomArgs {
@@ -255,14 +327,53 @@ export function usePanZoom(args: UsePanZoomArgs) {
     [setFilePan]
   );
 
+  const revealRect = useCallback(
+    (x: number, y: number, w: number, h: number) => {
+      if (cw === 0 || ch === 0) return;
+      const fid = stateRef.current.fileId;
+      if (!fid) return;
+      // Read the committed view instead of `stateRef`, which only mirrors the
+      // last *render*. Unlike wheel and drag, this runs from an effect, and the
+      // fit-driver effect above may have written a fresh zoom + pan earlier in
+      // the same flush — React has not re-rendered yet, so `stateRef` would
+      // still hold the pre-fit transform. Centring against a transform that no
+      // longer exists lands the block in the wrong place *and* clears `isFit`
+      // for what was only a container resize.
+      const current = useStore.getState().fileViews[fid] ?? DEFAULT_FILE_VIEW;
+      const curScale = current.zoomPercent / 100;
+      if (curScale <= 0) return;
+      const rect = { x, y, width: w, height: h };
+      const screen = projectRect(rect, curScale, {
+        x: current.panX,
+        y: current.panY,
+      });
+      if (isFullyVisible(screen, cw, ch)) return;
+      const nextPan = panToCenterRect(rect, curScale, cw, ch);
+      stateRef.current = {
+        ...stateRef.current,
+        scale: curScale,
+        pan: nextPan,
+        view: {
+          ...current,
+          panX: nextPan.x,
+          panY: nextPan.y,
+          isFit: false,
+        },
+      };
+      setFilePan(fid, nextPan.x, nextPan.y);
+    },
+    [cw, ch, setFilePan]
+  );
+
   const controller = useMemo<PanZoomController>(
     () => ({
       fit,
       zoomIn: () => zoomBy(SCALE_FACTOR),
       zoomOut: () => zoomBy(1 / SCALE_FACTOR),
       setPercent,
+      revealRect,
     }),
-    [fit, zoomBy, setPercent]
+    [fit, zoomBy, setPercent, revealRect]
   );
 
   return { pan, scale, onWheel, onDragEnd, controller };

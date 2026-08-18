@@ -297,7 +297,12 @@ struct PaddleEndpoint<'a> {
     model: &'a str,
 }
 
-fn resolve_paddle_endpoint(settings: &config::NonSecretSettings) -> PaddleEndpoint<'_> {
+/// Resolves the Paddle document endpoint and screens it under this process's
+/// admission policy. The document submissions below don't go through
+/// `ocr::recognize`, so without this the whole-file path would be the one place
+/// that sends the Paddle token to an unscreened `paddle_url` — same field, same
+/// credential, same rules (see `ocr::base_url`).
+fn resolve_paddle_endpoint(settings: &config::NonSecretSettings) -> AppResult<PaddleEndpoint<'_>> {
     let job_url = if settings.paddle_url.is_empty() {
         crate::ocr::paddle::DEFAULT_JOB_URL
     } else {
@@ -308,7 +313,8 @@ fn resolve_paddle_endpoint(settings: &config::NonSecretSettings) -> PaddleEndpoi
     } else {
         settings.paddle_model.as_str()
     };
-    PaddleEndpoint { job_url, model }
+    crate::ocr::check_endpoint(job_url)?;
+    Ok(PaddleEndpoint { job_url, model })
 }
 
 /// Normalize the request's requested pages once at job entry: sorted
@@ -403,7 +409,7 @@ async fn run_paddle_document_direct(
     pages_sorted: Vec<u32>,
 ) -> AppResult<()> {
     let client = state.http.clone();
-    let endpoint = resolve_paddle_endpoint(settings);
+    let endpoint = resolve_paddle_endpoint(settings)?;
     let paddle_token = secret.unwrap_or("");
     let file_name = std::path::Path::new(source_path)
         .file_name()
@@ -522,7 +528,7 @@ async fn run_paddle_document_chunked(
     source_page_count: u32,
 ) -> AppResult<()> {
     let client = state.http.clone();
-    let endpoint = resolve_paddle_endpoint(settings);
+    let endpoint = resolve_paddle_endpoint(settings)?;
     let paddle_token = secret.unwrap_or("");
     let total = pages_sorted.len() as u32;
     let chunk_config = ChunkConfig::default();
@@ -1005,6 +1011,9 @@ mod tests {
             openrouter_model: String::new(),
             openai_compatible_base_url: String::new(),
             openai_compatible_model: String::new(),
+            proofread_provider: None,
+            proofread_model: String::new(),
+            proofread_prompt: String::new(),
         }
     }
 

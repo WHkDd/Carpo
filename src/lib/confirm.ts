@@ -31,3 +31,29 @@ export async function confirmDestructive(
     cancelLabel: t("common.cancel"),
   });
 }
+
+export interface AlertOptions {
+  title: string;
+  message: string;
+}
+
+/**
+ * Reports a failure the user has to acknowledge — a file that could not be
+ * written, an export that died halfway — through the platform's own error
+ * dialog. A line of red text inside a panel is a web habit; a failed write is
+ * exactly what `NSAlert` / `MessageBox` exist for.
+ *
+ * Returns `false` when there is no native dialog available (the browser
+ * build), which is the caller's cue to render the message inline instead.
+ * Unlike `confirmDestructive` this does *not* fall back to `window.alert`:
+ * a confirm needs a blocking yes/no answer and `window.confirm` is the only
+ * way to get one, whereas an error only needs to be shown, and an inline
+ * message is both less disruptive and better placed than the browser's own
+ * modal.
+ */
+export async function alertError(options: AlertOptions): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  const { message } = await import("@tauri-apps/plugin-dialog");
+  await message(options.message, { title: options.title, kind: "error" });
+  return true;
+}

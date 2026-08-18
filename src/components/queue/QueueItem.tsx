@@ -75,6 +75,7 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
             </span>
           </span>
           {pageBadge && (
+            // Fades to make room for the hover-revealed remove button.
             <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
               {pageBadge}
             </span>

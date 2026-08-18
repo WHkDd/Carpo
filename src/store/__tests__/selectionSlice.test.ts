@@ -149,4 +149,70 @@ describe("selectionSlice", () => {
     expect(store.getState().getEditingBlockId(fid, 1)).toBe("b1");
     expect(store.getState().getEditingBlockId(fid, 2)).toBe(null);
   });
+
+  it("setEditingLayoutBlock stores and clears the focused layout block", () => {
+    expect(store.getState().getEditingLayoutBlockIndex(fid, page)).toBe(null);
+    store.getState().setEditingLayoutBlock(fid, { page, index: 3 });
+    expect(store.getState().getEditingLayoutBlockIndex(fid, page)).toBe(3);
+    store.getState().setEditingLayoutBlock(fid, null);
+    expect(store.getState().getEditingLayoutBlockIndex(fid, page)).toBe(null);
+  });
+
+  it("treats block index 0 as a real target, not as absent", () => {
+    store.getState().setEditingLayoutBlock(fid, { page, index: 0 });
+    expect(store.getState().getEditingLayoutBlockIndex(fid, page)).toBe(0);
+  });
+
+  it("getEditingLayoutBlockIndex is scoped to the current page", () => {
+    // This is what makes a page turn drop the highlight without any cleanup:
+    // the ref carries the page it was set on.
+    store.getState().setEditingLayoutBlock(fid, { page: 1, index: 2 });
+    expect(store.getState().getEditingLayoutBlockIndex(fid, 1)).toBe(2);
+    expect(store.getState().getEditingLayoutBlockIndex(fid, 2)).toBe(null);
+  });
+
+  it("keeps the focused layout block separate per file", () => {
+    store.getState().setEditingLayoutBlock(fid, { page, index: 1 });
+    store.getState().setEditingLayoutBlock("other", { page, index: 7 });
+    expect(store.getState().getEditingLayoutBlockIndex(fid, page)).toBe(1);
+    expect(store.getState().getEditingLayoutBlockIndex("other", page)).toBe(7);
+  });
+
+  it("returns the focused region's rect only on the page it covers", () => {
+    // A grouped article continued across a page break carries a rect per
+    // page; the canvas asks for the one it is currently showing.
+    const rects = [
+      { page: 1, rect: { x: 10, y: 10, width: 100, height: 100 } },
+      { page: 2, rect: { x: 0, y: 0, width: 50, height: 50 } },
+    ];
+    store.getState().setFocusedRegion(fid, { rects });
+    expect(store.getState().getFocusedRegionRect(fid, 1)).toEqual(rects[0]!.rect);
+    expect(store.getState().getFocusedRegionRect(fid, 2)).toEqual(rects[1]!.rect);
+    expect(store.getState().getFocusedRegionRect(fid, 3)).toBe(null);
+    store.getState().setFocusedRegion(fid, null);
+    expect(store.getState().getFocusedRegionRect(fid, 1)).toBe(null);
+  });
+
+  it("hands back the same rect object on every call", () => {
+    // This getter feeds a zustand v5 selector, whose snapshot must be
+    // referentially stable: returning a fresh object per call re-renders the
+    // canvas forever (React #185 — the blank-window class of bug).
+    store.getState().setFocusedRegion(fid, {
+      rects: [{ page: 1, rect: { x: 1, y: 2, width: 3, height: 4 } }],
+    });
+    const first = store.getState().getFocusedRegionRect(fid, 1);
+    const second = store.getState().getFocusedRegionRect(fid, 1);
+    expect(first).toBe(second);
+  });
+
+  it("keeps the focused region separate per file", () => {
+    store.getState().setFocusedRegion(fid, {
+      rects: [{ page, rect: { x: 1, y: 1, width: 1, height: 1 } }],
+    });
+    store.getState().setFocusedRegion("other", {
+      rects: [{ page, rect: { x: 9, y: 9, width: 9, height: 9 } }],
+    });
+    expect(store.getState().getFocusedRegionRect(fid, page)?.x).toBe(1);
+    expect(store.getState().getFocusedRegionRect("other", page)?.x).toBe(9);
+  });
 });

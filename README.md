@@ -65,6 +65,12 @@ docker compose up -d
 
 然后打开 `http://localhost:8787`。第一次进入 Settings 填入自己的 Paddle/OpenAI/OpenRouter key。
 
+> **接口没有鉴权。** 能访问该端口的人即可读写设置、并用你保存的 key 发起付费调用。
+> `.env` 里的 `CARPO_HOST_PORT` 默认写成 `127.0.0.1:8787`（只在本机可访问）；
+> 只有在可信网络里才改成 `8787`（对外发布）。`carpo-server` 二进制自身默认只监听
+> `127.0.0.1`，需要对外监听时显式设置 `CARPO_BIND=0.0.0.0`（Docker 镜像已内置该值，
+> 容器内监听全部接口、对外暴露由 `ports:` 决定）。
+
 升级：
 
 ```bash
@@ -78,7 +84,7 @@ docker compose up -d
 docker run -d \
   --name carpo \
   --restart unless-stopped \
-  -p 8787:8787 \
+  -p 127.0.0.1:8787:8787 \
   -v carpo-data:/data \
   ghcr.io/whkdd/carpo:latest
 ```

@@ -4,6 +4,7 @@ use carpo_core::{
     error::{AppError, AppResult},
     jobs::{
         grouped::{self, GroupedOcrRequest},
+        proofread::{self, ProofreadRequest},
         whole_file::{self, WholeFileOcrRequest},
         JobKind, JobListEntry,
     },
@@ -29,7 +30,7 @@ pub async fn start_grouped_ocr(
     // Load the language before validation so configuration errors from this
     // entry point use the same catalog as the job that follows.
     grouped::validate(&req)?;
-    let (id, token) = state.jobs.register(JobKind::GroupedOcr);
+    let (id, token) = state.jobs.try_register(JobKind::GroupedOcr)?;
     grouped::spawn_with_settings(state.inner().clone(), req, id, token, settings);
     Ok(JobStarted {
         job_id: id.to_string(),
@@ -47,8 +48,23 @@ pub async fn start_whole_file_ocr(
     // and pass the same snapshot into the runner.
     let settings = crate::config::load(&app)?;
     whole_file::validate(&req, &settings)?;
-    let (id, token) = state.jobs.register(JobKind::WholeFile);
+    let (id, token) = state.jobs.try_register(JobKind::WholeFile)?;
     whole_file::spawn_with_settings(state.inner().clone(), req, id, token, settings);
+    Ok(JobStarted {
+        job_id: id.to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn start_proofread(
+    app: AppHandle,
+    req: ProofreadRequest,
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<JobStarted> {
+    let settings = crate::config::load(&app)?;
+    proofread::validate(&req, &settings)?;
+    let (id, token) = state.jobs.try_register(JobKind::Proofread)?;
+    proofread::spawn_with_settings(state.inner().clone(), req, id, token, settings);
     Ok(JobStarted {
         job_id: id.to_string(),
     })

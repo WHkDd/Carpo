@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { createQueueSlice, type QueueSlice } from "../queueSlice";
@@ -6,12 +6,15 @@ import { createUiSlice, type UiSlice } from "../uiSlice";
 import { createFileViewSlice, type FileViewSlice } from "../fileViewSlice";
 import { createPageStateSlice, type PageStateSlice } from "../pageStateSlice";
 import { createSelectionSlice, type SelectionSlice } from "../selectionSlice";
+import {
+  createJobSlice,
+  selectJobStartBlocked,
+  type JobSlice,
+} from "../jobSlice";
 import { createSettingsSlice, type SettingsSlice } from "../settingsSlice";
-import { createJobSlice, type JobSlice } from "../jobSlice";
-import type { LayoutPage } from "@/lib/layout-document";
+import type { ProofreadReview } from "@/lib/proofread";
 
-type Store =
-  QueueSlice &
+type Store = QueueSlice &
   UiSlice &
   FileViewSlice &
   PageStateSlice &
@@ -33,534 +36,426 @@ function makeStore() {
   );
 }
 
-describe("jobSlice", () => {
-  let store: ReturnType<typeof makeStore>;
-  beforeEach(() => {
-    store = makeStore();
+function openFile(store: ReturnType<typeof makeStore>) {
+  store.getState().addFile({
+    id: "file-1",
+    path: "/tmp/a.pdf",
+    name: "a.pdf",
+    ext: "pdf",
+    kind: "pdf",
   });
+}
 
-  it("starts with no active job", () => {
-    expect(store.getState().activeJob).toBeNull();
-  });
+function pageReview(overrides: Partial<ProofreadReview> = {}): ProofreadReview {
+  return {
+    target: { mode: "whole_file", page: 1 },
+    baseText: "本埠新聞，巳於昨日到達。",
+    suggestions: [
+      {
+        before: "巳",
+        after: "已",
+        context_before: "本埠新聞，",
+        category: "charform",
+        confidence: 0.9,
+        reason: "形近字误识",
+        verdict: "accepted",
+      },
+    ],
+    model: "gpt-4o",
+    discarded: 0,
+    status: "pending",
+    createdAt: 1,
+    ...overrides,
+  };
+}
 
-  it("startJob seeds running state with empty totals", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
+describe("proofread jobs", () => {
+  it("startJob records a proofread job with its submitted units", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().startJob({
+      jobId: "job-1",
+      kind: "proofread",
+      fileId: "file-1",
+      newspaperName: "申报",
+      newspaperDate: "1945-08-15",
+      units: [{ key: "page:1", text: "本埠新聞" }],
+      stage: { kind: "proofread_running", index: 0, count: 1 },
+    });
     const job = store.getState().activeJob;
-    expect(job).toMatchObject({
-      jobId: "a",
-      status: "running",
-      done: 0,
-      total: 0,
-    });
+    expect(job?.kind).toBe("proofread");
+    if (job?.kind === "proofread") {
+      expect(job.units).toEqual([{ key: "page:1", text: "本埠新聞" }]);
+    }
   });
+});
 
-  it("applyProgress only updates when job_id matches", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
-    store.getState().applyProgress({
-      job_id: "other",
-      done: 5,
-      total: 10,
-      label: "ignored",
-    });
-    expect(store.getState().activeJob?.done).toBe(0);
-
-    store.getState().applyProgress({
-      job_id: "a",
-      done: 3,
-      total: 10,
-      label: "报道1 · 第3/10块",
-    });
-    expect(store.getState().activeJob).toMatchObject({
-      done: 3,
-      total: 10,
-      label: "报道1 · 第3/10块",
-    });
-  });
-
-  it("normalizes whole-file progress to the requested page count", () => {
+describe("job start claim", () => {
+  function startProofreadJob(store: ReturnType<typeof makeStore>, jobId = "job-1") {
     store.getState().startJob({
-      jobId: "a",
-      kind: "whole_file",
-      fileId: "f1",
+      jobId,
+      kind: "proofread",
+      fileId: "file-1",
       newspaperName: "申报",
       newspaperDate: "1945-08-15",
-      requestedPages: [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41],
+      units: [{ key: "page:1", text: "本埠新聞" }],
+      stage: { kind: "proofread_running", index: 0, count: 1 },
     });
+  }
 
-    store.getState().applyProgress({
-      job_id: "a",
-      done: 8,
-      total: 270,
-      label: "识别中 · 已完成 8/270 页",
-      stage: { kind: "document_running", done: 8, total: 270 },
-    });
-
-    expect(store.getState().activeJob).toMatchObject({
-      done: 8,
-      total: 11,
-      stage: { kind: "document_running", done: 8, total: 11 },
-    });
+  it("grants the slot once and refuses every later attempt", () => {
+    const store = makeStore();
+    const first = store.getState().claimJobStart("proofread");
+    expect(first).not.toBeNull();
+    expect(store.getState().claimJobStart("whole_file")).toBeNull();
+    expect(store.getState().claimJobStart("grouped_ocr")).toBeNull();
+    store.getState().releaseJobStart(first!);
+    expect(store.getState().claimJobStart("grouped_ocr")).not.toBeNull();
   });
 
-  it("clamps whole-file progress when provider progress exceeds the requested page count", () => {
-    store.getState().startJob({
-      jobId: "a",
-      kind: "whole_file",
-      fileId: "f1",
-      newspaperName: "申报",
-      newspaperDate: "1945-08-15",
-      requestedPages: [31, 32, 33],
-    });
-
-    store.getState().applyProgress({
-      job_id: "a",
-      done: 8,
-      total: 270,
-      label: "识别中 · 第8/270页",
-      stage: { kind: "page_running", page: 8, total: 270 },
-    });
-
-    expect(store.getState().activeJob).toMatchObject({
-      done: 3,
-      total: 3,
-      stage: { kind: "page_running", page: 3, total: 3 },
-    });
+  it("ignores a release from an attempt that no longer holds the slot", () => {
+    const store = makeStore();
+    const owner = store.getState().claimJobStart("proofread")!;
+    store.getState().releaseJobStart("whole_file:999");
+    expect(store.getState().jobStartClaim).toBe(owner);
+    // Idempotent for the real owner: releasing twice is not an error.
+    store.getState().releaseJobStart(owner);
+    store.getState().releaseJobStart(owner);
+    expect(store.getState().jobStartClaim).toBeNull();
   });
 
-  it("applyJobDone pins progress to total on a clean finish", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
-    store.getState().applyProgress({
-      job_id: "a",
-      done: 4,
-      total: 5,
-      label: "...",
-    });
-    store.getState().applyJobDone({
-      job_id: "a",
-      results: [],
-      errors: [],
-      cancelled: false,
-    });
-    expect(store.getState().activeJob).toMatchObject({
-      status: "done",
-      done: 5,
-      total: 5,
-    });
-  });
+  it("refuses while a job is running or cancelling, allows once terminal", () => {
+    const store = makeStore();
+    openFile(store);
+    const owner = store.getState().claimJobStart("proofread")!;
+    startProofreadJob(store);
+    // startJob hands the slot over in the same update — no gap where both
+    // the claim and a running job are absent.
+    expect(store.getState().jobStartClaim).toBeNull();
+    store.getState().releaseJobStart(owner);
 
-  it("applyJobDone with cancelled=true sets cancelled status and keeps partial done", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
-    store.getState().applyProgress({
-      job_id: "a",
-      done: 2,
-      total: 5,
-      label: "...",
-    });
+    expect(store.getState().claimJobStart("whole_file")).toBeNull();
     store.getState().markCancelling();
+    expect(store.getState().claimJobStart("whole_file")).toBeNull();
+
     store.getState().applyJobDone({
-      job_id: "a",
-      results: [],
-      errors: [],
+      job_id: "job-1",
       cancelled: true,
-    });
-    expect(store.getState().activeJob).toMatchObject({
-      status: "cancelled",
-      done: 2,
-      total: 5,
-    });
-  });
-
-  it("clearActiveJob refuses while running, allows after terminal", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
-    store.getState().clearActiveJob();
-    expect(store.getState().activeJob).not.toBeNull();
-
-    store.getState().applyJobError({ job_id: "a", error: "boom" });
-    expect(store.getState().activeJob?.status).toBe("error");
-    store.getState().clearActiveJob();
-    expect(store.getState().activeJob).toBeNull();
-  });
-
-  it("markCancelling only transitions from running", () => {
-    store.getState().startJob({ jobId: "a", kind: "grouped_ocr", fileId: "f1", newspaperName: "申报", newspaperDate: "1945-08-15", requestedArticles: [{ id: "art1", title: "胜利" }] });
-    store.getState().applyJobDone({
-      job_id: "a",
       results: [],
       errors: [],
-      cancelled: false,
     });
-    store.getState().markCancelling();
-    expect(store.getState().activeJob?.status).toBe("done");
+    expect(store.getState().claimJobStart("whole_file")).not.toBeNull();
   });
 
-  it("mirrors legacy page OCR text into recognizedPages", () => {
-    store.getState().setPageOcrTexts("file-1", {
-      1: "第一页",
-      3: "第三页",
-    });
+  it("selectJobStartBlocked covers the claim and the running job alike", () => {
+    const store = makeStore();
+    openFile(store);
+    expect(selectJobStartBlocked(store.getState())).toBe(false);
 
-    expect(store.getState().pageOcrTexts["file-1"]).toEqual({
-      1: "第一页",
-      3: "第三页",
+    const owner = store.getState().claimJobStart("proofread")!;
+    expect(selectJobStartBlocked(store.getState())).toBe(true);
+
+    startProofreadJob(store);
+    store.getState().releaseJobStart(owner);
+    expect(selectJobStartBlocked(store.getState())).toBe(true);
+
+    store.getState().applyJobError({ job_id: "job-1", error: "boom" });
+    expect(selectJobStartBlocked(store.getState())).toBe(false);
+  });
+});
+
+describe("proofreadReviews", () => {
+  it("setProofreadReviews merges per key and replaces on re-run", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview(),
     });
-    expect(store.getState().recognizedPages["file-1"]).toMatchObject({
-      1: {
-        text: "第一页",
-        status: "done",
-        sourceMode: "page_image",
-      },
-      3: {
-        text: "第三页",
-        status: "done",
-        sourceMode: "page_image",
-      },
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview({ createdAt: 2, discarded: 3 }),
+      "page:2": pageReview({ target: { mode: "whole_file", page: 2 } }),
     });
+    const reviews = store.getState().proofreadReviews["file-1"]!;
+    expect(Object.keys(reviews).sort()).toEqual(["page:1", "page:2"]);
+    expect(reviews["page:1"]!.createdAt).toBe(2);
   });
 
-  it("mirrors recognizedPages text back to the legacy page map", () => {
-    store.getState().setRecognizedPages("file-1", {
-      2: {
-        text: "第二页",
-        status: "done",
-        sourceMode: "paddle_document",
-        sourceJobId: "job-1",
-      },
-      4: {
-        text: "[识别失败：timeout]",
-        status: "failed",
-        error: "timeout",
-        sourceMode: "page_image",
-        sourceJobId: "job-2",
-      },
-    });
-
-    expect(store.getState().pageOcrTexts["file-1"]).toEqual({
-      2: "第二页",
-      4: "[识别失败：timeout]",
-    });
-    expect(store.getState().recognizedPages["file-1"]?.[2]).toMatchObject({
-      text: "第二页",
-      status: "done",
-      sourceMode: "paddle_document",
-      sourceJobId: "job-1",
-    });
-    expect(store.getState().recognizedPages["file-1"]?.[4]).toMatchObject({
-      text: "[识别失败：timeout]",
-      status: "failed",
-      error: "timeout",
-    });
+  it("ignores reviews for files that were removed", () => {
+    const store = makeStore();
+    store.getState().setProofreadReviews("ghost", { "page:1": pageReview() });
+    expect(store.getState().proofreadReviews["ghost"]).toBeUndefined();
   });
 
-  it("clears stale page errors when a later result succeeds", () => {
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "[识别失败：timeout]",
-        status: "failed",
-        error: "timeout",
-        textEdited: true,
-        sourceMode: "page_image",
-      },
+  it("setProofreadSuggestionVerdict updates one suggestion", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview(),
     });
+    store
+      .getState()
+      .setProofreadSuggestionVerdict("file-1", "page:1", 0, "rejected");
+    expect(
+      store.getState().proofreadReviews["file-1"]!["page:1"]!.suggestions[0]!
+        .verdict
+    ).toBe("rejected");
 
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "重跑成功",
-        status: "done",
-        sourceMode: "paddle_document",
-      },
-    });
-
-    expect(store.getState().recognizedPages["file-1"]?.[1]).toEqual({
-      text: "重跑成功",
-      status: "done",
-      sourceMode: "paddle_document",
-    });
+    store
+      .getState()
+      .setProofreadSuggestionVerdict("file-1", "page:1", 0, "edited", "己");
+    const edited = store.getState().proofreadReviews["file-1"]!["page:1"]!
+      .suggestions[0]!;
+    expect(edited.verdict).toBe("edited");
+    expect(edited.editedAfter).toBe("己");
   });
 
-  it("clears stale layout when a same-mode OCR rerun fails", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "旧版面文本",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-        chunkId: "chunk-1",
-        chunkPage: 1,
-      },
+  it("setProofreadCategoryVerdict flips a whole category", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview({
+        suggestions: [
+          ...pageReview().suggestions,
+          {
+            before: "到達",
+            after: "抵達",
+            context_before: "昨日",
+            category: "semantic",
+            confidence: 0.7,
+            reason: "",
+            verdict: "pending",
+          },
+        ],
+      }),
     });
-
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "[识别失败：timeout]",
-        status: "failed",
-        error: "timeout",
-        sourceMode: "paddle_document",
-      },
-    });
-
-    expect(store.getState().recognizedPages["file-1"]?.[1]).toEqual({
-      text: "[识别失败：timeout]",
-      status: "failed",
-      error: "timeout",
-      sourceMode: "paddle_document",
-    });
+    store
+      .getState()
+      .setProofreadCategoryVerdict("file-1", "page:1", "semantic", "accepted");
+    const suggestions = store.getState().proofreadReviews["file-1"]!["page:1"]!
+      .suggestions;
+    expect(suggestions.map((s) => s.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
   });
 
-  function addQueuedFile(id: string) {
-    store.getState().addFile({
-      id,
-      path: `/tmp/${id}.pdf`,
-      name: `${id}.pdf`,
-      ext: "pdf",
-      kind: "pdf",
-    });
-  }
-
-  function makeLayout(): LayoutPage {
-    return {
-      index: 1,
-      width: 100,
-      height: 200,
-      blocks: [
-        {
-          label: "text",
-          text: "第一块",
-          bbox: [0, 0, 50, 20],
-          order: 2,
+  describe("applyProofreadReview", () => {
+    it("writes accepted suggestions into the page text and marks applied", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: {
+          text: "本埠新聞，巳於昨日到達。",
+          status: "done",
+          sourceMode: "page_image",
         },
-        {
-          label: "title",
-          text: "标题块",
-          bbox: [0, 30, 80, 50],
-          order: 1,
+      });
+      store.getState().setProofreadReviews("file-1", {
+        "page:1": pageReview(),
+      });
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+        "本埠新聞，已於昨日到達。"
+      );
+      const review = store.getState().proofreadReviews["file-1"]!["page:1"]!;
+      expect(review.status).toBe("applied");
+      expect(review.appliedText).toBe("本埠新聞，已於昨日到達。");
+    });
+
+    it("records the conflict-skipped count and clears it on undo", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: { text: "甲\n巳", status: "done", sourceMode: "page_image" },
+      });
+      store.getState().setProofreadReviews("file-1", {
+        "page:1": pageReview({
+          baseText: "甲\n巳",
+          suggestions: [
+            {
+              before: "甲巳",
+              after: "甲乙巳",
+              context_before: "",
+              category: "garble",
+              confidence: 0.9,
+              reason: "缺字",
+              verdict: "accepted",
+            },
+            {
+              before: "甲巳",
+              after: "甲丙巳",
+              context_before: "",
+              category: "garble",
+              confidence: 0.9,
+              reason: "缺字",
+              verdict: "accepted",
+            },
+          ],
+        }),
+      });
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      const review = store.getState().proofreadReviews["file-1"]!["page:1"]!;
+      // The second insertion sits on the first one's point: skipped, and the
+      // count is stored where the applied banner can show it.
+      expect(review.appliedConflictSkipped).toBe(1);
+      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe("甲\n乙巳");
+      expect(store.getState().undoProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      expect(
+        store.getState().proofreadReviews["file-1"]!["page:1"]!
+          .appliedConflictSkipped
+      ).toBeUndefined();
+    });
+
+    it("refuses when the live text no longer equals the base snapshot", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: {
+          text: "用户手动改过的文本",
+          status: "done",
+          sourceMode: "page_image",
         },
-      ],
-    };
-  }
-
-  it("updateRecognizedPageText edits text but keeps layout/source metadata", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      2: {
-        text: "原始识别",
-        status: "done",
-        sourceMode: "paddle_document",
-        sourceJobId: "job-1",
-      },
+      });
+      store.getState().setProofreadReviews("file-1", {
+        "page:1": pageReview(),
+      });
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        false
+      );
+      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+        "用户手动改过的文本"
+      );
+      expect(
+        store.getState().proofreadReviews["file-1"]!["page:1"]!.status
+      ).toBe("pending");
     });
 
-    store.getState().updateRecognizedPageText("file-1", 2, "人工校对后");
-
-    expect(store.getState().recognizedPages["file-1"]?.[2]).toEqual({
-      text: "人工校对后",
-      status: "done",
-      sourceMode: "paddle_document",
-      sourceJobId: "job-1",
-      textEdited: true,
-    });
-    expect(store.getState().pageOcrTexts["file-1"]?.[2]).toBe("人工校对后");
-  });
-
-  it("updateRecognizedPageText creates a minimal entry for unseen pages", () => {
-    addQueuedFile("file-1");
-    store.getState().updateRecognizedPageText("file-1", 5, "手动补录");
-
-    expect(store.getState().recognizedPages["file-1"]?.[5]).toEqual({
-      text: "手动补录",
-      status: "done",
-      sourceMode: "page_image",
-      textEdited: true,
-    });
-    expect(store.getState().pageOcrTexts["file-1"]?.[5]).toBe("手动补录");
-  });
-
-  it("updateLayoutBlockText edits only the targeted block text and keeps block metadata", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "第一块\n标题块",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-      },
+    it("refuses to apply twice", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: {
+          text: "本埠新聞，巳於昨日到達。",
+          status: "done",
+          sourceMode: "page_image",
+        },
+      });
+      store
+        .getState()
+        .setProofreadReviews("file-1", { "page:1": pageReview() });
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        false
+      );
     });
 
-    store.getState().updateLayoutBlockText("file-1", 1, 1, "校对标题");
-
-    const blocks =
-      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks;
-    expect(blocks?.[1]).toEqual({
-      label: "title",
-      text: "校对标题",
-      bbox: [0, 30, 80, 50],
-      order: 1,
-    });
-    expect(blocks?.[0]).toEqual({
-      label: "text",
-      text: "第一块",
-      bbox: [0, 0, 50, 20],
-      order: 2,
+    it("writes into the article path for grouped targets and re-assembles", () => {
+      const store = makeStore();
+      openFile(store);
+      store
+        .getState()
+        .addArticle("file-1", 1, { id: "a_1", num: 1, title: "报道1" }, []);
+      store
+        .getState()
+        .setArticleOcrTexts("file-1", { a_1: "本埠新聞，巳於昨日到達。" });
+      store.getState().setProofreadReviews("file-1", {
+        "article:a_1": pageReview({
+          target: { mode: "grouped", articleId: "a_1" },
+        }),
+      });
+      expect(
+        store.getState().applyProofreadReview("file-1", "article:a_1")
+      ).toBe(true);
+      expect(store.getState().articleOcrTexts["file-1"]?.["a_1"]).toBe(
+        "本埠新聞，已於昨日到達。"
+      );
     });
   });
 
-  it("updateLayoutBlockText mirrors a unique old block text into page text and legacy page map", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "前缀 第一块 后缀",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-      },
+  describe("undoProofreadReview", () => {
+    it("restores the base text and re-opens the review", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: {
+          text: "本埠新聞，巳於昨日到達。",
+          status: "done",
+          sourceMode: "page_image",
+        },
+      });
+      store.getState().setProofreadReviews("file-1", {
+        "page:1": pageReview(),
+      });
+      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      expect(store.getState().undoProofreadReview("file-1", "page:1")).toBe(
+        true
+      );
+      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+        "本埠新聞，巳於昨日到達。"
+      );
+      expect(
+        store.getState().proofreadReviews["file-1"]!["page:1"]!.status
+      ).toBe("pending");
     });
 
-    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
-
-    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
-      "前缀 校对第一块 后缀"
-    );
-    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
-      "前缀 校对第一块 后缀"
-    );
+    it("refuses when the text was edited after applying", () => {
+      const store = makeStore();
+      openFile(store);
+      store.getState().setRecognizedPages("file-1", {
+        1: {
+          text: "本埠新聞，巳於昨日到達。",
+          status: "done",
+          sourceMode: "page_image",
+        },
+      });
+      store.getState().setProofreadReviews("file-1", {
+        "page:1": pageReview(),
+      });
+      store.getState().applyProofreadReview("file-1", "page:1");
+      store
+        .getState()
+        .updateRecognizedPageText("file-1", 1, "应用后又改过的文本");
+      expect(store.getState().undoProofreadReview("file-1", "page:1")).toBe(
+        false
+      );
+      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
+        "应用后又改过的文本"
+      );
+    });
   });
 
-  it("updateLayoutBlockText does not mirror when old block text appears multiple times", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "第一块 / 第一块",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-      },
+  it("discardProofreadReview removes only that key", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview(),
+      "page:2": pageReview({ target: { mode: "whole_file", page: 2 } }),
     });
-
-    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
-
-    expect(
-      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
-    ).toBe("校对第一块");
-    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
-      "第一块 / 第一块"
-    );
-    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
-      "第一块 / 第一块"
-    );
+    store.getState().discardProofreadReview("file-1", "page:1");
+    expect(Object.keys(store.getState().proofreadReviews["file-1"]!)).toEqual([
+      "page:2",
+    ]);
+    store.getState().discardProofreadReview("file-1", "page:2");
+    expect(store.getState().proofreadReviews["file-1"]).toBeUndefined();
   });
 
-  it("updateLayoutBlockText does not mirror blank old block text", () => {
-    addQueuedFile("file-1");
-    const layout = makeLayout();
-    layout.blocks[0]!.text = "   ";
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "页面文本",
-        layout,
-        status: "done",
-        sourceMode: "paddle_document",
-      },
+  it("removeFile clears the file's reviews", () => {
+    const store = makeStore();
+    openFile(store);
+    store.getState().setProofreadReviews("file-1", {
+      "page:1": pageReview(),
     });
-
-    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对第一块");
-
-    expect(
-      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
-    ).toBe("校对第一块");
-    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
-      "页面文本"
-    );
-    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe("页面文本");
-  });
-
-  it("updateLayoutBlockText no-ops for invalid targets and removed files", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "第一块",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-      },
-      2: {
-        text: "无版面",
-        status: "done",
-        sourceMode: "page_image",
-      },
-    });
-
-    expect(() =>
-      store.getState().updateLayoutBlockText("file-1", 1, 99, "越界")
-    ).not.toThrow();
-    expect(() =>
-      store.getState().updateLayoutBlockText("file-1", 2, 0, "无版面")
-    ).not.toThrow();
-    expect(
-      store.getState().recognizedPages["file-1"]?.[1]?.layout?.blocks[0]?.text
-    ).toBe("第一块");
-    expect(store.getState().recognizedPages["file-1"]?.[2]?.text).toBe(
-      "无版面"
-    );
-
     store.getState().removeFile("file-1");
-    expect(() =>
-      store.getState().updateLayoutBlockText("file-1", 1, 0, "迟到")
-    ).not.toThrow();
-    expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
-  });
-
-  it("updateLayoutBlockText treats replacement text containing $& literally", () => {
-    addQueuedFile("file-1");
-    store.getState().setRecognizedPages("file-1", {
-      1: {
-        text: "前缀 第一块 后缀",
-        layout: makeLayout(),
-        status: "done",
-        sourceMode: "paddle_document",
-      },
-    });
-
-    store.getState().updateLayoutBlockText("file-1", 1, 0, "校对$&第一块");
-
-    expect(store.getState().recognizedPages["file-1"]?.[1]?.text).toBe(
-      "前缀 校对$&第一块 后缀"
-    );
-    expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
-      "前缀 校对$&第一块 后缀"
-    );
-  });
-
-  it("updateArticleOcrText edits the article and re-assembles the document", () => {
-    addQueuedFile("file-1");
-    store.getState().addArticle(
-      "file-1",
-      1,
-      { id: "art-1", num: 1, title: "胜利" },
-      ["blk-1"]
-    );
-    store.getState().setArticleOcrTexts("file-1", { "art-1": "原始文本" });
-    store.getState().setDocumentResult("file-1", "旧的组装结果");
-
-    store.getState().updateArticleOcrText("file-1", "art-1", "校对文本");
-
-    expect(store.getState().articleOcrTexts["file-1"]?.["art-1"]).toBe(
-      "校对文本"
-    );
-    expect(store.getState().documentResults["file-1"]).toContain("校对文本");
-    expect(store.getState().documentResults["file-1"]).not.toContain(
-      "原始文本"
-    );
-  });
-
-  it("edit write-backs after removeFile do not resurrect file state", () => {
-    addQueuedFile("file-1");
-    store.getState().removeFile("file-1");
-
-    store.getState().updateRecognizedPageText("file-1", 1, "迟到的写回");
-    store.getState().updateArticleOcrText("file-1", "art-1", "迟到的写回");
-
-    expect(store.getState().pageOcrTexts["file-1"]).toBeUndefined();
-    expect(store.getState().recognizedPages["file-1"]).toBeUndefined();
-    expect(store.getState().articleOcrTexts["file-1"]).toBeUndefined();
+    expect(store.getState().proofreadReviews["file-1"]).toBeUndefined();
   });
 });

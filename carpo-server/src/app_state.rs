@@ -26,6 +26,13 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn new(core: Arc<CoreState>, data_dir: PathBuf, secrets: Arc<SecretsStore>) -> Self {
+        // Everything this process does on behalf of a caller was asked for
+        // over a socket, so provider endpoints coming out of settings are
+        // screened as untrusted input. Declared here rather than in `main` so
+        // the route tests run under the same policy as the shipped binary.
+        carpo_core::ocr::base_url::set_policy(
+            carpo_core::ocr::base_url::BaseUrlPolicy::NetworkFacing,
+        );
         Self {
             core,
             data_dir,

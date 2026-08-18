@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 import { useStore } from "@/store";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { DEFAULT_SETTINGS, defaultOcrPrompt } from "@/store/settingsSlice";
+import { DEFAULT_SETTINGS, defaultOcrPrompt, defaultProofreadPrompt } from "@/store/settingsSlice";
 import {
   getLanguage,
   LANGUAGES,
@@ -53,7 +53,7 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   openai_compatible: "openai_compatible_key",
 };
 
-type TabId = Provider | "prompt" | "language";
+type TabId = Provider | "prompt" | "proofread" | "language";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -68,6 +68,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // OCR run, so it is also the only place that can tell the rest of the UI
   // which credentials exist. See `credentialPresence` in the settings slice.
   const mergeCredentialPresence = useStore((s) => s.mergeCredentialPresence);
+  const bumpCredentialRevision = useStore((s) => s.bumpCredentialRevision);
 
   const [draft, setDraft] = useState<NonSecretSettings>(committed);
   const [tab, setTab] = useState<TabId>(committed.provider);
@@ -175,13 +176,19 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // Presence is now known for every key we just touched — publish it so
       // the status bar updates without anyone re-reading the Keychain.
       mergeCredentialPresence(written);
+      // Any cache keyed on credentials (the proofread model list) must see
+      // this write — presence alone is a boolean and misses "key A replaced
+      // with key B".
+      if (Object.keys(written).length > 0) {
+        bumpCredentialRevision();
+      }
       onClose();
     } catch (e) {
       setSaveError(appErrorMessage(e));
     } finally {
       setSaving(false);
     }
-  }, [draft, secretEdits, setCommitted, mergeCredentialPresence, onClose]);
+  }, [draft, secretEdits, setCommitted, mergeCredentialPresence, bumpCredentialRevision, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -230,6 +237,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     },
     [draft, secretEdits]
   );
+
+  // The proofread pass runs on its own provider when set, otherwise on the
+  // OCR provider. Its model dropdown shares the per-provider model-list
+  // cache with the provider tabs.
+  const proofreadProvider = draft.proofread_provider ?? draft.provider;
 
   if (!open) return null;
 
@@ -304,6 +316,16 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   setDraft((d) => ({ ...d, ocr_prompt: v }))
                 }
               />
+            ) : tab === "proofread" ? (
+              <ProofreadPanel
+                draft={draft}
+                setDraft={setDraft}
+                effectiveProvider={proofreadProvider}
+                models={modelLists[proofreadProvider] ?? []}
+                refreshing={refreshing === proofreadProvider}
+                refreshError={refreshError[proofreadProvider]}
+                onRefresh={() => refreshModels(proofreadProvider)}
+              />
             ) : (
               <ProviderPanel
                 provider={tab}
@@ -369,7 +391,7 @@ interface TabRailProps {
 
 /** Tab order of the rail, used by the arrow-key handler. Must match the
  *  render order below. */
-const TAB_ORDER: TabId[] = [...PROVIDER_ORDER, "prompt", "language"];
+const TAB_ORDER: TabId[] = [...PROVIDER_ORDER, "prompt", "proofread", "language"];
 
 export function settingsTabPanelId(tab: TabId): string {
   return `settings-panel-${tab}`;
@@ -449,6 +471,12 @@ function TabRail({
         active={tab === "prompt"}
         label={t("settings.promptTab")}
         onClick={() => setTab("prompt")}
+      />
+      <TabButton
+        id="proofread"
+        active={tab === "proofread"}
+        label={t("settings.proofreadTab")}
+        onClick={() => setTab("proofread")}
       />
       <TabButton
         id="language"
@@ -1122,6 +1150,172 @@ function PromptPanel({ value, onChange }: PromptPanelProps) {
       </Field>
     </div>
   );
+}
+
+interface ProofreadPanelProps {
+  draft: NonSecretSettings;
+  setDraft: React.Dispatch<React.SetStateAction<NonSecretSettings>>;
+  /** Provider the proofread pass would actually run on: the dedicated
+   *  proofread provider when set, otherwise the OCR provider. */
+  effectiveProvider: Provider;
+  models: string[];
+  refreshing: boolean;
+  refreshError?: string;
+  onRefresh: () => void;
+}
+
+/** The LLM proofread pass reuses the providers' credentials and model
+ *  fields; it only adds which provider runs it, which model, and the system
+ *  prompt. PaddleOCR is absent from the provider list — it cannot chat. */
+function ProofreadPanel({
+  draft,
+  setDraft,
+  effectiveProvider,
+  models,
+  refreshing,
+  refreshError,
+  onRefresh,
+}: ProofreadPanelProps) {
+  const t = useT();
+  const provider = draft.proofread_provider ?? null;
+  // Empty selection means "follow the OCR model" — surface which model that
+  // resolves to, so the default option isn't a mystery.
+  const fallbackModel = modelFieldPlaceholder(effectiveProvider, draft);
+  // PaddleOCR cannot chat, so its OCR models are not proofread candidates.
+  const selectableModels =
+    effectiveProvider === "paddleocr"
+      ? draft.proofread_model
+        ? [draft.proofread_model]
+        : []
+      : modelOptions(effectiveProvider, draft.proofread_model, models);
+  return (
+    <div className="px-7 py-6">
+      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+        {t("settings.proofreadTab")}
+      </h3>
+      <p className="mb-2 text-[13px] text-foreground-muted">
+        {t("settings.proofreadProviderNote")}
+      </p>
+      {/* Proofreading has no text-only mode, so a model without image input
+          fails at send time rather than degrading. This is the only warning
+          the user gets before that happens. */}
+      <p className="mb-5 text-[13px] text-foreground-muted">
+        {t("settings.proofreadImageNote")}
+      </p>
+      <div className="space-y-4">
+        <Field label={t("settings.proofreadProvider")}>
+          <select
+            value={provider ?? ""}
+            onChange={(e) =>
+              setDraft((d) => ({
+                ...d,
+                proofread_provider:
+                  e.target.value === "" ? null : (e.target.value as Provider),
+              }))
+            }
+            className="h-8 w-[240px] rounded border border-border bg-background px-2 text-[13px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+          >
+            <option value="">{t("settings.proofreadProviderFollow")}</option>
+            {PROVIDER_ORDER.filter((p) => p !== "paddleocr").map((p) => (
+              <option key={p} value={p}>
+                {providerLabel(p, t)}
+              </option>
+            ))}
+          </select>
+          {draft.proofread_provider === "paddleocr" && (
+            <div className="text-[11px] text-destructive">
+              {t("settings.proofreadProviderNote")}
+            </div>
+          )}
+        </Field>
+
+        <Field label={t("settings.proofreadModel")}>
+          <div className="flex items-center justify-between">
+            <select
+              value={draft.proofread_model}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, proofread_model: e.target.value }))
+              }
+              className="h-8 flex-1 rounded border border-border bg-background px-2 text-[13px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+            >
+              <option value="">
+                {fallbackModel
+                  ? t("settings.proofreadModelFollow", { model: fallbackModel })
+                  : t("settings.proofreadModelFollowEmpty")}
+              </option>
+              {selectableModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing || effectiveProvider === "paddleocr"}
+              className="ml-2 flex items-center gap-1 rounded border border-border bg-transparent px-2.5 py-1 text-[11px] text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay disabled:cursor-default disabled:opacity-60"
+              title={t("settings.refreshModels")}
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+                strokeWidth={1.8}
+              />
+              {t("common.refresh")}
+            </button>
+          </div>
+          {refreshError && (
+            <div className="text-[11px] text-destructive">
+              {t("settings.refreshFailed", { message: refreshError })}
+            </div>
+          )}
+        </Field>
+
+        <Field label={t("settings.proofreadPromptTitle")}>
+          <textarea
+            value={draft.proofread_prompt}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, proofread_prompt: e.target.value }))
+            }
+            placeholder={defaultProofreadPrompt()}
+            className="min-h-[160px] rounded border border-border bg-background p-2.5 text-[13px] leading-relaxed text-foreground placeholder:text-foreground-placeholder focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+          />
+          <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
+            <span>{t("settings.promptEmptyNote")}</span>
+            <button
+              type="button"
+              onClick={() =>
+                setDraft((d) => ({
+                  ...d,
+                  proofread_prompt: defaultProofreadPrompt(),
+                }))
+              }
+              className="text-foreground-muted transition-colors hover:text-foreground"
+            >
+              {t("settings.promptReset")}
+            </button>
+          </div>
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+/** The placeholder shows the OCR-model fallback the backend would actually
+ *  use when the proofread model is left empty. */
+function modelFieldPlaceholder(
+  provider: Provider,
+  draft: NonSecretSettings
+): string {
+  switch (provider) {
+    case "openai":
+      return draft.openai_model;
+    case "openrouter":
+      return draft.openrouter_model;
+    case "openai_compatible":
+      return draft.openai_compatible_model;
+    case "paddleocr":
+      return "";
+  }
 }
 
 interface LanguagePanelProps {

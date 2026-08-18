@@ -304,6 +304,7 @@ fn build_reading_items(
     let mut empty_table_notice = false;
     let mut inferred_furniture_count = 0usize;
     let mut scanner_artifact_count = 0usize;
+    let mut content_free_pages = 0usize;
     for page in &document.pages {
         let mut page_items = Vec::new();
         for block in ordered_blocks(page) {
@@ -360,14 +361,24 @@ fn build_reading_items(
                 anchor: None,
             });
         }
-        if !page_items.is_empty() {
-            if options.include_page_number {
-                items.push(ReadingItem {
-                    role: BlockRole::PageNumber,
-                    text: None,
-                    anchor: Some(page_anchor_label(page)),
-                });
-            }
+        // The page-number anchor's output depends only on
+        // `include_page_number`, never on whether the page produced content:
+        // a source page whose text was emptied (or whose blocks were all
+        // filtered out) must still be visible in the reading edition as its
+        // page-number line — otherwise the page vanishes silently and
+        // page-by-page collation against the source breaks. With
+        // `include_page_number` off the user opted out of anchors entirely,
+        // and a content-free page produces nothing.
+        if options.include_page_number {
+            items.push(ReadingItem {
+                role: BlockRole::PageNumber,
+                text: None,
+                anchor: Some(page_anchor_label(page)),
+            });
+        }
+        if page_items.is_empty() {
+            content_free_pages += 1;
+        } else {
             items.extend(page_items);
         }
     }
@@ -411,6 +422,13 @@ fn build_reading_items(
             "已过滤 {} 个扫描/封装元数据块",
             "Filtered out {} scanner / container metadata blocks",
             scanner_artifact_count
+        ));
+    }
+    if content_free_pages > 0 {
+        warnings.push(carpo_core::trf!(
+            "{} 个源页无可导出内容，已仅保留页码",
+            "{} source page(s) carried no exportable content — page numbers kept",
+            content_free_pages
         ));
     }
     items
@@ -1387,6 +1405,7 @@ mod tests {
                         Some(2),
                     ),
                 ],
+                dimensions_approximate: false,
             },
             LayoutPage {
                 index: 2,
@@ -1401,6 +1420,7 @@ mod tests {
                         Some(2),
                     ),
                 ],
+                dimensions_approximate: false,
             },
             LayoutPage {
                 index: 3,
@@ -1415,6 +1435,7 @@ mod tests {
                         Some(2),
                     ),
                 ],
+                dimensions_approximate: false,
             },
         ]);
         let mut warnings = Vec::new();
@@ -1449,6 +1470,7 @@ mod tests {
                 [40.0, 300.0, 85.0, 780.0],
                 Some(1),
             )],
+            dimensions_approximate: false,
         };
         let d = doc(vec![page(1), page(2), page(3)]);
         let mut warnings = Vec::new();
@@ -1462,7 +1484,11 @@ mod tests {
     }
 
     #[test]
-    fn scanner_artifact_blocks_are_dropped_without_empty_anchor() {
+    fn scanner_artifact_pages_keep_their_page_number_anchor() {
+        // A page whose only blocks were filtered (scanner metadata) used to
+        // vanish from the reading edition entirely. It now keeps its
+        // page-number anchor, so collation against the source still lines
+        // up — and the warning says so.
         let d = doc(vec![
             LayoutPage {
                 index: 1,
@@ -1474,20 +1500,114 @@ mod tests {
                     [50.0, 100.0, 950.0, 500.0],
                     Some(1),
                 )],
+                dimensions_approximate: false,
             },
             LayoutPage {
                 index: 2,
                 width: 1000.0,
                 height: 1500.0,
                 blocks: vec![block("text", "正文", [50.0, 100.0, 950.0, 500.0], Some(1))],
+                dimensions_approximate: false,
             },
         ]);
         let mut warnings = Vec::new();
         let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].anchor.as_deref(), Some("源文件第 2 页"));
-        assert_eq!(items[1].text.as_deref(), Some("正文"));
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].anchor.as_deref(), Some("源文件第 1 页"));
+        assert_eq!(items[1].anchor.as_deref(), Some("源文件第 2 页"));
+        assert_eq!(items[2].text.as_deref(), Some("正文"));
         assert!(warnings.iter().any(|w| w.contains("扫描/封装元数据")));
+        assert!(warnings.iter().any(|w| w.contains("仅保留页码")));
+    }
+
+    #[test]
+    fn emptied_page_keeps_its_anchor_and_drops_its_text() {
+        // 条 8: a page the user emptied (`blocks: []`) must not resurrect the
+        // old OCR text — the reading edition shows its page-number anchor and
+        // nothing else.
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![],
+            dimensions_approximate: false,
+        }]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].anchor.as_deref(), Some("源文件第 1 页"));
+        assert!(items[0].text.is_none());
+        assert!(warnings.iter().any(|w| w.contains("仅保留页码")));
+    }
+
+    #[test]
+    fn emptied_page_produces_nothing_without_page_numbers() {
+        let d = doc(vec![LayoutPage {
+            index: 1,
+            width: 1000.0,
+            height: 1500.0,
+            blocks: vec![],
+            dimensions_approximate: false,
+        }]);
+        let mut opts = LayoutPdfExportOptions::default();
+        opts.include_page_number = false;
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &opts, &mut warnings);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn mixed_content_and_empty_pages_keep_anchor_order() {
+        let d = doc(vec![
+            LayoutPage {
+                index: 1,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![block(
+                    "text",
+                    "正文一",
+                    [50.0, 100.0, 950.0, 500.0],
+                    Some(1),
+                )],
+                dimensions_approximate: false,
+            },
+            LayoutPage {
+                index: 2,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![],
+                dimensions_approximate: false,
+            },
+            LayoutPage {
+                index: 3,
+                width: 1000.0,
+                height: 1500.0,
+                blocks: vec![block(
+                    "text",
+                    "正文三",
+                    [50.0, 100.0, 950.0, 500.0],
+                    Some(1),
+                )],
+                dimensions_approximate: false,
+            },
+        ]);
+        let mut warnings = Vec::new();
+        let items = build_reading_items(&d, &LayoutPdfExportOptions::default(), &mut warnings);
+        let anchors = items
+            .iter()
+            .filter_map(|item| item.anchor.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            anchors,
+            vec!["源文件第 1 页", "源文件第 2 页", "源文件第 3 页"]
+        );
+        let texts = items
+            .iter()
+            .filter_map(|item| item.text.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(texts, vec!["正文一", "正文三"]);
+        // Exactly one content-free page counted.
+        assert!(warnings.iter().any(|w| w.contains("1 个源页")));
     }
 
     #[test]
@@ -1501,6 +1621,7 @@ mod tests {
                 block("text", "second", [0.0, 0.0, 10.0, 10.0], Some(2)),
                 block("text", "first", [0.0, 0.0, 10.0, 10.0], Some(1)),
             ],
+            dimensions_approximate: false,
         };
         let ordered = ordered_blocks(&page);
         assert_eq!(ordered[0].text, "first");
@@ -1515,6 +1636,7 @@ mod tests {
                 block("vertical_text", "left", [100.0, 50.0, 200.0, 900.0], None),
                 block("vertical_text", "right", [800.0, 50.0, 900.0, 900.0], None),
             ],
+            dimensions_approximate: false,
         };
         let ordered = ordered_blocks(&page);
         assert_eq!(ordered[0].text, "right");
@@ -1528,6 +1650,7 @@ mod tests {
             width: 1000.0,
             height: 1500.0,
             blocks: vec![block("number", "890\n28", [0.0, 0.0, 10.0, 10.0], None)],
+            dimensions_approximate: false,
         };
         assert_eq!(page_anchor_label(&page), "源文件第 1 页");
 
@@ -1536,6 +1659,7 @@ mod tests {
             width: 1000.0,
             height: 1500.0,
             blocks: vec![block("number", "11", [0.0, 0.0, 10.0, 10.0], None)],
+            dimensions_approximate: false,
         };
         assert_eq!(page_anchor_label(&page), "源文件第 3 页");
     }
@@ -1551,6 +1675,7 @@ mod tests {
                 block("number", "七", [0.0, 0.0, 10.0, 10.0], None),
                 block("text", "正文", [0.0, 20.0, 100.0, 200.0], Some(1)),
             ],
+            dimensions_approximate: false,
         }]);
         let mut warnings = Vec::new();
         let items = build_reading_items(&d, &opts, &mut warnings);
@@ -1578,6 +1703,7 @@ mod tests {
                     Some(3),
                 ),
             ],
+            dimensions_approximate: false,
         }]);
         let mut warnings = Vec::new();
         let items = build_reading_items(&d, &opts, &mut warnings);
@@ -1600,6 +1726,7 @@ mod tests {
                 ),
                 block("text", "正文段落", [0.0, 20.0, 100.0, 200.0], Some(2)),
             ],
+            dimensions_approximate: false,
         }]);
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("out.md");
@@ -1644,6 +1771,7 @@ mod tests {
                     Some(3),
                 ),
             ],
+            dimensions_approximate: false,
         }]);
         let mut warnings = Vec::new();
         let items = build_reading_items(&d, &opts, &mut warnings);
@@ -1661,6 +1789,7 @@ mod tests {
             width: 1000.0,
             height: 1500.0,
             blocks: vec![block("text", &long, [80.0, 120.0, 900.0, 1400.0], Some(1))],
+            dimensions_approximate: false,
         }]);
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("reading.pdf");

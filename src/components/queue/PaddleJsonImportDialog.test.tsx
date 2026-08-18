@@ -49,6 +49,7 @@ const imported = {
     hasMarkdown: true,
     hasImages: false,
     hasOutputImages: false,
+    estimatedDimensionPages: [1],
     warnings: ["页面尺寸由 bbox 估算"],
   },
   document: {

@@ -63,6 +63,18 @@ export interface NonSecretSettings {
   openrouter_model: string;
   openai_compatible_base_url: string;
   openai_compatible_model: string;
+  /** Which provider runs the LLM proofread pass. `null` = follow the OCR
+   *  provider. Mirrors `config::NonSecretSettings::proofread_provider`;
+   *  older settings.json files parse to `null` via serde default. */
+  proofread_provider: Provider | null;
+  /** Model for the proofread pass. Empty = fall back to the resolved
+   *  provider's OCR model (mirrors `resolve_proofread_model` in Rust). */
+  proofread_model: string;
+  /** System prompt for the proofread pass. Empty = built-in default at call
+   *  time, in the active UI language (mirrors `resolve_proofread_prompt`).
+   *  The frontend hydrates an empty value to the built-in default so the
+   *  settings dialog never shows a blank prompt. */
+  proofread_prompt: string;
 }
 
 export interface PdfInfo {
@@ -158,7 +170,7 @@ export interface GroupedOcrRequest {
   newspaper_date: string;
 }
 
-export type JobKind = "grouped_ocr" | "whole_file";
+export type JobKind = "grouped_ocr" | "whole_file" | "proofread";
 
 export interface JobListEntry {
   job_id: string;
@@ -190,7 +202,8 @@ export type ProgressStage =
   | { kind: "page_running"; page: number; total: number }
   | { kind: "page_done"; page: number; total: number }
   | { kind: "block_running"; article_num: number; index: number; count: number }
-  | { kind: "block_done"; article_num: number; index: number; count: number };
+  | { kind: "block_done"; article_num: number; index: number; count: number }
+  | { kind: "proofread_running"; index: number; count: number };
 
 export interface JobProgress {
   job_id: string;
@@ -265,11 +278,79 @@ export interface WholeFileJobDone {
   source?: WholeFileDoneSource;
 }
 
-/** Wire payload for `JOB_DONE`. The two shapes are disambiguated by the
+/** Wire payload for `JOB_DONE`. The shapes are disambiguated by the
  *  active job's `kind` snapshot — the wire payload itself does not carry a
  *  discriminator field, so callers must narrow via `activeJob.kind` before
  *  reading per-arm fields. */
-export type JobDone = GroupedJobDone | WholeFileJobDone;
+export type JobDone = GroupedJobDone | WholeFileJobDone | ProofreadJobDone;
+
+// --- Proofread (LLM pass) ---------------------------------------------------
+
+/** Mirrors `ocr::proofread::ProofreadCategory` in Rust. `semantic` is the
+ *  category the review view defaults to rejecting: a historical transcript
+ *  keeps its original wording. */
+export type ProofreadCategory =
+  | "punct"
+  | "charform"
+  | "garble"
+  | "layout"
+  | "semantic";
+
+export interface ProofreadSuggestion {
+  before: string;
+  after: string;
+  context_before: string;
+  category: ProofreadCategory;
+  confidence: number;
+  reason: string;
+}
+
+/** One text unit to proofread. `key` is an opaque frontend-supplied id
+ *  (`page:12` or `article:a_xxx`) echoed back verbatim. */
+export interface ProofreadUnit {
+  key: string;
+  text: string;
+  /** Scans of the original this text came from, as bare base64 JPEG (no
+   *  `data:` prefix — the backend adds the wrapper, and refuses a payload
+   *  that brings its own). One per page the unit occupies; empty only when
+   *  capture failed, which sends the unit as text alone. */
+  images?: string[];
+}
+
+/** Payload for `invoke("start_proofread", { req })`. */
+export interface ProofreadRequest {
+  file_id: string;
+  units: ProofreadUnit[];
+  /** Snapshot of the settings the user confirmed when the job started —
+   *  the backend validates and runs exactly this view, so the timing of the
+   *  settings write-back never changes which model actually runs. */
+  provider?: Provider;
+  model?: string;
+  prompt?: string;
+}
+
+export interface ProofreadResultEntry {
+  key: string;
+  /** Only anchor-validated suggestions — the model's output has already
+   *  been filtered by the backend. */
+  suggestions: ProofreadSuggestion[];
+  /** Suggestions the model sent but anchor validation dropped. */
+  discarded: number;
+  model: string;
+}
+
+export interface ProofreadErrorEntry {
+  key: string;
+  message: string;
+}
+
+/** Proofread job result. Used by `start_proofread`. */
+export interface ProofreadJobDone {
+  job_id: string;
+  results: ProofreadResultEntry[];
+  errors: ProofreadErrorEntry[];
+  cancelled: boolean;
+}
 
 export interface JobError {
   job_id: string;
@@ -313,6 +394,11 @@ export type AppErrorKind =
   | "Ocr"
   | "Network"
   | "Cancelled"
+  /** Job admission refused because the process is already at
+   *  `MAX_ACTIVE_JOBS` (HTTP 429 on the web runtime). The UI keeps its own
+   *  gate in front of this (`selectJobStartBlocked`), so it surfaces through
+   *  the ordinary error line rather than needing its own treatment. */
+  | "Busy"
   | "Internal";
 
 /** Wire shape mirroring Rust `AppError` (`#[serde(tag = "kind", content =

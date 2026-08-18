@@ -1,12 +1,17 @@
 import { useEffect, useRef } from "react";
 import { t } from "@/i18n";
 import { loadRasterImage, renderPage } from "@/lib/tauri";
+import { ACTIVE_PREVIEW_DPI } from "@/lib/ocr-profile";
 import { logError } from "@/lib/runtime";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { usePageBitmapCacheContext } from "./PageBitmapCacheContext";
 
-const PDF_PREVIEW_DPI = 150;
+/** The one preview DPI. Shared rather than re-declared because block
+ *  rectangles are stored in *this* DPI's pixels, and the proofread capture
+ *  path crops the cached bitmaps with them — two constants that drifted apart
+ *  would silently crop the wrong region. */
+const PDF_PREVIEW_DPI = ACTIVE_PREVIEW_DPI;
 
 /** Images are single-page; their bitmap shares the page LRU under page 1. */
 const IMAGE_PAGE = 1;

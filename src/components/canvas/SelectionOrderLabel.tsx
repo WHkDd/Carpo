@@ -1,13 +1,6 @@
 import { memo, useMemo } from "react";
 import { Group, Rect, Text } from "react-konva";
-
-function readHslVar(name: string, _colorVersion: number): string {
-  if (typeof document === "undefined") return "";
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue(name)
-    .trim();
-  return raw ? `hsl(${raw})` : "";
-}
+import { cssHsl } from "@/lib/article-color-token";
 
 export interface SelectionOrderLabelProps {
   x: number;
@@ -25,14 +18,16 @@ function SelectionOrderLabelImpl({ x, y, order, colorVersion }: SelectionOrderLa
   // Approximate width: each digit ~7px at 11px font + 8px padding
   const textW = Math.max(MIN_W, text.length * 7 + 8);
 
-  const bgFill = useMemo(
-    () => readHslVar("--primary", colorVersion) || "#262626",
-    [colorVersion]
-  );
-  const textFill = useMemo(
-    () => readHslVar("--primary-foreground", colorVersion) || "#f7f7f5",
-    [colorVersion]
-  );
+  // `colorVersion` is referenced only to re-run the memo after a theme change;
+  // the token cache was already cleared by the same event.
+  const bgFill = useMemo(() => {
+    void colorVersion;
+    return cssHsl("--primary", 1, "0 0% 15%");
+  }, [colorVersion]);
+  const textFill = useMemo(() => {
+    void colorVersion;
+    return cssHsl("--primary-foreground", 1, "60 3% 97%");
+  }, [colorVersion]);
 
   return (
     <Group x={x + PAD} y={y + PAD} listening={false}>

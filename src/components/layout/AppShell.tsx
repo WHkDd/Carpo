@@ -24,11 +24,12 @@ import {
   type JobDone,
   type JobError,
   type JobProgress,
+  type ProofreadJobDone,
   type WholeFileJobDone,
 } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { getLanguage, t } from "@/i18n";
-import { defaultOcrPrompt } from "@/store/settingsSlice";
+import { defaultOcrPrompt, defaultProofreadPrompt } from "@/store/settingsSlice";
 import {
   CANVAS_MIN_WIDTH,
   QUEUE_COLLAPSED_WIDTH,
@@ -36,6 +37,7 @@ import {
   railMaxWidth,
 } from "@/store/uiSlice";
 import type { RecognizedPage, RecognizedPageSourceMode } from "@/store/jobSlice";
+import { buildProofreadReview, type ProofreadReview } from "@/lib/proofread";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
 import { StatusBar } from "./StatusBar";
@@ -83,6 +85,7 @@ function AppShellInner() {
   const setDocumentResult = useStore((s) => s.setDocumentResult);
   const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
   const setRecognizedPages = useStore((s) => s.setRecognizedPages);
+  const setProofreadReviews = useStore((s) => s.setProofreadReviews);
   const railWidth = useStore((s) => s.railWidth);
   const setRailWidth = useStore((s) => s.setRailWidth);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -150,13 +153,26 @@ function AppShellInner() {
             ...(isFreshDefaultPrompt
               ? { ocr_prompt: defaultOcrPrompt(detected) }
               : {}),
+            // Old settings.json files parse `proofread_prompt` as ""
+            // (serde default); the backend falls back to the built-in at
+            // call time, and the dialog must show the same text it would
+            // actually send — so hydrate it here, where the language is
+            // finally known.
+            ...(s.proofread_prompt.trim().length === 0
+              ? { proofread_prompt: defaultProofreadPrompt(detected) }
+              : {}),
           });
           // Nothing was ever chosen (fresh install) — adopt the locale guess
           // and persist it, so the backend localizes its progress labels and
           // error messages the same way from here on.
           useStore.getState().setLanguage(detected);
         } else {
-          setSettings(s);
+          setSettings({
+            ...s,
+            ...(s.proofread_prompt.trim().length === 0
+              ? { proofread_prompt: defaultProofreadPrompt(s.language) }
+              : {}),
+          });
         }
       } catch (e) {
         const message = appErrorMessage(e);
@@ -228,7 +244,7 @@ function AppShellInner() {
             articles: ordered,
           });
           setDocumentResult(job.fileId, assembled);
-        } else {
+        } else if (job.kind === "whole_file") {
           // whole_file: zip requestedPages with results/errors, then
           // write normalized page results while keeping legacy page text
           // in sync for older consumers.
@@ -272,6 +288,35 @@ function AppShellInner() {
                   };
           }
           setRecognizedPages(job.fileId, perPage);
+        } else if (job.kind === "proofread") {
+          // proofread: zip the submitted units with results/errors and build
+          // one review per unit. `baseText` comes from the submitted unit,
+          // not the live store — the text may have been edited during the
+          // run, and the review must diff against what the model saw. A
+          // later edit then trips the stale banner instead of silently
+          // mis-applying offsets.
+          const proof = payload as ProofreadJobDone;
+          const resultByKey = new Map(
+            proof.results.map((r) => [r.key, r])
+          );
+          const errorByKey = new Map(
+            proof.errors.map((er) => [er.key, er.message])
+          );
+          const reviews: Record<string, ProofreadReview> = {};
+          const now = Date.now();
+          for (const unit of job.units) {
+            const review = buildProofreadReview(
+              unit,
+              resultByKey.get(unit.key),
+              errorByKey.get(unit.key) ??
+                (resultByKey.has(unit.key)
+                  ? undefined
+                  : t("job.noResultReturned")),
+              now
+            );
+            if (review) reviews[unit.key] = review;
+          }
+          setProofreadReviews(job.fileId, reviews);
         }
 
         const fileName =
@@ -279,8 +324,14 @@ function AppShellInner() {
           t("common.untitledFile");
         void notifyOcrResult({
           fileId: job.fileId,
-          title: t("notification.doneTitle"),
-          body: t("notification.doneBody", { name: fileName }),
+          title:
+            job.kind === "proofread"
+              ? t("notification.proofreadDoneTitle")
+              : t("notification.doneTitle"),
+          body:
+            job.kind === "proofread"
+              ? t("notification.proofreadDoneBody", { name: fileName })
+              : t("notification.doneBody", { name: fileName }),
         });
       }
       applyJobDone(payload);
@@ -393,6 +444,7 @@ function AppShellInner() {
     setDocumentResult,
     setArticleOcrTexts,
     setRecognizedPages,
+    setProofreadReviews,
   ]);
 
   useEffect(() => {
@@ -494,7 +546,7 @@ function AppShellInner() {
 
   return (
     <>
-      {/* min-w 1180 = 244 (queue) + 632 (canvas) + 304 (rail) + borders, and
+      {/* min-w 1180 = 244 (queue) + 552 (canvas) + 384 (rail) + borders, and
           matches `minWidth` in tauri.conf.json. The old 1100 sat below the
           three-column floor, so the right rail got clipped at the smallest
           window size the OS would allow. The canvas column's own floor is

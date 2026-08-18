@@ -67,7 +67,11 @@ export const createQueueSlice: StateCreator<
       delete state.articleOcrTexts[id];
       delete state.pageOcrTexts[id];
       delete state.recognizedPages[id];
+      delete state.proofreadReviews[id];
       delete state.wholeFileRange[id];
+      delete state.editingBlock[id];
+      delete state.editingLayoutBlock[id];
+      delete state.focusedRegion[id];
       // If we were viewing this file's drawer, drop the article scope so the
       // drawer (now empty) doesn't keep dangling articleId state.
       state.selectedArticleIds = [];
