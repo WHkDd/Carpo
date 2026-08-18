@@ -50,6 +50,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Only persist caches on main; PR branches only read them.
+          # Otherwise every run writes a fresh ~140MB entry and the
+          # 0.5GB free Actions storage quota is exhausted within days.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -66,6 +70,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Cache pdfium
         uses: actions/cache@v4
         with:
