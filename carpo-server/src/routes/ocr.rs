@@ -4,10 +4,11 @@ use axum::{
     Json,
 };
 use carpo_core::{
-    config::{self, NonSecretSettings},
+    config::{self, NonSecretSettings, Provider},
     error::AppError,
     jobs::{
         grouped::{ArticleOcrPlan, FileKind, GroupedOcrRequest},
+        proofread::{ProofreadRequest, ProofreadUnit},
         whole_file::WholeFileOcrRequest,
         JobEvent, JobKind, JobListEntry,
     },
@@ -72,7 +73,7 @@ pub async fn start_grouped_ocr(
         newspaper_date: req.newspaper_date,
     };
     carpo_core::jobs::grouped::validate(&req)?;
-    let (id, token) = state.core.jobs.register(JobKind::GroupedOcr);
+    let (id, token) = state.core.jobs.try_register(JobKind::GroupedOcr)?;
     carpo_core::jobs::grouped::spawn_with_settings(state.core.clone(), req, id, token, settings);
     Ok(Json(JobStarted {
         job_id: id.to_string(),
@@ -95,27 +96,93 @@ pub async fn start_whole_file_ocr(
     };
     let settings = config::load(&state.data_dir)?;
     carpo_core::jobs::whole_file::validate(&req, &settings)?;
-    let (id, token) = state.core.jobs.register(JobKind::WholeFile);
-    carpo_core::jobs::whole_file::spawn(state.core.clone(), req, id, token);
+    let (id, token) = state.core.jobs.try_register(JobKind::WholeFile)?;
+    // Hand the runner the same snapshot `validate` just approved. `spawn` takes
+    // no settings and has the runner re-read the file, so a concurrent
+    // `PUT /api/settings` could run the job under a configuration that was
+    // never validated — the other two routes already pass their snapshot down.
+    carpo_core::jobs::whole_file::spawn_with_settings(state.core.clone(), req, id, token, settings);
     Ok(Json(JobStarted {
         job_id: id.to_string(),
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WebProofreadRequest {
+    pub file_id: Uuid,
+    pub units: Vec<ProofreadUnit>,
+    /// Settings snapshot the client confirmed — the same fields the desktop
+    /// invoke carries. Validated and run verbatim (see
+    /// `jobs::proofread::effective_settings`).
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+pub async fn start_proofread(
+    State(state): State<ServerState>,
+    Json(req): Json<WebProofreadRequest>,
+) -> ServerResult<Json<JobStarted>> {
+    // The proofread text comes from the client, so this is a consistency check
+    // rather than a security boundary: all three job routes now refuse a
+    // `file_id` this server has no upload for.
+    file_record(&state, req.file_id)?;
+    let settings = config::load(&state.data_dir)?;
+    let req = ProofreadRequest {
+        file_id: req.file_id.to_string(),
+        units: req.units,
+        provider: req.provider,
+        model: req.model,
+        prompt: req.prompt,
+    };
+    carpo_core::jobs::proofread::validate(&req, &settings)?;
+    let (id, token) = state.core.jobs.try_register(JobKind::Proofread)?;
+    carpo_core::jobs::proofread::spawn_with_settings(state.core.clone(), req, id, token, settings);
+    Ok(Json(JobStarted {
+        job_id: id.to_string(),
+    }))
+}
+
+/// Lists models for a provider, for the settings dialog's "refresh" button.
+///
+/// The settings dialog edits a draft locally, so the request may carry an
+/// override for the provider settings and for the key. **The two travel
+/// together**: a caller that supplies its own `secret` may also choose the
+/// endpoint that key is sent to, but a caller that falls back to the key this
+/// server has on disk gets the endpoint this server has on disk as well.
+///
+/// Without that pairing the endpoint is a key-read primitive: the stored key
+/// is otherwise write-only (`/api/settings/key-status` returns booleans), and
+/// a single unauthenticated POST naming `provider: openai_compatible` plus an
+/// attacker-controlled `openai_compatible_base_url` would have this server
+/// send its own `Authorization: Bearer …` to that host. `ocr::list_models`
+/// additionally screens the resolved URL (see `ocr::base_url`), which is what
+/// stops the on-disk value from being steered inward — but only deployment
+/// authentication stops someone who can also `PUT /api/settings` first.
 pub async fn list_provider_models(
     State(state): State<ServerState>,
     Json(req): Json<ListModelsRequest>,
 ) -> ServerResult<Json<Vec<String>>> {
-    let settings = req.settings.unwrap_or(config::load(&state.data_dir)?);
-    let secret = match req.secret {
-        Some(value) if !value.is_empty() => Some(value),
+    let (settings, secret) = match req.secret {
+        Some(value) if !value.is_empty() => (
+            match req.settings {
+                Some(s) => s,
+                None => config::load(&state.data_dir)?,
+            },
+            Some(value),
+        ),
         _ => {
-            state
+            let settings = config::load(&state.data_dir)?;
+            let secret = state
                 .secrets
                 .get(carpo_core::jobs::grouped::secret_key_for_provider(
                     settings.provider,
                 ))
-                .await?
+                .await?;
+            (settings, secret)
         }
     };
     let models = ocr::list_models(&state.core.http, &settings, secret.as_deref()).await?;

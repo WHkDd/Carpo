@@ -30,6 +30,15 @@ pub enum AppError {
     #[error("cancelled: {0}")]
     Cancelled(String),
 
+    /// The request is well-formed but the process is at capacity right now —
+    /// deliberately distinct from [`AppError::Config`], which means "this
+    /// request will never be accepted". `carpo-server` maps it to HTTP 429.
+    /// Kept out of [`AppError::is_retryable`] on purpose: that flag drives the
+    /// automatic retry loop in `ocr::with_retry`, and auto-retrying a capacity
+    /// refusal is just knocking harder on a closed door.
+    #[error("busy: {0}")]
+    Busy(String),
+
     #[error("internal: {0}")]
     Internal(String),
 }

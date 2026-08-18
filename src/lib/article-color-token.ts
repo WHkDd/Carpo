@@ -1,3 +1,12 @@
+/**
+ * Canvas colour tokens.
+ *
+ * Konva has no CSS-variable resolution of its own, so every colour drawn on
+ * the canvas has to be resolved to a literal string at render time. Doing that
+ * read per shape per frame would put `getComputedStyle` on the hot path, so
+ * this module owns a cache plus the `<html>`-class MutationObserver that
+ * invalidates it when the theme changes.
+ */
 const cache = new Map<string, string>();
 let observer: MutationObserver | null = null;
 const listeners = new Set<() => void>();
@@ -43,12 +52,40 @@ export function subscribeArticleColorTokens(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-function readTokenTriple(slot: number): string | null {
+function readVarTriple(name: string): string | null {
   if (typeof document === "undefined") return null;
   const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue(`--article-${slot}`)
+    .getPropertyValue(name)
     .trim();
   return raw || null;
+}
+
+function readTokenTriple(slot: number): string | null {
+  return readVarTriple(`--article-${slot}`);
+}
+
+/**
+ * Resolves any design token declared as a bare HSL triple (`H S% L%`) into a
+ * string Konva can parse. Shares the cache and theme invalidation above, so a
+ * component that already re-renders on `colorVersion` picks up the new value
+ * without doing its own DOM read.
+ *
+ * `name` is namespaced by the leading `--`, so these entries can never collide
+ * with `articleHsl`'s numeric cache keys.
+ */
+export function cssHsl(
+  name: string,
+  alpha = 1,
+  fallback = FALLBACK_TRIPLE
+): string {
+  initObserver();
+  const cacheKey = `${name}:${alpha}`;
+  const cached = cache.get(cacheKey);
+  if (cached != null) return cached;
+
+  const result = `hsl(${readVarTriple(name) ?? fallback} / ${alpha})`;
+  cache.set(cacheKey, result);
+  return result;
 }
 
 function isDarkMode(): boolean {

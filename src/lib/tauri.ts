@@ -9,6 +9,7 @@ import type {
   JobStarted,
   NonSecretSettings,
   PdfInfo,
+  ProofreadRequest,
   RenderPagePayload,
   SecretKey,
   WholeFileOcrRequest,
@@ -198,6 +199,24 @@ export async function startWholeFileOcr(
     });
   }
   return invoke<JobStarted>("start_whole_file_ocr", { req });
+}
+
+export async function startProofread(
+  req: ProofreadRequest
+): Promise<JobStarted> {
+  if (!isTauriRuntime()) {
+    return httpJson<JobStarted>("/api/ocr/proofread", {
+      method: "POST",
+      body: JSON.stringify({
+        file_id: req.file_id,
+        units: req.units,
+        provider: req.provider ?? null,
+        model: req.model ?? null,
+        prompt: req.prompt ?? null,
+      }),
+    });
+  }
+  return invoke<JobStarted>("start_proofread", { req });
 }
 
 export async function listProviderModels(opts?: {

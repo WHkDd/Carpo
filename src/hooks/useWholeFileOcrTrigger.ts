@@ -104,20 +104,27 @@ export function useWholeFileOcrTrigger() {
   const [starting, setStarting] = useState(false);
 
   const trigger = useCallback(async () => {
-    if (!currentFileId || !file) {
-      setError(t("trigger.openFileFirst"));
+    // Claimed before the first `await` and released in a `finally` that
+    // covers every early return below — see `claimJobStart` in `jobSlice`.
+    const owner = useStore.getState().claimJobStart("whole_file");
+    if (owner === null) {
+      setError(t("trigger.jobRunning"));
       return;
     }
-    if (pages.length === 0) {
-      setError(rangeState.error ?? t("trigger.noPages"));
-      return;
-    }
-    if (rangeState.error !== null) {
-      setError(rangeState.error);
-      return;
-    }
-    setStarting(true);
     try {
+      if (!currentFileId || !file) {
+        setError(t("trigger.openFileFirst"));
+        return;
+      }
+      if (pages.length === 0) {
+        setError(rangeState.error ?? t("trigger.noPages"));
+        return;
+      }
+      if (rangeState.error !== null) {
+        setError(rangeState.error);
+        return;
+      }
+      setStarting(true);
       if (
         settings.provider === "openai_compatible" &&
         !settings.openai_compatible_base_url
@@ -167,6 +174,7 @@ export function useWholeFileOcrTrigger() {
       setError(appErrorMessage(e));
     } finally {
       setStarting(false);
+      useStore.getState().releaseJobStart(owner);
     }
   }, [currentFileId, file, docState, pages, rangeState.error, settings, startJob]);
 

@@ -79,13 +79,20 @@ export function useGroupedOcrTrigger() {
   const [starting, setStarting] = useState(false);
 
   const trigger = useCallback(async () => {
-    if (!currentFileId || !file || !docState) return;
-    if (selectedSet.size === 0) {
-      setError(t("trigger.selectArticles"));
+    // Claimed before the first `await` and released in a `finally` that
+    // covers every early return below — see `claimJobStart` in `jobSlice`.
+    const owner = useStore.getState().claimJobStart("grouped_ocr");
+    if (owner === null) {
+      setError(t("trigger.jobRunning"));
       return;
     }
-    setStarting(true);
     try {
+      if (!currentFileId || !file || !docState) return;
+      if (selectedSet.size === 0) {
+        setError(t("trigger.selectArticles"));
+        return;
+      }
+      setStarting(true);
       const secretKey = PROVIDER_SECRET_KEY[settings.provider];
       const hasSecret = await getSecret(secretKey);
       if (
@@ -177,6 +184,7 @@ export function useGroupedOcrTrigger() {
       setError(appErrorMessage(e));
     } finally {
       setStarting(false);
+      useStore.getState().releaseJobStart(owner);
     }
   }, [currentFileId, file, docState, pageStates, settings, selectedSet, startJob, setRecognitionMode]);
 

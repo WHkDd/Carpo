@@ -20,14 +20,25 @@ const MAX_TOKENS: u32 = 4096;
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    messages: [Message<'a>; 1],
+    messages: Vec<Message<'a>>,
     max_tokens: u32,
 }
 
 #[derive(Serialize)]
 struct Message<'a> {
     role: &'a str,
-    content: [ContentPart<'a>; 2],
+    content: MessageContent<'a>,
+}
+
+/// A message body is either a plain string or the multi-part array the vision
+/// endpoints take. Untagged so both serialize to exactly the wire shape the
+/// API documents — a bare `"content": "..."` for text, `"content": [...]` for
+/// parts — with no discriminator of our own leaking into the request.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum MessageContent<'a> {
+    Text(&'a str),
+    Parts(Vec<ContentPart<'a>>),
 }
 
 #[derive(Serialize)]
@@ -52,6 +63,9 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct Choice {
     message: ChoiceMessage,
+    /// Absent from a few minimal providers; `length` / `max_tokens` means the
+    /// model hit the token cap and the text is cut off mid-sentence.
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -129,24 +143,39 @@ async fn recognize_inner(
     let data_url = format!("data:image/jpeg;base64,{}", STANDARD.encode(image_bytes));
     let body = ChatRequest {
         model,
-        messages: [Message {
+        messages: vec![Message {
             role: "user",
-            content: [
+            content: MessageContent::Parts(vec![
                 ContentPart::ImageUrl {
                     image_url: ImageUrlData { url: &data_url },
                 },
                 ContentPart::Text { text: prompt },
-            ],
+            ]),
         }],
         max_tokens: MAX_TOKENS,
     };
 
+    post_chat(client, base_url, key, &body, provider_label).await
+}
+
+/// Sends one chat-completions body and reduces the response to its text.
+/// Shared by every caller in this module so the OCR pass, the proofread pass
+/// and the image-assisted proofread pass cannot drift apart on error mapping —
+/// which status codes count as retryable, and how much of an upstream body is
+/// echoed back, are decisions that belong in exactly one place.
+async fn post_chat(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    body: &ChatRequest<'_>,
+    provider_label: &str,
+) -> AppResult<String> {
     let url = join(base_url, "/chat/completions");
     let resp = client
         .post(&url)
         .bearer_auth(key)
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(body)
         .send()
         .await
         .map_err(|e| AppError::Ocr {
@@ -175,18 +204,158 @@ async fn recognize_inner(
         retryable: false,
     })?;
 
-    let text = parsed
+    choice_text(parsed, provider_label)
+}
+
+/// Takes the first choice, refusing silently truncated output. A model that
+/// ran into the `max_tokens` cap produces half a sentence (or, for the
+/// proofread pass, half a JSON array) — reporting it as a real error beats
+/// shipping the user a document with the tail missing and no explanation.
+fn choice_text(parsed: ChatResponse, provider_label: &str) -> AppResult<String> {
+    let choice = parsed
         .choices
         .into_iter()
         .next()
-        .map(|c| c.message.content.trim().to_string())
         .ok_or_else(|| AppError::Ocr {
             provider: provider_label.into(),
             message: "empty choices in response".into(),
             retryable: false,
         })?;
+    if matches!(
+        choice.finish_reason.as_deref(),
+        Some("length") | Some("max_tokens")
+    ) {
+        return Err(AppError::Ocr {
+            provider: provider_label.into(),
+            message: crate::tr!(
+                "模型响应因达到 max_tokens 上限被截断，结果不完整。",
+                "The model response was truncated at the max_tokens limit and is incomplete."
+            )
+            .into(),
+            retryable: false,
+        });
+    }
+    Ok(choice.message.content.trim().to_string())
+}
 
-    Ok(text)
+/// One chat-completions call for the proofread pass. Shares the
+/// request/error handling with [`recognize`] but takes a system + user
+/// message pair, and takes `max_tokens` as a parameter: a page of correction
+/// suggestions is far longer than a page of OCR text, so the OCR path's fixed
+/// 4096 would silently cut the JSON in half.
+///
+/// `images_b64` are **raw base64 payloads without a `data:` prefix** — the
+/// `data:image/jpeg;base64,` wrapper is added here so a caller can never
+/// choose the mime type (the desktop encodes JPEG, and the server accepts the
+/// same from an untrusted caller). An empty slice sends the plain-text body,
+/// byte for byte what this function sent before images existed.
+#[allow(clippy::too_many_arguments)]
+pub async fn chat_text(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    images_b64: &[String],
+    max_tokens: u32,
+    provider_label: &str,
+    cancel: &CancellationToken,
+) -> AppResult<String> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(AppError::Cancelled(provider_label.into())),
+        result = chat_text_inner(
+            client, base_url, key, model, system_prompt, user_prompt, images_b64,
+            max_tokens, provider_label,
+        ) => result,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn chat_text_inner(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    images_b64: &[String],
+    max_tokens: u32,
+    provider_label: &str,
+) -> AppResult<String> {
+    if key.is_empty() {
+        return Err(AppError::Config(crate::trf!(
+            "{}：尚未配置 API Key，请在设置中填入。",
+            "{}: no API key configured — set one in Settings.",
+            provider_label
+        )));
+    }
+    if model.is_empty() {
+        return Err(AppError::Config(crate::trf!(
+            "{}：尚未配置模型。",
+            "{}: no model configured.",
+            provider_label
+        )));
+    }
+
+    // Built up front so the parts below can borrow them: `ContentPart` holds
+    // `&str`, and a URL formatted inside the `map` would not outlive the body.
+    let data_urls: Vec<String> = images_b64
+        .iter()
+        .map(|b64| format!("data:image/jpeg;base64,{b64}"))
+        .collect();
+
+    let user_content = if data_urls.is_empty() {
+        MessageContent::Text(user_prompt)
+    } else {
+        // Images first, then the text — the same order `recognize` uses, so
+        // both passes present a page to the model the same way.
+        let mut parts: Vec<ContentPart> = data_urls
+            .iter()
+            .map(|url| ContentPart::ImageUrl {
+                image_url: ImageUrlData { url },
+            })
+            .collect();
+        parts.push(ContentPart::Text { text: user_prompt });
+        MessageContent::Parts(parts)
+    };
+
+    let body = ChatRequest {
+        model,
+        messages: vec![
+            Message {
+                role: "system",
+                content: MessageContent::Text(system_prompt),
+            },
+            Message {
+                role: "user",
+                content: user_content,
+            },
+        ],
+        max_tokens,
+    };
+
+    post_chat(client, base_url, key, &body, provider_label).await
+}
+
+/// How much of an upstream failure to repeat back to the caller.
+///
+/// On the desktop the detail is worth showing: a `401` means "wrong key" and a
+/// `404` means "wrong base URL", and the only reader is the person who typed
+/// both. On a network-facing server the same string turns the models endpoint
+/// into a probe oracle for whichever host the caller named, so it collapses to
+/// one opaque wording. (The `retryable` flag still separates 429/5xx from the
+/// rest — a much coarser signal, kept because the retry schedule needs it.)
+fn upstream_detail(detail: impl FnOnce() -> String) -> String {
+    match super::base_url::policy() {
+        super::base_url::BaseUrlPolicy::LocalTrusted => detail(),
+        super::base_url::BaseUrlPolicy::NetworkFacing => crate::tr!(
+            "上游模型服务不可用。",
+            "Upstream model service is unavailable."
+        )
+        .to_string(),
+    }
 }
 
 /// Fetches the model list from `{base_url}/models`. Used by the refresh-models
@@ -214,7 +383,7 @@ pub async fn list_models(
         .await
         .map_err(|e| AppError::Ocr {
             provider: provider_label.into(),
-            message: format!("network: {e}"),
+            message: upstream_detail(|| format!("network: {e}")),
             retryable: e.is_timeout() || e.is_connect(),
         })?;
 
@@ -222,14 +391,14 @@ pub async fn list_models(
     if !status.is_success() {
         return Err(AppError::Ocr {
             provider: provider_label.into(),
-            message: format!("models: HTTP {status}"),
+            message: upstream_detail(|| format!("models: HTTP {status}")),
             retryable: status.as_u16() == 429 || status.is_server_error(),
         });
     }
 
     let parsed: ModelsResponse = resp.json().await.map_err(|e| AppError::Ocr {
         provider: provider_label.into(),
-        message: format!("models parse: {e}"),
+        message: upstream_detail(|| format!("models parse: {e}")),
         retryable: false,
     })?;
 
@@ -432,6 +601,212 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ids, vec!["gpt-4.1", "gpt-4o", "gpt-4o-mini"]);
+    }
+
+    #[tokio::test]
+    async fn chat_text_sends_system_user_pair_and_custom_max_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({
+                "model": "anthropic/claude-x",
+                "max_tokens": 16384,
+                "messages": [
+                    { "role": "system", "content": "只修 OCR 误识" },
+                    { "role": "user", "content": "巳於昨日" }
+                ]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": { "content": "[]" },
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let out = chat_text(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "anthropic/claude-x",
+            "只修 OCR 误识",
+            "巳於昨日",
+            &[],
+            16384,
+            "openrouter",
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "[]");
+    }
+
+    #[tokio::test]
+    async fn chat_text_with_images_sends_a_parts_array_for_the_user_message() {
+        let server = MockServer::start().await;
+        // A cross-page article sends one image per page it touches; both must
+        // arrive, wrapped by us as jpeg data URLs, ahead of the text.
+        let first = STANDARD.encode(b"ABC");
+        let second = STANDARD.encode(b"DEF");
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({
+                "messages": [
+                    { "role": "system", "content": "只修 OCR 误识" },
+                    {
+                        "role": "user",
+                        "content": [
+                            { "type": "image_url", "image_url": {
+                                "url": format!("data:image/jpeg;base64,{first}") } },
+                            { "type": "image_url", "image_url": {
+                                "url": format!("data:image/jpeg;base64,{second}") } },
+                            { "type": "text", "text": "巳於昨日" }
+                        ]
+                    }
+                ]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "content": "[]" }, "finish_reason": "stop" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let out = chat_text(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "gpt-4o",
+            "只修 OCR 误识",
+            "巳於昨日",
+            &[first.clone(), second.clone()],
+            16384,
+            "openai",
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "[]");
+    }
+
+    #[tokio::test]
+    async fn chat_text_without_images_sends_a_plain_string_content() {
+        // The text-only body must stay byte-identical to what shipped before
+        // images existed: a bare string, not a one-element parts array that a
+        // minimal OpenAI-compatible endpoint might not accept.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({
+                "messages": [
+                    { "role": "system", "content": "sys" },
+                    { "role": "user", "content": "巳於昨日" }
+                ]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "content": "[]" }, "finish_reason": "stop" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let out = chat_text(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "m",
+            "sys",
+            "巳於昨日",
+            &[],
+            16384,
+            "openai",
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "[]");
+    }
+
+    #[tokio::test]
+    async fn chat_text_rejects_length_terminated_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": { "content": "[{ \"before\": " },
+                    "finish_reason": "length"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let err = chat_text(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "m",
+            "sys",
+            "user",
+            &[],
+            16384,
+            "openai",
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            AppError::Ocr {
+                message, retryable, ..
+            } => {
+                assert!(
+                    message.contains("截断") || message.contains("truncated"),
+                    "{message}"
+                );
+                assert!(!retryable);
+            }
+            other => panic!("expected Ocr, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_text_cancel_aborts_in_flight_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(30))
+                    .set_body_json(json!({
+                        "choices": [{ "message": { "content": "too late" } }]
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            token.cancel();
+        });
+
+        let started = Instant::now();
+        let err = chat_text(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "sk",
+            "m",
+            "sys",
+            "user",
+            &[],
+            16384,
+            "openai",
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::Cancelled(_)), "got {err:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

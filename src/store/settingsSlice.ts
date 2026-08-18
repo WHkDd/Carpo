@@ -34,6 +34,17 @@ export function defaultOcrPrompt(language: Language = getLanguage()): string {
   return (language === "en" ? en : zh)["settings.defaultPrompt"];
 }
 
+/** Built-in proofread system prompt, in the active UI language. Mirrors
+ *  `config::default_proofread_prompt` on the Rust side. Used three ways:
+ *  as the DEFAULT_SETTINGS value, as the hydrate coalesce for old
+ *  settings.json files (`proofread_prompt` serde-defaults to ""), and as
+ *  the placeholder / restore target in the settings dialog. */
+export function defaultProofreadPrompt(
+  language: Language = getLanguage()
+): string {
+  return (language === "en" ? en : zh)["settings.defaultProofreadPrompt"];
+}
+
 /** Local defaults mirror the Rust `NonSecretSettings::default()` so the UI
  *  can render before the first `getSettings()` round-trip completes. */
 export const DEFAULT_SETTINGS: NonSecretSettings = {
@@ -75,6 +86,9 @@ export const DEFAULT_SETTINGS: NonSecretSettings = {
   openrouter_model: "google/gemini-2.5-flash-preview",
   openai_compatible_base_url: "",
   openai_compatible_model: "",
+  proofread_provider: null,
+  proofread_model: "",
+  proofread_prompt: defaultProofreadPrompt(),
 };
 
 export interface SettingsSlice {
@@ -100,6 +114,12 @@ export interface SettingsSlice {
    *  for the rest of the UI — never a trigger to go query the Keychain. */
   credentialPresence: CredentialPresence;
   mergeCredentialPresence: (entries: CredentialPresence) => void;
+  /** Bumped every time a secret is written or deleted. A boolean presence
+   *  cannot express "key A replaced with key B" (true → true), so caches
+   *  keyed on credential state subscribe to this number instead — see the
+   *  proofread model list in `OcrTextPanel`. */
+  credentialRevision: number;
+  bumpCredentialRevision: () => void;
 }
 
 export const createSettingsSlice: StateCreator<
@@ -118,6 +138,11 @@ export const createSettingsSlice: StateCreator<
   settingsLoaded: false,
   ocrProfile: DEFAULT_SETTINGS.ocr_profile,
   credentialPresence: {},
+  credentialRevision: 0,
+  bumpCredentialRevision: () =>
+    set((state) => {
+      state.credentialRevision += 1;
+    }),
   mergeCredentialPresence: (entries) =>
     set((state) => {
       Object.assign(state.credentialPresence, entries);

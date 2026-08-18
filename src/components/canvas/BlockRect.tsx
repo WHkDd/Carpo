@@ -3,18 +3,8 @@ import { Rect } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Rect as KRect } from "konva/lib/shapes/Rect";
 import type { Block } from "@/store/pageStateSlice";
-import { articleHsl } from "@/lib/article-color-token";
+import { articleHsl, cssHsl } from "@/lib/article-color-token";
 import { tweenFill } from "./tween-fill";
-
-const FILL_BASE = "rgba(59,130,246,0.15)";
-const FILL_HOVER = "rgba(59,130,246,0.32)";
-const FILL_SELECTED = "rgba(59,130,246,0.38)";
-const FILL_SELECTED_HOVER = "rgba(59,130,246,0.42)";
-const STROKE_BASE = "#3b82f6";
-const STROKE_SELECTED = "#2563eb";
-
-// Accent stroke for highlighted article blocks
-const STROKE_HIGHLIGHT = "#242424";
 
 export interface BlockRectProps {
   block: Block;
@@ -59,24 +49,27 @@ function BlockRectImpl(props: BlockRectProps) {
   const baseFill = isSelected
     ? hasArticle
       ? articleHsl(articleNum!, 0.38)
-      : FILL_SELECTED
+      : cssHsl("--canvas-accent", 0.38)
     : hasArticle
       ? articleHsl(articleNum!, 0.15)
-      : FILL_BASE;
+      : cssHsl("--canvas-accent", 0.15);
   const hoverFill = isSelected
     ? hasArticle
       ? articleHsl(articleNum!, 0.42)
-      : FILL_SELECTED_HOVER
+      : cssHsl("--canvas-accent", 0.42)
     : hasArticle
       ? articleHsl(articleNum!, 0.32)
-      : FILL_HOVER;
+      : cssHsl("--canvas-accent", 0.32);
+  // A block that belongs to a highlighted article is outlined in the app's
+  // graphite --primary rather than the accent, so the outline reads as "this
+  // one is picked out" against neighbours already tinted by article colour.
   const stroke = isHighlighted
-    ? STROKE_HIGHLIGHT
+    ? cssHsl("--primary", 1, "0 0% 15%")
     : hasArticle
       ? articleHsl(articleNum!, 1)
       : isSelected
-        ? STROKE_SELECTED
-        : STROKE_BASE;
+        ? cssHsl("--canvas-accent-strong")
+        : cssHsl("--canvas-accent");
 
   return (
     <Rect

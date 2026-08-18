@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { useStore } from "@/store";
+import { selectJobStartBlocked } from "@/store/jobSlice";
 import { useT } from "@/i18n";
 import {
   OCR_PANEL_MAX_RESERVE,
@@ -9,10 +10,7 @@ import {
 import { MetadataInline } from "@/components/structure/MetadataInline";
 import { BlockOpsPanel } from "@/components/structure/BlockOpsPanel";
 import { ArticleList } from "@/components/structure/ArticleList";
-import {
-  OcrBulkActions,
-  OcrTextPanel,
-} from "@/components/structure/OcrTextPanel";
+import { OcrTextPanel } from "@/components/structure/OcrTextPanel";
 import { useGroupedOcrTrigger } from "@/hooks/useGroupedOcrTrigger";
 import { useWholeFileOcrTrigger } from "@/hooks/useWholeFileOcrTrigger";
 
@@ -114,15 +112,14 @@ function GroupedRail({ maxWidth }: StructureRailProps) {
   const asideRef = useRef<HTMLElement>(null);
   const fileId = useStore((s) => s.currentFileId) ?? "";
   const hasFile = fileId !== "";
-  const activeJobRunning = useStore(
-    (s) =>
-      s.activeJob !== null &&
-      (s.activeJob.status === "running" || s.activeJob.status === "cancelling")
-  );
+  // One shared gate for all three job entry points, so the proofread button
+  // and the two OCR buttons cannot drift apart — and so the window between
+  // "start RPC sent" and "activeJob written" is covered too.
+  const jobStartBlocked = useStore(selectJobStartBlocked);
 
   const { state, trigger } = useGroupedOcrTrigger();
   const canTrigger =
-    hasFile && state.ready && !state.starting && !activeJobRunning;
+    hasFile && state.ready && !state.starting && !jobStartBlocked;
 
   const onDividerDrag = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -199,11 +196,10 @@ function GroupedRail({ maxWidth }: StructureRailProps) {
     >
       <RailResizeHandle maxWidth={maxWidth} />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-px pb-2">
-        <div className="mb-2 flex h-7 items-center justify-between gap-2 px-1.5">
+        <div className="mb-2 flex h-7 items-center px-1.5">
           <span className="text-[13px] font-semibold text-foreground">
             {t("rail.groupedTitle")}
           </span>
-          <OcrBulkActions />
         </div>
 
         {hasFile ? (
@@ -272,15 +268,14 @@ function WholeFileRail({ maxWidth }: StructureRailProps) {
   const file = useStore((s) =>
     fileId ? s.files.find((f) => f.id === fileId) ?? null : null
   );
-  const activeJobRunning = useStore(
-    (s) =>
-      s.activeJob !== null &&
-      (s.activeJob.status === "running" || s.activeJob.status === "cancelling")
-  );
+  // One shared gate for all three job entry points, so the proofread button
+  // and the two OCR buttons cannot drift apart — and so the window between
+  // "start RPC sent" and "activeJob written" is covered too.
+  const jobStartBlocked = useStore(selectJobStartBlocked);
 
   const { state, trigger } = useWholeFileOcrTrigger();
   const canTrigger =
-    !!file && state.ready && !state.starting && !activeJobRunning;
+    !!file && state.ready && !state.starting && !jobStartBlocked;
   const triggerLabel = state.starting
     ? t("rail.starting")
     : state.pageCount > 0
@@ -290,11 +285,10 @@ function WholeFileRail({ maxWidth }: StructureRailProps) {
   return (
     <aside className="relative flex min-h-0 flex-col bg-surface">
       <RailResizeHandle maxWidth={maxWidth} />
-      <div className="flex h-8 shrink-0 items-center justify-between gap-2 px-3">
+      <div className="flex h-8 shrink-0 items-center px-3">
         <span className="text-[13px] font-semibold text-foreground">
           {t("rail.wholeFileTitle")}
         </span>
-        <OcrBulkActions />
       </div>
 
       {file && (

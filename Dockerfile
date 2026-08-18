@@ -79,7 +79,10 @@ RUN case "${TARGETARCH}" in \
   && rm -f /tmp/pdfium-linux-*.so \
   && chown carpo:carpo /app/libpdfium.so
 COPY --from=frontend --chown=carpo:carpo /app/dist /app/dist
+# 0.0.0.0 here, loopback in the binary's own default: inside a container the
+# namespace is the boundary, and the published port is the operator's decision.
 ENV CARPO_PORT=8787 \
+    CARPO_BIND=0.0.0.0 \
     CARPO_STATIC_DIR=/app/dist \
     CARPO_DATA_DIR=/data \
     CARPO_PDFIUM_LIBRARY_PATH=/app/libpdfium.so

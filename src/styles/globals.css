@@ -74,6 +74,16 @@
 
     --radius: 0.375rem;
 
+    /* Canvas selection accent. Deliberately blue rather than the graphite
+     * --primary: on a gray newspaper scan, a graphite selection rectangle is
+     * hard to separate from the page's own column rules and frame lines.
+     * Declared as tokens rather than literals inside the Konva components so
+     * the dark theme — and a future system-accent binding (macOS
+     * controlAccentColor / Windows UIColorType.Accent) — has one place to
+     * override instead of ten. */
+    --canvas-accent: 217 91% 60%;         /* blue-500 */
+    --canvas-accent-strong: 221 83% 53%;  /* blue-600 */
+
     /* Low-chroma article hues, reserved for canvas grouping. */
     --article-saturation-multiplier: 0.55;
     --article-1:  220 18% 43%;  /* blue gray */

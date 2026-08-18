@@ -66,6 +66,17 @@ describe("SettingsDialog language selection", () => {
     );
   });
 
+  it("warns on the proofread tab that the model must accept images", async () => {
+    // Proofreading always attaches the original scan and has no text-only
+    // mode, so a model without image input fails at send time rather than
+    // degrading. This note is the only warning before that happens.
+    render(<SettingsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "校对" }));
+    expect(
+      screen.getByText(/必须使用支持图像输入的模型/)
+    ).toBeTruthy();
+  });
+
   it("reverts the preview when the dialog is closed without saving", async () => {
     const onClose = vi.fn();
     render(<SettingsDialog open onClose={onClose} />);

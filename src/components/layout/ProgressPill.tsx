@@ -42,6 +42,8 @@ function deriveHeadline(
     case "page_done":
     case "block_done":
       return t("progress.finished");
+    case "proofread_running":
+      return t("progress.proofreading");
     default:
       return t("progress.running");
   }
@@ -76,6 +78,13 @@ function deriveDetail(stage: ProgressStage | null, t: Translator): string {
       });
     case "document_running":
       return "";
+    case "proofread_running":
+      // The backend label already carries 「校对中 · 第N/M单元」; the detail
+      // line restates the unit counter in the active UI language.
+      return t("progress.detail.proofreadUnit", {
+        index: stage.index,
+        count: stage.count,
+      });
     case "page_running":
     case "page_done":
       return t("progress.detail.page", { page: stage.page });

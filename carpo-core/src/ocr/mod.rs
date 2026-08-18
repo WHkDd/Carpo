@@ -15,10 +15,13 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{NonSecretSettings, Provider};
 use crate::error::{AppError, AppResult};
 
+pub mod base_url;
+pub mod gate;
 pub mod openai;
 pub mod paddle;
 pub mod paddle_document;
 pub mod paddle_json;
+pub mod proofread;
 
 pub const MAX_RETRIES: u32 = 3;
 pub const BACKOFF_SECS: [u64; 3] = [0, 2, 5];
@@ -77,10 +80,25 @@ pub struct OcrRequest<'a> {
     pub prompt: &'a str,
 }
 
+/// Gate for the two endpoints a user (or, on the server, a caller) can point
+/// anywhere: `paddle_url` and `openai_compatible_base_url`. Every path that
+/// attaches a credential to one of them runs through here, under this
+/// process's admission policy — see [`base_url`] for why the desktop and the
+/// server answer differently.
+pub fn check_endpoint(raw: &str) -> AppResult<()> {
+    base_url::check(raw, base_url::policy())
+}
+
 /// Routes a single OCR call to the configured provider. `secret` is the API
 /// key / token loaded from the keychain by the caller; callers should refuse
 /// to call this with `None` when the provider requires credentials. `cancel`
 /// is consulted inside long-running provider loops (Paddle's poll).
+///
+/// Every arm takes a permit from the provider's [`gate`] bucket before it puts
+/// a request on the wire, so the process-wide in-flight ceiling holds no matter
+/// how many jobs are running. Configuration errors are raised *before* the
+/// acquire — a misconfigured endpoint should fail immediately rather than queue
+/// behind traffic it will never join.
 pub async fn recognize(
     client: &reqwest::Client,
     settings: &NonSecretSettings,
@@ -90,6 +108,8 @@ pub async fn recognize(
 ) -> AppResult<String> {
     match settings.provider {
         Provider::Paddleocr => {
+            check_endpoint(&settings.paddle_url)?;
+            let _permit = gate::acquire(Provider::Paddleocr, cancel).await?;
             let token = secret.unwrap_or_default();
             paddle::recognize(
                 client,
@@ -104,6 +124,7 @@ pub async fn recognize(
             .await
         }
         Provider::Openai => {
+            let _permit = gate::acquire(Provider::Openai, cancel).await?;
             let key = secret.unwrap_or_default();
             openai::recognize(
                 client,
@@ -118,6 +139,7 @@ pub async fn recognize(
             .await
         }
         Provider::Openrouter => {
+            let _permit = gate::acquire(Provider::Openrouter, cancel).await?;
             let key = secret.unwrap_or_default();
             openai::recognize(
                 client,
@@ -141,6 +163,8 @@ pub async fn recognize(
                     .into(),
                 ));
             }
+            check_endpoint(&settings.openai_compatible_base_url)?;
+            let _permit = gate::acquire(Provider::OpenaiCompatible, cancel).await?;
             let key = secret.unwrap_or_default();
             openai::recognize(
                 client,
@@ -210,6 +234,7 @@ pub async fn list_models(
                     .into(),
                 ));
             }
+            check_endpoint(&settings.openai_compatible_base_url)?;
             openai::list_models(
                 client,
                 &settings.openai_compatible_base_url,
@@ -221,17 +246,17 @@ pub async fn list_models(
     }
 }
 
-/// Runs `recognize` up to `MAX_RETRIES` times, sleeping `BACKOFF_SECS[attempt]`
-/// between attempts. Only retries errors flagged `retryable`. The backoff
-/// sleep itself races against `cancel.cancelled()` so a cancel between
-/// attempts doesn't burn the full delay.
-pub async fn recognize_with_retry(
-    client: &reqwest::Client,
-    settings: &NonSecretSettings,
-    secret: Option<&str>,
-    req: OcrRequest<'_>,
-    cancel: &CancellationToken,
-) -> AppResult<String> {
+/// Runs a fallible call up to `MAX_RETRIES` times, sleeping `BACKOFF_SECS
+/// [attempt]` between attempts. Only retries errors flagged `retryable`. The
+/// backoff sleep itself races against `cancel.cancelled()` so a cancel
+/// between attempts doesn't burn the full delay. Shared by OCR and the
+/// proofread pass — both make paid API calls with the same transient-error
+/// profile.
+pub async fn with_retry<F, Fut>(mut call: F, cancel: &CancellationToken) -> AppResult<String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = AppResult<String>>,
+{
     let mut last_err: Option<AppError> = None;
     for attempt in 0..MAX_RETRIES {
         let delay = BACKOFF_SECS[attempt as usize];
@@ -243,7 +268,7 @@ pub async fn recognize_with_retry(
                 }
             }
         }
-        match recognize(client, settings, secret, req, cancel).await {
+        match call().await {
             Ok(v) => return Ok(v),
             Err(e) if e.is_retryable() => {
                 last_err = Some(e);
@@ -258,6 +283,157 @@ pub async fn recognize_with_retry(
     Err(last_err
         .map(AppError::into_non_retryable)
         .unwrap_or_else(|| AppError::Internal("retry loop exhausted".into())))
+}
+
+/// `recognize` wrapped in the shared retry schedule.
+pub async fn recognize_with_retry(
+    client: &reqwest::Client,
+    settings: &NonSecretSettings,
+    secret: Option<&str>,
+    req: OcrRequest<'_>,
+    cancel: &CancellationToken,
+) -> AppResult<String> {
+    with_retry(|| recognize(client, settings, secret, req, cancel), cancel).await
+}
+
+/// Which provider runs the proofread pass. `None` follows the OCR provider;
+/// this is where the "OCR via OpenAI, proofread via Claude through
+/// OpenRouter" scenario is resolved.
+pub fn resolve_proofread_provider(settings: &NonSecretSettings) -> Provider {
+    settings.proofread_provider.unwrap_or(settings.provider)
+}
+
+/// Which model runs the proofread pass. An explicit `proofread_model` wins;
+/// otherwise fall back to the resolved provider's OCR model field.
+pub fn resolve_proofread_model(settings: &NonSecretSettings) -> String {
+    if !settings.proofread_model.is_empty() {
+        return settings.proofread_model.clone();
+    }
+    match resolve_proofread_provider(settings) {
+        Provider::Openai => settings.openai_model.clone(),
+        Provider::Openrouter => settings.openrouter_model.clone(),
+        Provider::OpenaiCompatible => settings.openai_compatible_model.clone(),
+        Provider::Paddleocr => String::new(),
+    }
+}
+
+/// The prompt actually used for proofreading. An explicit setting wins;
+/// empty falls back to the built-in default, generated at call time so it
+/// matches the process language (old settings files deserialize the new
+/// fields as empty).
+pub fn resolve_proofread_prompt(settings: &NonSecretSettings) -> String {
+    if settings.proofread_prompt.trim().is_empty() {
+        crate::config::default_proofread_prompt(crate::i18n::language())
+    } else {
+        settings.proofread_prompt.clone()
+    }
+}
+
+/// One proofread chat call against the resolved provider. The user message
+/// is the source text plus, when `images_b64` is non-empty, the scans of the
+/// original it was transcribed from; the system message is the resolved
+/// proofread prompt (with the image appendix when images ride along).
+/// Paddle is rejected here (it is an OCR-only async API), not silently
+/// misrouted. Shares the provider [`gate`] with `recognize`: proofreading and
+/// OCR spend the same quota against the same account, so they queue together.
+pub async fn chat(
+    client: &reqwest::Client,
+    settings: &NonSecretSettings,
+    secret: Option<&str>,
+    source_text: &str,
+    images_b64: &[String],
+    cancel: &CancellationToken,
+) -> AppResult<String> {
+    let provider = resolve_proofread_provider(settings);
+    let model = resolve_proofread_model(settings);
+    let prompt = proofread::prompt_for_unit(
+        &resolve_proofread_prompt(settings),
+        !images_b64.is_empty(),
+        crate::i18n::language(),
+    );
+    match provider {
+        Provider::Openai => {
+            let _permit = gate::acquire(Provider::Openai, cancel).await?;
+            openai::chat_text(
+                client,
+                openai::OFFICIAL_BASE_URL,
+                secret.unwrap_or_default(),
+                &model,
+                &prompt,
+                source_text,
+                images_b64,
+                proofread::PROOFREAD_MAX_TOKENS,
+                "openai",
+                cancel,
+            )
+            .await
+        }
+        Provider::Openrouter => {
+            let _permit = gate::acquire(Provider::Openrouter, cancel).await?;
+            openai::chat_text(
+                client,
+                openai::OPENROUTER_BASE_URL,
+                secret.unwrap_or_default(),
+                &model,
+                &prompt,
+                source_text,
+                images_b64,
+                proofread::PROOFREAD_MAX_TOKENS,
+                "openrouter",
+                cancel,
+            )
+            .await
+        }
+        Provider::OpenaiCompatible => {
+            if settings.openai_compatible_base_url.is_empty() {
+                return Err(AppError::Config(
+                    crate::tr!(
+                        "OpenAI-Compatible：尚未配置 Base URL，请在设置中填入。",
+                        "OpenAI-Compatible: no base URL configured — set one in Settings."
+                    )
+                    .into(),
+                ));
+            }
+            check_endpoint(&settings.openai_compatible_base_url)?;
+            let _permit = gate::acquire(Provider::OpenaiCompatible, cancel).await?;
+            openai::chat_text(
+                client,
+                &settings.openai_compatible_base_url,
+                secret.unwrap_or_default(),
+                &model,
+                &prompt,
+                source_text,
+                images_b64,
+                proofread::PROOFREAD_MAX_TOKENS,
+                "openai_compatible",
+                cancel,
+            )
+            .await
+        }
+        Provider::Paddleocr => Err(AppError::Config(
+            crate::tr!(
+                "校对需要支持对话的提供商（OpenAI / OpenRouter / OpenAI-Compatible）；PaddleOCR 仅用于识别。",
+                "Proofreading needs a chat-capable provider (OpenAI / OpenRouter / OpenAI-Compatible); PaddleOCR is recognition-only."
+            )
+            .into(),
+        )),
+    }
+}
+
+/// `chat` wrapped in the shared retry schedule.
+pub async fn chat_with_retry(
+    client: &reqwest::Client,
+    settings: &NonSecretSettings,
+    secret: Option<&str>,
+    source_text: &str,
+    images_b64: &[String],
+    cancel: &CancellationToken,
+) -> AppResult<String> {
+    with_retry(
+        || chat(client, settings, secret, source_text, images_b64, cancel),
+        cancel,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -281,6 +457,9 @@ mod tests {
             openrouter_model: String::new(),
             openai_compatible_base_url: String::new(),
             openai_compatible_model: String::new(),
+            proofread_provider: None,
+            proofread_model: String::new(),
+            proofread_prompt: String::new(),
         }
     }
 

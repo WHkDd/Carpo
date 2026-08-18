@@ -19,11 +19,16 @@ const DEFAULT_OCR_PANEL_HEIGHT = 280;
 export const QUEUE_WIDTH = 244;
 export const QUEUE_COLLAPSED_WIDTH = 76;
 
-/** Drag-resizable right rail. 304 is both the design default and the floor —
- *  the rail is already as narrow as its content allows, so dragging only ever
- *  widens it (up to double) to give the OCR text panel more room. */
-export const RAIL_MIN_WIDTH = 304;
-export const RAIL_MAX_WIDTH = 608;
+/** Drag-resizable right rail. 384 is both the design default and the floor:
+ *  it is the width at which the OCR panel header still holds its widest
+ *  layout on one line — a whole-file pager with a four-digit page count and
+ *  the review dot on the left, the full nine-control icon cluster (two view
+ *  switches, block + review views, copy, export menu, proofread, and the two
+ *  dividers) on the right. Anything narrower wraps the icons onto a second
+ *  row. Dragging only ever widens the rail (up to double) to give the OCR
+ *  text panel more room. */
+export const RAIL_MIN_WIDTH = 384;
+export const RAIL_MAX_WIDTH = 768;
 
 /** Floor for the canvas column. Only binds once the rail is dragged wide: at
  *  the default rail width the canvas is far above it even in the smallest

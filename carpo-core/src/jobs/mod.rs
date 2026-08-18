@@ -9,6 +9,7 @@
 
 pub mod grouped;
 pub mod page_loader;
+pub mod proofread;
 pub mod whole_file;
 
 use std::collections::HashMap;
@@ -21,11 +22,14 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::error::{AppError, AppResult};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
     GroupedOcr,
     WholeFile,
+    Proofread,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -95,6 +99,11 @@ pub enum ProgressStage {
     },
     BlockDone {
         article_num: u32,
+        index: u32,
+        count: u32,
+    },
+    /// Proofread pass over one text unit (a page, or one article).
+    ProofreadRunning {
         index: u32,
         count: u32,
     },
@@ -188,25 +197,51 @@ pub struct JobListEntry {
     pub kind: JobKind,
 }
 
+/// How many jobs may be registered at once, process-wide.
+///
+/// This is an admission gate, not a scheduler: every job holds an entry from
+/// `try_register` until its worker task exits, so the cap bounds how much work
+/// (and, for the LLM-backed jobs, how much billable API traffic) a single
+/// process can have in flight. The UI already refuses to start a second job
+/// (see `selectJobStartBlocked`), so on the desktop this only ever fires as a
+/// backstop; on `carpo-server`, where every browser tab has its own store and
+/// the endpoints have no authentication, it is the only limit that exists.
+/// Four leaves room for a queued retry or a second tab without letting an
+/// unattended caller multiply jobs indefinitely.
+pub const MAX_ACTIVE_JOBS: usize = 4;
+
 impl JobRegistry {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Allocates a fresh job id + cancellation token. Caller spawns the
-    /// worker with the returned token clone; the registry keeps its own
-    /// clone for `cancel`.
-    pub fn register(&self, kind: JobKind) -> (Uuid, CancellationToken) {
+    /// Allocates a fresh job id + cancellation token, or refuses with
+    /// [`AppError::Busy`] when [`MAX_ACTIVE_JOBS`] are already registered.
+    /// Caller spawns the worker with the returned token clone; the registry
+    /// keeps its own clone for `cancel`.
+    ///
+    /// The capacity check and the insert happen under **one** lock acquisition
+    /// on purpose: checking `len()` and inserting as two steps is itself a race
+    /// that lets N concurrent callers all see room and all get in.
+    pub fn try_register(&self, kind: JobKind) -> AppResult<(Uuid, CancellationToken)> {
         let token = CancellationToken::new();
         let id = Uuid::new_v4();
-        self.by_id.lock().insert(
+        let mut guard = self.by_id.lock();
+        if guard.len() >= MAX_ACTIVE_JOBS {
+            return Err(AppError::Busy(crate::trf!(
+                "同时进行的任务已达上限（{} 个），请等待当前任务完成后再试。",
+                "Too many jobs running at once (limit {}). Wait for one to finish and try again.",
+                MAX_ACTIVE_JOBS
+            )));
+        }
+        guard.insert(
             id,
             JobHandle {
                 token: token.clone(),
                 kind,
             },
         );
-        (id, token)
+        Ok((id, token))
     }
 
     /// Cancels the named job. Returns `true` if the job existed, `false`
@@ -247,7 +282,7 @@ mod tests {
     #[test]
     fn register_then_cancel_marks_token_cancelled() {
         let reg = JobRegistry::new();
-        let (id, token) = reg.register(JobKind::GroupedOcr);
+        let (id, token) = reg.try_register(JobKind::GroupedOcr).unwrap();
         assert!(!token.is_cancelled());
         assert!(reg.cancel(id));
         assert!(token.is_cancelled());
@@ -263,7 +298,7 @@ mod tests {
     #[test]
     fn cancel_twice_is_idempotent() {
         let reg = JobRegistry::new();
-        let (id, _t) = reg.register(JobKind::GroupedOcr);
+        let (id, _t) = reg.try_register(JobKind::GroupedOcr).unwrap();
         assert!(reg.cancel(id));
         assert!(reg.cancel(id)); // second call: still true (entry exists), token stays cancelled
     }
@@ -271,7 +306,7 @@ mod tests {
     #[test]
     fn remove_drops_entry() {
         let reg = JobRegistry::new();
-        let (id, _t) = reg.register(JobKind::GroupedOcr);
+        let (id, _t) = reg.try_register(JobKind::GroupedOcr).unwrap();
         assert_eq!(reg.list().len(), 1);
         reg.remove(id);
         assert!(reg.list().is_empty());
@@ -281,8 +316,36 @@ mod tests {
     #[test]
     fn list_returns_all_active_jobs() {
         let reg = JobRegistry::new();
-        let (_a, _ta) = reg.register(JobKind::GroupedOcr);
-        let (_b, _tb) = reg.register(JobKind::GroupedOcr);
+        let (_a, _ta) = reg.try_register(JobKind::GroupedOcr).unwrap();
+        let (_b, _tb) = reg.try_register(JobKind::GroupedOcr).unwrap();
         assert_eq!(reg.list().len(), 2);
+    }
+
+    #[test]
+    fn try_register_refuses_once_the_cap_is_reached() {
+        let reg = JobRegistry::new();
+        let held: Vec<_> = (0..MAX_ACTIVE_JOBS)
+            .map(|_| reg.try_register(JobKind::Proofread).unwrap())
+            .collect();
+        assert_eq!(held.len(), MAX_ACTIVE_JOBS);
+        match reg.try_register(JobKind::Proofread) {
+            Err(AppError::Busy(_)) => {}
+            other => panic!("expected Busy at capacity, got {other:?}"),
+        }
+        assert_eq!(reg.list().len(), MAX_ACTIVE_JOBS);
+    }
+
+    #[test]
+    fn removing_a_job_frees_a_slot() {
+        let reg = JobRegistry::new();
+        let held: Vec<_> = (0..MAX_ACTIVE_JOBS)
+            .map(|_| reg.try_register(JobKind::WholeFile).unwrap())
+            .collect();
+        assert!(reg.try_register(JobKind::WholeFile).is_err());
+        reg.remove(held[0].0);
+        // A worker that finished must hand its slot back, or the process is
+        // permanently wedged after MAX_ACTIVE_JOBS lifetime jobs.
+        let (id, _t) = reg.try_register(JobKind::WholeFile).unwrap();
+        assert_ne!(id, held[0].0);
     }
 }

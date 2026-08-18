@@ -9,6 +9,11 @@ services:
       - carpo-data:/data
     environment:
       CARPO_PORT: "8787"
+      # The container listens on all of its own interfaces; what the host
+      # exposes is decided by `ports:` above. Bind CARPO_HOST_PORT to
+      # 127.0.0.1 (e.g. "127.0.0.1:8787:8787") unless the network you publish
+      # onto is trusted — the API has no authentication.
+      CARPO_BIND: "0.0.0.0"
       CARPO_STATIC_DIR: /app/dist
       CARPO_DATA_DIR: /data
       CARPO_PDFIUM_LIBRARY_PATH: /app/libpdfium.so

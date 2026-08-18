@@ -10,9 +10,18 @@ import type {
   JobError,
   JobProgress,
   ProgressStage,
+  ProofreadCategory,
+  ProofreadUnit,
 } from "@/lib/ipc-types";
 import { clearPendingJob, savePendingJob } from "@/lib/job-persistence";
 import type { LayoutPage } from "@/lib/layout-document";
+import {
+  applySuggestions,
+  type ApplySuggestionsResult,
+  type ProofreadReview,
+  type ProofreadTarget,
+  type SuggestionVerdict,
+} from "@/lib/proofread";
 
 export type JobStatus =
   | "running"
@@ -51,7 +60,16 @@ export interface WholeFileActiveJob extends BaseActiveJob {
   requestedPages: number[];
 }
 
-export type ActiveJob = GroupedActiveJob | WholeFileActiveJob;
+export interface ProofreadActiveJob extends BaseActiveJob {
+  kind: "proofread";
+  /** The exact units submitted, in submission order. The done handler
+   *  rebuilds each review's `baseText` from this — the text may have been
+   *  edited during the run, and a review must diff against what the model
+   *  actually saw. */
+  units: ProofreadUnit[];
+}
+
+export type ActiveJob = GroupedActiveJob | WholeFileActiveJob | ProofreadActiveJob;
 
 export type RecognizedPageStatus = "pending" | "running" | "done" | "failed";
 
@@ -178,10 +196,45 @@ export type StartJobInfo =
       newspaperDate: string;
       requestedPages: number[];
       stage?: ProgressStage;
+    }
+  | {
+      jobId: string;
+      kind: "proofread";
+      fileId: string;
+      newspaperName: string;
+      newspaperDate: string;
+      units: ProofreadUnit[];
+      stage?: ProgressStage;
     };
+
+let jobStartOwnerSeq = 0;
 
 export interface JobSlice {
   activeJob: ActiveJob | null;
+  /** Owner id of the start attempt currently holding the single job slot, or
+   *  null when the slot is free.
+   *
+   *  `activeJob` alone cannot guard the slot: it is only written once the
+   *  start RPC *returns*, so for one IPC / network round trip every entry
+   *  point still sees `activeJob === null` and happily starts a second job —
+   *  which then overwrites the first, orphaning a job that keeps running,
+   *  keeps spending API quota, and can no longer be cancelled. The three
+   *  triggers (proofread / whole-file / grouped) each own a local `starting`
+   *  flag that the other two cannot see, so the claim has to live here. */
+  jobStartClaim: string | null;
+  /** Takes the job slot, synchronously, and returns the owner token that
+   *  `releaseJobStart` needs — or null when a job is running or another
+   *  attempt already holds the slot. The test-and-set happens inside one
+   *  `set()`; split across two, the claim would just be a second race.
+   *
+   *  The token is minted here rather than passed in so no caller can hand in
+   *  a value another caller is already using. Every caller must pair this
+   *  with `releaseJobStart` in a `finally` that covers *every* early return:
+   *  a leaked claim locks all three entry points with no UI to unlock them. */
+  claimJobStart: (kind: string) => string | null;
+  /** Frees the slot, but only if `owner` still holds it — so a late release
+   *  from an abandoned attempt cannot clear a newer one's claim. Idempotent. */
+  releaseJobStart: (owner: string) => void;
   /** Map of fileId → last-assembled document. Re-built on every grouped-OCR
    *  finish from the merged per-article texts, so partial OCR runs keep the
    *  assembled output coherent with the current article order. */
@@ -200,6 +253,44 @@ export interface JobSlice {
    *  chunked document jobs, and imported Paddle JSON. During migration it is
    *  kept in sync with `pageOcrTexts` so older UI paths continue to work. */
   recognizedPages: RecognizedPages;
+  /** fileId → proofread target key (`page:12` / `article:a_xxx`) → review.
+   *  Session-scoped like `recognizedPages` itself — a review never outlives
+   *  the text it was diffed against. */
+  proofreadReviews: Record<string, Record<string, ProofreadReview>>;
+  /** Merge finished job results into the review map. Reviews for the same
+   *  key are replaced — a re-run supersedes the previous verdicts. */
+  setProofreadReviews: (
+    fileId: string,
+    reviews: Record<string, ProofreadReview>
+  ) => void;
+  /** One suggestion's verdict. `editedAfter` only applies to `edited`. */
+  setProofreadSuggestionVerdict: (
+    fileId: string,
+    key: string,
+    index: number,
+    verdict: SuggestionVerdict,
+    editedAfter?: string
+  ) => void;
+  /** Bulk verdict flip for one category, driven by the category chips. */
+  setProofreadCategoryVerdict: (
+    fileId: string,
+    key: string,
+    category: ProofreadCategory,
+    verdict: SuggestionVerdict
+  ) => void;
+  /** Writes accepted / edited suggestions into the underlying text and marks
+   *  the review `applied`. Refuses (returns false) when the review is
+   *  missing, already applied, or stale — the live text no longer equals
+   *  `baseText` — because silently applying would overwrite the user's
+   *  manual edits. The caller's stale banner is the only legal path from
+   *  there. */
+  applyProofreadReview: (fileId: string, key: string) => boolean;
+  /** Rolls an applied review back to `baseText` and re-opens it for review.
+   *  Refuses when the text changed after the apply — undoing would destroy
+   *  edits the user made on top of the applied text. */
+  undoProofreadReview: (fileId: string, key: string) => boolean;
+  /** Drops a review without touching the text. */
+  discardProofreadReview: (fileId: string, key: string) => void;
   /** Called immediately after `startGroupedOcr` / `startWholeFileOcr` returns
    *  the job id. The first `JobProgress` event will fill in `total`; until
    *  then we show 0/0. */
@@ -241,6 +332,42 @@ export interface JobSlice {
   updateArticleOcrText: (fileId: string, articleId: string, text: string) => void;
 }
 
+/** Whether starting a job would be refused right now — a job is running or
+ *  cancelling, or another entry point is mid-start. The single source of
+ *  truth for every trigger's `disabled`, so the three entry points cannot
+ *  drift apart again. */
+export const selectJobStartBlocked = (
+  s: Pick<JobSlice, "activeJob" | "jobStartClaim">
+): boolean =>
+  s.jobStartClaim !== null ||
+  (s.activeJob !== null &&
+    (s.activeJob.status === "running" || s.activeJob.status === "cancelling"));
+
+/** Reads the live text a review target points at, or `null` when the target
+ *  no longer exists. Exported for the review panel's stale check. */
+export function proofreadTargetText(
+  state: Pick<
+    JobSlice,
+    "recognizedPages" | "pageOcrTexts" | "articleOcrTexts"
+  >,
+  fileId: string,
+  target: ProofreadTarget
+): string | null {
+  if (target.mode === "whole_file") {
+    const page = state.recognizedPages[fileId]?.[target.page];
+    if (page) return page.text;
+    return state.pageOcrTexts[fileId]?.[target.page] ?? null;
+  }
+  return state.articleOcrTexts[fileId]?.[target.articleId] ?? null;
+}
+
+/** The text a review would write if applied right now, plus how many
+ *  suggestions the overlap model had to skip (visible to the user after
+ *  applying — a skipped correction must never be silent). */
+function reviewOutput(review: ProofreadReview): ApplySuggestionsResult {
+  return applySuggestions(review.baseText, review.suggestions);
+}
+
 export const createJobSlice: StateCreator<
   QueueSlice &
     UiSlice &
@@ -252,15 +379,40 @@ export const createJobSlice: StateCreator<
   [["zustand/immer", never]],
   [],
   JobSlice
-> = (set) => ({
+> = (set, get) => ({
   activeJob: null,
+  jobStartClaim: null,
   documentResults: {},
   articleOcrTexts: {},
   pageOcrTexts: {},
   recognizedPages: {},
+  proofreadReviews: {},
+  claimJobStart: (kind) => {
+    jobStartOwnerSeq += 1;
+    const owner = `${kind}:${jobStartOwnerSeq}`;
+    let granted = false;
+    set((state) => {
+      if (state.jobStartClaim !== null) return;
+      const job = state.activeJob;
+      if (job && (job.status === "running" || job.status === "cancelling")) {
+        return;
+      }
+      state.jobStartClaim = owner;
+      granted = true;
+    });
+    return granted ? owner : null;
+  },
+  releaseJobStart: (owner) =>
+    set((state) => {
+      if (state.jobStartClaim !== owner) return;
+      state.jobStartClaim = null;
+    }),
   startJob: (info) =>
     set((state) => {
       savePendingJob(info);
+      // Hand the slot from the claim to the job in one update: any gap here
+      // is a window where both are empty and a second start slips through.
+      state.jobStartClaim = null;
       const base: BaseActiveJob = {
         jobId: info.jobId,
         status: "running",
@@ -272,18 +424,25 @@ export const createJobSlice: StateCreator<
         newspaperName: info.newspaperName,
         newspaperDate: info.newspaperDate,
       };
-      state.activeJob =
-        info.kind === "grouped_ocr"
-          ? {
-              ...base,
-              kind: "grouped_ocr",
-              requestedArticles: info.requestedArticles.map((a) => ({ ...a })),
-            }
-          : {
-              ...base,
-              kind: "whole_file",
-              requestedPages: [...info.requestedPages],
-            };
+      if (info.kind === "grouped_ocr") {
+        state.activeJob = {
+          ...base,
+          kind: "grouped_ocr",
+          requestedArticles: info.requestedArticles.map((a) => ({ ...a })),
+        };
+      } else if (info.kind === "proofread") {
+        state.activeJob = {
+          ...base,
+          kind: "proofread",
+          units: info.units.map((u) => ({ ...u })),
+        };
+      } else {
+        state.activeJob = {
+          ...base,
+          kind: "whole_file",
+          requestedPages: [...info.requestedPages],
+        };
+      }
     }),
   applyProgress: (p) =>
     set((state) => {
@@ -423,6 +582,89 @@ export const createJobSlice: StateCreator<
       state.articleOcrTexts[fileId] = { ...prev, [articleId]: text };
       const doc = state.documentStates[fileId];
       if (doc) rebuildDocumentResult(state, fileId, doc);
+    }),
+  setProofreadReviews: (fileId, reviews) =>
+    set((state) => {
+      if (!state.files.some((f) => f.id === fileId)) return;
+      const prev = state.proofreadReviews[fileId] ?? {};
+      state.proofreadReviews[fileId] = { ...prev, ...reviews };
+    }),
+  setProofreadSuggestionVerdict: (fileId, key, index, verdict, editedAfter) =>
+    set((state) => {
+      const suggestion = state.proofreadReviews[fileId]?.[key]?.suggestions[
+        index
+      ];
+      if (!suggestion) return;
+      suggestion.verdict = verdict;
+      if (verdict === "edited") {
+        suggestion.editedAfter = editedAfter ?? "";
+      } else {
+        delete suggestion.editedAfter;
+      }
+    }),
+  setProofreadCategoryVerdict: (fileId, key, category, verdict) =>
+    set((state) => {
+      const review = state.proofreadReviews[fileId]?.[key];
+      if (!review) return;
+      for (const suggestion of review.suggestions) {
+        if (suggestion.category === category) {
+          suggestion.verdict = verdict;
+          if (verdict !== "edited") delete suggestion.editedAfter;
+        }
+      }
+    }),
+  applyProofreadReview: (fileId, key) => {
+    const state = get();
+    const review = state.proofreadReviews[fileId]?.[key];
+    if (!review || review.status === "applied") return false;
+    const current = proofreadTargetText(state, fileId, review.target);
+    if (current === null || current !== review.baseText) return false;
+    const result = reviewOutput(review);
+    const nextText = result.text;
+    if (review.target.mode === "whole_file") {
+      get().updateRecognizedPageText(fileId, review.target.page, nextText);
+    } else {
+      get().updateArticleOcrText(fileId, review.target.articleId, nextText);
+    }
+    set((s) => {
+      const r = s.proofreadReviews[fileId]?.[key];
+      if (!r) return;
+      r.status = "applied";
+      r.appliedText = nextText;
+      r.appliedConflictSkipped = result.conflictSkipped;
+    });
+    return true;
+  },
+  undoProofreadReview: (fileId, key) => {
+    const state = get();
+    const review = state.proofreadReviews[fileId]?.[key];
+    if (!review || review.status !== "applied") return false;
+    const current = proofreadTargetText(state, fileId, review.target);
+    if (review.appliedText !== undefined && current !== review.appliedText) {
+      return false;
+    }
+    if (review.target.mode === "whole_file") {
+      get().updateRecognizedPageText(fileId, review.target.page, review.baseText);
+    } else {
+      get().updateArticleOcrText(fileId, review.target.articleId, review.baseText);
+    }
+    set((s) => {
+      const r = s.proofreadReviews[fileId]?.[key];
+      if (!r) return;
+      r.status = "pending";
+      delete r.appliedText;
+      delete r.appliedConflictSkipped;
+    });
+    return true;
+  },
+  discardProofreadReview: (fileId, key) =>
+    set((state) => {
+      const byFile = state.proofreadReviews[fileId];
+      if (!byFile) return;
+      delete byFile[key];
+      if (Object.keys(byFile).length === 0) {
+        delete state.proofreadReviews[fileId];
+      }
     }),
 });
 

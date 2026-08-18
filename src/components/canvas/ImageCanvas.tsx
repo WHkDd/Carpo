@@ -7,7 +7,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { Stage, Layer, Image as KImage, Rect, Transformer } from "react-konva";
+import {
+  Stage,
+  Layer,
+  Image as KImage,
+  Line,
+  Rect,
+  Transformer,
+} from "react-konva";
 import { BlockRect } from "./BlockRect";
 import { SelectionOrderLabel } from "./SelectionOrderLabel";
 import type { Stage as KStage } from "konva/lib/Stage";
@@ -20,7 +27,13 @@ import { useStore } from "@/store";
 import { useT } from "@/i18n";
 import type { Block } from "@/store/pageStateSlice";
 import { useElementSize } from "@/hooks/useElementSize";
-import { subscribeArticleColorTokens } from "@/lib/article-color-token";
+import { cssHsl, subscribeArticleColorTokens } from "@/lib/article-color-token";
+import {
+  layoutCanvasMapping,
+  polygonBoundingRect,
+  scaleLayoutBBox,
+  scaleLayoutPolygon,
+} from "@/lib/layout-document";
 import { usePanZoom, type PanZoomController } from "./usePanZoom";
 import { useDrawBlock } from "./useDrawBlock";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
@@ -92,6 +105,21 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     const editingBlockId = useStore((s) =>
       file?.id ? s.getEditingBlockId(file.id, currentPage) : null
     );
+    // Which layout block the right rail's block list has focus in, and that
+    // page's Paddle layout. Together these drive the highlight that answers
+    // "which column am I editing" without counting columns.
+    const editingLayoutIndex = useStore((s) =>
+      file?.id ? s.getEditingLayoutBlockIndex(file.id, currentPage) : null
+    );
+    const currentLayout = useStore((s) =>
+      file?.id ? s.recognizedPages[file.id]?.[currentPage]?.layout ?? null : null
+    );
+    // The region a grouped article's proofread review points at. Already in
+    // canvas pixels, and the getter hands back the *stored* rect so this
+    // snapshot stays referentially stable (React #185).
+    const focusedRegion = useStore((s) =>
+      file?.id ? s.getFocusedRegionRect(file.id, currentPage) : null
+    );
     const selectedArticleIds = useStore((s) => s.selectedArticleIds);
     const recognitionMode = useStore((s) => s.recognitionMode);
     const highlightedArticleSet = useMemo(
@@ -123,6 +151,34 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       return map;
     }, [blocks]);
 
+    // Geometry for the focused layout block, in canvas (native-pixel) space.
+    // `null` whenever the mapping cannot be trusted — see
+    // `layoutCanvasMapping`; a box in the wrong place is worse than none.
+    const layoutHighlight = useMemo(() => {
+      if (editingLayoutIndex === null || !currentLayout) return null;
+      const block = currentLayout.blocks[editingLayoutIndex];
+      if (!block) return null;
+      const mapping = layoutCanvasMapping(currentLayout, {
+        width: payload?.width ?? 0,
+        height: payload?.height ?? 0,
+      });
+      if (!mapping) return null;
+      // Vertical-script newspaper blocks are often not true rectangles, so the
+      // polygon hugs the block far better where Paddle gave us one. `reveal`
+      // carries the same geometry collapsed to a plain rect, which is all
+      // `revealRect` accepts.
+      const points = scaleLayoutPolygon(block.polygon, mapping);
+      if (points) {
+        return {
+          points,
+          rect: null,
+          reveal: polygonBoundingRect(points),
+        };
+      }
+      const rect = scaleLayoutBBox(block.bbox, mapping);
+      return { points: null, rect, reveal: rect };
+    }, [editingLayoutIndex, currentLayout, payload?.width, payload?.height]);
+
     const imageSrc = payload?.objectUrl ?? "";
     const [image, status] = useImage(imageSrc);
 
@@ -136,6 +192,39 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     });
 
     const isReady = !!image && status === "loaded" && cw > 0 && ch > 0;
+
+    // Bring the focused layout block into view. Driven off the computed
+    // highlight geometry rather than the raw store index: the geometry is
+    // what `revealRect` needs, and it re-derives when the page, the layout,
+    // or the payload dimensions arrive. `revealRect` itself is a no-op for an
+    // already-visible block, so this only moves the canvas when it must.
+    //
+    // The dependencies are the four numbers, not the memo object: editing a
+    // block's text replaces the whole layout object (immer copies the mutation
+    // path), so depending on identity would re-fire the reveal on every 400 ms
+    // write-back and snap the canvas back to centre while the user is still
+    // typing — undoing any pan they made to read the rest of a tall column.
+    // Two sources, never both at once in practice: a layout block (whole-file
+    // review, block list focus) or a focused region (grouped review). The
+    // layout block wins if they ever collide — it is the more precise of the
+    // two, and two effects racing to reveal would just jitter the canvas.
+    const reveal = layoutHighlight?.reveal ?? focusedRegion ?? null;
+    const revealX = reveal?.x ?? null;
+    const revealY = reveal?.y ?? null;
+    const revealWidth = reveal?.width ?? null;
+    const revealHeight = reveal?.height ?? null;
+    useEffect(() => {
+      if (
+        revealX === null ||
+        revealY === null ||
+        revealWidth === null ||
+        revealHeight === null
+      ) {
+        return;
+      }
+      controller.revealRect(revealX, revealY, revealWidth, revealHeight);
+    }, [revealX, revealY, revealWidth, revealHeight, controller]);
+
     const showEmpty = !file;
     // A file is open but there is no bitmap to draw. Two ways to get here:
     // the backend refused the file at import and said why (`loadError`), or we
@@ -170,6 +259,23 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
         setColorVersion((version) => version + 1);
       });
     }, []);
+
+    // Konva props take literal colour strings, so the accent tokens are
+    // resolved here. `colorVersion` is referenced only to re-run this after a
+    // theme change; the token cache was already cleared by the same event.
+    const accent = useMemo(() => {
+      void colorVersion;
+      return {
+        base: cssHsl("--canvas-accent"),
+        strong: cssHsl("--canvas-accent-strong"),
+        band: cssHsl("--canvas-accent", 0.08),
+        // Layout-block highlight. A translucent wash plus an outline, and
+        // deliberately *not* a dimming of everything else: in whole-file mode
+        // the reader is constantly comparing a block against its neighbours to
+        // work out the column order, and dimming them fights that.
+        layoutFill: cssHsl("--canvas-accent", 0.12),
+      };
+    }, [colorVersion]);
 
     const performDelete = useCallback((ids: string[]) => {
       const ctx = getActivePage();
@@ -586,8 +692,10 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   rotateEnabled={false}
                   keepRatio={false}
                   flipEnabled={false}
-                  borderStroke="#2563eb"
-                  anchorFill="#2563eb"
+                  borderStroke={accent.strong}
+                  anchorFill={accent.strong}
+                  // Not a token: the anchor outline has to stay light in both
+                  // themes to separate the handle from the accent fill.
                   anchorStroke="#ffffff"
                   anchorSize={8}
                   boundBoxFunc={(oldBox, newBox) => {
@@ -601,16 +709,54 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
               )}
             </Layer>
             <Layer listening={false}>
+              {/* Stroke width is divided by the scale, like the rubber band
+                  below, so the outline keeps the same apparent thickness at
+                  every zoom level. No animation: this tracks keyboard focus,
+                  and Tab held down would smear any transition. */}
+              {layoutHighlight?.points && (
+                <Line
+                  points={layoutHighlight.points}
+                  closed
+                  stroke={accent.strong}
+                  strokeWidth={2 / scale}
+                  fill={accent.layoutFill}
+                  listening={false}
+                />
+              )}
+              {layoutHighlight?.rect && (
+                <Rect
+                  x={layoutHighlight.rect.x}
+                  y={layoutHighlight.rect.y}
+                  width={layoutHighlight.rect.width}
+                  height={layoutHighlight.rect.height}
+                  stroke={accent.strong}
+                  strokeWidth={2 / scale}
+                  fill={accent.layoutFill}
+                  listening={false}
+                />
+              )}
+              {focusedRegion && !layoutHighlight && (
+                <Rect
+                  x={focusedRegion.x}
+                  y={focusedRegion.y}
+                  width={focusedRegion.width}
+                  height={focusedRegion.height}
+                  stroke={accent.strong}
+                  strokeWidth={2 / scale}
+                  fill={accent.layoutFill}
+                  listening={false}
+                />
+              )}
               {rubberBand && (
                 <Rect
                   x={rubberBand.x}
                   y={rubberBand.y}
                   width={rubberBand.w}
                   height={rubberBand.h}
-                  stroke="#3b82f6"
+                  stroke={accent.base}
                   strokeWidth={1 / scale}
                   dash={[6 / scale, 4 / scale]}
-                  fill="rgba(59,130,246,0.08)"
+                  fill={accent.band}
                   listening={false}
                 />
               )}
