@@ -1,6 +1,6 @@
 # Carpo
 
-**English**: [English](./README.md)
+ [English](./README.md)
 
 桌面 OCR 工具，专门处理近代中文报刊扫描件以及扫描版书籍。导入图像或 PDF，框选报道版块或整页识别，多家
 provider 任选，结果导出为 Markdown / 纯文本。
