@@ -25,15 +25,15 @@ provider 任选，结果导出为 Markdown / 纯文本。
 
 **全文识别**
 
-![全文识别界面](docs/screenshots/full-text-ocr.png)
+![全文识别界面](docs/screenshots/full.png)
 
 **框选识别**
 
-![框选识别界面](docs/screenshots/selection-ocr.png)
+![框选识别界面](docs/screenshots/select.png)
 
 **Paddle JSON 导入**
 
-![Paddle JSON 导入界面](docs/screenshots/json-import-simplified.png)
+![Paddle JSON 导入界面](docs/screenshots/jsonimport.png)
 
 ## 安装
 
