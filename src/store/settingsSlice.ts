@@ -16,7 +16,9 @@ import {
   type OcrProfile as IpcOcrProfile,
   type Provider,
   type SecretKey,
+  type Theme,
 } from "@/lib/ipc-types";
+import { setThemePreference, syncThemePreference } from "@/lib/theme";
 
 /** What we know about whether a credential exists — *not* the credential.
  *  A missing key means "never checked": the UI must stay silent rather than
@@ -89,6 +91,9 @@ export const DEFAULT_SETTINGS: NonSecretSettings = {
   proofread_provider: null,
   proofread_model: "",
   proofread_prompt: defaultProofreadPrompt(),
+  // Follow the OS until the user picks. `startup.ts` has already resolved
+  // this (or the persisted value) before React mounted.
+  theme: null,
 };
 
 export interface SettingsSlice {
@@ -105,6 +110,10 @@ export interface SettingsSlice {
    *  the whole app re-renders, and the value rides along in the settings so
    *  the backend can localize job progress and error messages too. */
   setLanguage: (language: Language) => void;
+  /** Persists the UI theme. Applies to the document immediately (with an
+   *  immediate repaint — no restart, no flash) and rides along in settings
+   *  so the backend can match the native shell to the WebView. */
+  setTheme: (theme: Theme) => void;
   /** Mirror of `settings.ocr_profile` kept as a top-level key so the
    *  M4-era `ProfileToggle` selector (`s.ocrProfile`) still works after
    *  the slice grew. New code should read `s.settings.ocr_profile`. */
@@ -159,6 +168,10 @@ export const createSettingsSlice: StateCreator<
       // Hydration and the settings dialog both land here, so this is the one
       // place that has to keep the message catalog in step with the store.
       if (next.language) applyLanguage(next.language);
+      // Adopt the persisted theme if it differs from the localStorage mirror
+      // (e.g. changed on another machine or hand-edited). No-op in the common
+      // case where startup already applied the same value.
+      if (next.theme) syncThemePreference(next.theme);
     }),
   setProvider: (provider) => {
     let next: NonSecretSettings | null = null;
@@ -184,6 +197,16 @@ export const createSettingsSlice: StateCreator<
       next = current(state.settings);
     });
     applyLanguage(language);
+    if (next) void persistSettings(next);
+  },
+  setTheme: (theme) => {
+    let next: NonSecretSettings | null = null;
+    set((state) => {
+      state.settings.theme = theme;
+      next = current(state.settings);
+    });
+    // Document first so the visual change is instant, then the async persist.
+    setThemePreference(theme);
     if (next) void persistSettings(next);
   },
 });

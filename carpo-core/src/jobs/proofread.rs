@@ -636,6 +636,7 @@ mod tests {
             proofread_provider,
             proofread_model: String::new(),
             proofread_prompt: String::new(),
+            theme: None,
         }
     }
 

@@ -114,6 +114,16 @@ export const zh = {
   "language.zh": "简体中文",
   "language.en": "English",
 
+  "settings.appearanceTab": "外观",
+  "settings.appearanceTitle": "外观",
+  "settings.appearanceDesc":
+    "选择浅色、深色或跟随系统。深色会同时应用于原生菜单与对话框。",
+  "settings.appearanceField": "界面主题",
+  "settings.appearanceNote": "切换后立即预览，保存后生效。",
+  "theme.system": "跟随系统",
+  "theme.light": "浅色",
+  "theme.dark": "深色",
+
   "pageJump.prev": "上一页",
   "pageJump.next": "下一页",
   "pageJump.input": "跳转页码",
@@ -492,6 +502,16 @@ export const en: Record<MessageKey, string> = {
   "settings.languageNote": "Previewed immediately, applied on save.",
   "language.zh": "简体中文",
   "language.en": "English",
+
+  "settings.appearanceTab": "Appearance",
+  "settings.appearanceTitle": "Appearance",
+  "settings.appearanceDesc":
+    "Choose light, dark, or follow the system. Dark also applies to native menus and dialogs.",
+  "settings.appearanceField": "Theme",
+  "settings.appearanceNote": "Previewed immediately, applied on save.",
+  "theme.system": "System",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
 
   "pageJump.prev": "Previous page",
   "pageJump.next": "Next page",

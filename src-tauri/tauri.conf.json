@@ -21,7 +21,6 @@
         "decorations": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
-        "theme": "Light",
         "trafficLightPosition": { "x": 14, "y": 28 },
         "resizable": true
       }

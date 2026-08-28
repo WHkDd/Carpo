@@ -1,13 +1,17 @@
 import { isTauriRuntime } from "./runtime";
+import { getThemePreference, resolveTheme } from "./theme";
 
-/** Keeps the WebView's prepaint and React's current light-only UI in sync. */
+/**
+ * Themes the first paint synchronously, before React mounts. Settings
+ * hydration is async and would arrive a frame too late; the theme module
+ * mirrors the preference into localStorage (same trick as the language
+ * catalog) so this read is synchronous and flash-free.
+ */
 export function applyStartupAppearance(): void {
   if (typeof document === "undefined") return;
-  // Dark mode is outside this batch. Do not expose a partial preference or
-  // dark form controls before the complete token set and system listener
-  // exist; the only startup contract here is a flash-free light first frame.
-  document.documentElement.classList.remove("dark");
-  document.documentElement.style.colorScheme = "light";
+  const resolved = resolveTheme(getThemePreference());
+  document.documentElement.classList.toggle("dark", resolved === "dark");
+  document.documentElement.style.colorScheme = resolved;
 }
 
 /** Forces one fallback-font layout in a fresh desktop WebView. This prevents

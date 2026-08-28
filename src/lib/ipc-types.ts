@@ -47,6 +47,10 @@ export type SecretKey =
   | "openrouter_key"
   | "openai_compatible_key";
 
+/** UI theme. Mirrors `carpo_core::config::Theme`; `null` on the wire means
+ *  "never chosen" and follows the OS. */
+export type Theme = "system" | "light" | "dark";
+
 export interface NonSecretSettings {
   provider: Provider;
   ocr_profile: OcrProfile;
@@ -75,6 +79,11 @@ export interface NonSecretSettings {
    *  The frontend hydrates an empty value to the built-in default so the
    *  settings dialog never shows a blank prompt. */
   proofread_prompt: string;
+  /** UI theme. `null` means "never chosen" — follow the OS. Mirrors
+   *  `config::NonSecretSettings::theme`; older settings.json files parse to
+   *  `null` via serde default. The desktop backend also applies this to the
+   *  native appearance on save. */
+  theme: Theme | null;
 }
 
 export interface PdfInfo {

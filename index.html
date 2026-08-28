@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <!-- Both schemes: form controls and scrollbars follow whichever scheme
+         the startup script puts on <html> instead of always rendering light. -->
+    <meta name="color-scheme" content="light dark" />
     <title>Carpo</title>
     <style>
       html,
@@ -11,7 +13,16 @@
       #root {
         height: 100%;
         margin: 0;
-        background: hsl(var(--background, 60 7% 98%));
+      }
+      /* Pre-paint background matching the token defaults in globals.css, so
+         neither scheme flashes the wrong color before CSS loads. The startup
+         script overrides this with the real --background value immediately
+         after it resolves the persisted preference. */
+      html:not(.dark) {
+        background: hsl(60 7% 98%);
+      }
+      html.dark {
+        background: hsl(0 0% 13%);
       }
     </style>
   </head>

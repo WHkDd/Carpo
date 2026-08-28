@@ -18,11 +18,17 @@ import {
   setSecret as ipcSetSecret,
   setSettings as ipcSetSettings,
 } from "@/lib/tauri";
+import {
+  getThemePreference,
+  setThemePreference,
+  THEME_PREFERENCES,
+} from "@/lib/theme";
 import type {
   NonSecretSettings,
   PaddleDocumentOptions,
   Provider,
   SecretKey,
+  Theme,
 } from "@/lib/ipc-types";
 import { appErrorMessage } from "@/lib/ipc-types";
 
@@ -53,7 +59,7 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   openai_compatible: "openai_compatible_key",
 };
 
-type TabId = Provider | "prompt" | "proofread" | "language";
+type TabId = Provider | "prompt" | "proofread" | "appearance" | "language";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -98,6 +104,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // Language active when the dialog opened, so cancelling can restore it
   // even when nothing was ever committed (`committed.language === null`).
   const languageOnOpenRef = useRef<Language>(getLanguage());
+  // Same snapshot for the theme: the AppearancePanel previews instantly, so
+  // walking away has to put the dialog-open theme back.
+  const themeOnOpenRef = useRef<Theme>(getThemePreference());
   const committedRef = useRef(committed);
   const wasOpenRef = useRef(false);
   committedRef.current = committed;
@@ -118,6 +127,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (wasOpenRef.current) return;
     wasOpenRef.current = true;
     languageOnOpenRef.current = getLanguage();
+    themeOnOpenRef.current = getThemePreference();
     setDraft(committedRef.current);
     setTab(committedRef.current.provider);
     setSecretEdits({});
@@ -146,9 +156,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   }, [open, mergeCredentialPresence]);
 
   // The language select previews immediately (the whole app re-renders), so
-  // walking away from the dialog has to put the committed language back.
+  // walking away from the dialog has to put the committed language back. The
+  // theme preview gets the same treatment.
   const closeAndRevertLanguage = useCallback(() => {
     applyLanguage(languageOnOpenRef.current);
+    setThemePreference(themeOnOpenRef.current);
     onClose();
   }, [onClose]);
 
@@ -254,10 +266,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     <div className="app-chrome fixed inset-0 z-50 flex items-center justify-center">
       {/* Scrim. Not focusable: a dialog's dismissal target should not be a
           tab stop competing with the controls inside it — Escape and the
-          close button are the keyboard paths. */}
+          close button are the keyboard paths. Black rather than
+          foreground-derived: on dark backgrounds `foreground/25` becomes a
+          brightening wash, and a scrim must always dim. */}
       <div
         role="presentation"
-        className="absolute inset-0 bg-foreground/25"
+        className="absolute inset-0 bg-black/35 dark:bg-black/55"
         onClick={closeAndRevertLanguage}
       />
 
@@ -307,6 +321,18 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 onChange={(language) => {
                   setDraft((d) => ({ ...d, language }));
                   applyLanguage(language);
+                }}
+              />
+            ) : tab === "appearance" ? (
+              <AppearancePanel
+                value={draft.theme ?? themeOnOpenRef.current}
+                onChange={(theme) => {
+                  setDraft((d) => ({ ...d, theme }));
+                  // Preview immediately, mirroring the language panel: the
+                  // document updates at once, and closing without saving
+                  // restores the theme that was active when the dialog
+                  // opened.
+                  setThemePreference(theme);
                 }}
               />
             ) : tab === "prompt" ? (
@@ -391,7 +417,13 @@ interface TabRailProps {
 
 /** Tab order of the rail, used by the arrow-key handler. Must match the
  *  render order below. */
-const TAB_ORDER: TabId[] = [...PROVIDER_ORDER, "prompt", "proofread", "language"];
+const TAB_ORDER: TabId[] = [
+  ...PROVIDER_ORDER,
+  "prompt",
+  "proofread",
+  "appearance",
+  "language",
+];
 
 export function settingsTabPanelId(tab: TabId): string {
   return `settings-panel-${tab}`;
@@ -477,6 +509,12 @@ function TabRail({
         active={tab === "proofread"}
         label={t("settings.proofreadTab")}
         onClick={() => setTab("proofread")}
+      />
+      <TabButton
+        id="appearance"
+        active={tab === "appearance"}
+        label={t("settings.appearanceTab")}
+        onClick={() => setTab("appearance")}
       />
       <TabButton
         id="language"
@@ -1350,6 +1388,48 @@ function LanguagePanel({ value, onChange }: LanguagePanelProps) {
         </select>
         <span className="text-[11px] text-foreground-subtle">
           {t("settings.languageNote")}
+        </span>
+      </Field>
+    </div>
+  );
+}
+
+interface AppearancePanelProps {
+  value: Theme;
+  onChange: (next: Theme) => void;
+}
+
+const THEME_LABEL_KEY: Record<Theme, "theme.system" | "theme.light" | "theme.dark"> = {
+  system: "theme.system",
+  light: "theme.light",
+  dark: "theme.dark",
+};
+
+function AppearancePanel({ value, onChange }: AppearancePanelProps) {
+  const t = useT();
+  return (
+    <div className="px-7 py-6">
+      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+        {t("settings.appearanceTitle")}
+      </h3>
+      <p className="mb-5 text-[13px] text-foreground-muted">
+        {t("settings.appearanceDesc")}
+      </p>
+      <Field label={t("settings.appearanceField")}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as Theme)}
+          aria-label={t("settings.appearanceField")}
+          className="h-8 w-[240px] rounded border border-border bg-background px-2 text-[13px] text-foreground focus:border-transparent focus:outline focus:outline-2 focus:outline-primary"
+        >
+          {THEME_PREFERENCES.map((theme) => (
+            <option key={theme} value={theme}>
+              {t(THEME_LABEL_KEY[theme])}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-foreground-subtle">
+          {t("settings.appearanceNote")}
         </span>
       </Field>
     </div>

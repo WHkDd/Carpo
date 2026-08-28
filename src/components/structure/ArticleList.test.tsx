@@ -1,10 +1,22 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArticleList } from "./ArticleList";
 
-const { updateArticle } = vi.hoisted(() => ({ updateArticle: vi.fn() }));
+const { articleHsl, colorListeners, updateArticle } = vi.hoisted(() => ({
+  articleHsl: vi.fn(() => "hsl(220 18% 43% / 1)"),
+  colorListeners: new Set<() => void>(),
+  updateArticle: vi.fn(),
+}));
+
+vi.mock("@/lib/article-color-token", () => ({
+  articleHsl,
+  subscribeArticleColorTokens: (listener: () => void) => {
+    colorListeners.add(listener);
+    return () => colorListeners.delete(listener);
+  },
+}));
 
 vi.mock("@/store", () => {
   const store = {
@@ -37,6 +49,7 @@ describe("ArticleList title editing", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    colorListeners.clear();
   });
 
   function startEditing(): HTMLInputElement {
@@ -71,5 +84,16 @@ describe("ArticleList title editing", () => {
 
     expect(updateArticle).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "编辑标题" })).toBe(input);
+  });
+
+  it("re-resolves badge colours when the theme invalidates token values", () => {
+    render(<ArticleList />);
+    expect(articleHsl).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      colorListeners.forEach((listener) => listener());
+    });
+
+    expect(articleHsl).toHaveBeenCalledTimes(2);
   });
 });
