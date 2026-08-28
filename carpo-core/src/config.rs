@@ -160,6 +160,23 @@ pub struct NonSecretSettings {
     pub proofread_model: String,
     #[serde(default)]
     pub proofread_prompt: String,
+    /// UI theme. `None` = follow the OS (also the historical behavior:
+    /// settings written before theming deserialize to `None` via serde
+    /// default). Mirrors the frontend `theme` preference; the desktop shell
+    /// also applies it to the native appearance so menus, dialogs and the
+    /// title bar match the WebView instead of staying light.
+    #[serde(default)]
+    pub theme: Option<Theme>,
+}
+
+/// UI theme preference, shared with the frontend's `theme` union.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 impl Default for NonSecretSettings {
@@ -180,6 +197,7 @@ impl Default for NonSecretSettings {
             proofread_provider: None,
             proofread_model: String::new(),
             proofread_prompt: default_proofread_prompt(i18n::language()),
+            theme: None,
         }
     }
 }
@@ -269,6 +287,17 @@ mod tests {
         assert_eq!(parsed.proofread_provider, None);
         assert_eq!(parsed.proofread_model, "");
         assert_eq!(parsed.proofread_prompt, "");
+        assert_eq!(parsed.theme, None);
+    }
+
+    #[test]
+    fn theme_round_trips_and_rejects_unknown_values() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark] {
+            let encoded = serde_json::to_value(theme).unwrap();
+            let decoded: Theme = serde_json::from_value(encoded).unwrap();
+            assert_eq!(decoded, theme);
+        }
+        assert!(serde_json::from_value::<Theme>(json!("sepia")).is_err());
     }
 
     #[test]

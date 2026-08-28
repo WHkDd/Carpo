@@ -100,15 +100,75 @@
     --transition-duration-fast: 120ms;
     --transition-ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 
-    /* Typography */
-    --font-sans: "PingFang SC", "Microsoft YaHei", -apple-system,
-                 BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI",
-                 "Inter Variable", Inter, system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code",
-                 Menlo, Consolas, monospace;
+  /* Typography — platform UI fonts first, CJK second. The English UI was
+   * previously rendering Latin glyphs out of PingFang SC, which reads as
+   * slightly wrong next to every native macOS/Windows control. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable",
+               "Segoe UI", "PingFang SC", "Microsoft YaHei",
+               system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Mono", "JetBrains Mono", ui-monospace,
+               Menlo, Consolas, monospace;
   }
 
   .dark {
+    /* Dark monochrome theme. The graphite palette is designed directly for
+     * dark backgrounds, not inverted from the light values — inverted grays
+     * read too bright on a dark base and the surface-2 column fails AA in
+     * bulk. Contrast mirror of the light comments above, binding case first
+     * (background / surface-2):
+     * foreground 14.46 / 12.84, foreground-muted 8.18 / 7.27,
+     * foreground-subtle 6.26 / 5.56, destructive 5.57 / 4.95,
+     * success 6.29 / 5.59, warning 7.82 / 6.95 (own 10% tint 6.44).
+     * foreground-placeholder 3.27 — deliberately below body-text bar, ≥3:1. */
+    --background: 0 0% 13%;
+    --surface: 0 0% 13%;
+    --surface-2: 220 6% 17%;
+    --surface-overlay: 220 6% 21%;
+    --canvas: 220 8% 15%;
+
+    --foreground: 60 5% 95%;
+    --foreground-muted: 220 5% 73%;
+    --foreground-subtle: 220 5% 64%;
+    --foreground-placeholder: 220 5% 45%;
+
+    --border: 220 6% 26%;
+    --border-strong: 220 6% 36%;
+
+    --primary: 60 3% 93%;
+    --primary-foreground: 220 10% 10%;
+    --primary-muted: 220 6% 20%;
+
+    --secondary: 220 6% 20%;
+    --secondary-foreground: 60 5% 92%;
+
+    --muted: 220 6% 20%;
+    --muted-foreground: 220 5% 70%;
+
+    --accent: 60 3% 93%;
+    --accent-foreground: 220 10% 10%;
+
+    --destructive: 4 52% 66%;
+    --destructive-foreground: 0 0% 10%;
+
+    --success: 135 17% 60%;
+    --warning: 42 42% 64%;
+
+    --card: 0 0% 13%;
+    --card-foreground: 60 5% 95%;
+
+    --popover: 0 0% 13%;
+    --popover-foreground: 60 5% 95%;
+
+    --input: 220 6% 26%;
+    --ring: 60 3% 93%;
+
+    /* Canvas selection accent. Inverted toward a lighter blue so a selection
+     * rectangle keeps its separation from darkened newspaper scans; the
+     * graphite-primary rule from :root applies unchanged. */
+    --canvas-accent: 213 94% 68%;         /* ~blue-400 */
+    --canvas-accent-strong: 217 91% 60%;  /* blue-500 */
+
+    /* Low-chroma article hues, lifted for dark canvases (existing values). */
     --article-1:  220 30% 68%;
     --article-2:  145 24% 62%;
     --article-3:  285 25% 70%;
@@ -307,3 +367,25 @@
 }
 .prose-ocr .katex { font-size: 1em; }
 .prose-ocr .katex-display { margin: 0.5em 0; overflow-x: auto; overflow-y: hidden; }
+
+/* Windows High Contrast / forced-colors. The system overrides authored colors
+ * here, and without this block borders drawn as background fills and the
+ * focus outline above simply disappear, leaving an unusable interface. Keep
+ * every structural line and the focus ring on system color keywords. */
+@media (forced-colors: active) {
+  *,
+  *::before,
+  *::after {
+    border-color: CanvasText !important;
+    outline-color: Highlight !important;
+  }
+
+  .app-chrome :where(button, a, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid Highlight !important;
+  }
+
+  .prose-ocr blockquote { border-left-color: CanvasText !important; }
+  .prose-ocr hr { border-top-color: CanvasText !important; }
+  .prose-ocr th,
+  .prose-ocr td { border-color: CanvasText !important; }
+}

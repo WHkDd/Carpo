@@ -97,6 +97,17 @@ pub fn run() {
             app.manage(core);
             app.manage(secrets);
 
+            // The persisted theme must reach the native shell before the
+            // window finishes its first layout, or a dark-mode user sees a
+            // light menu bar flash ahead of the (correctly dark) WebView.
+            // config::load is synchronous and reads the same settings.json
+            // the frontend's get_settings will.
+            if let Ok(settings) = config::load(app.handle()) {
+                for window in app.webview_windows().values() {
+                    let _ = window.set_theme(commands::settings::native_theme(settings.theme));
+                }
+            }
+
             // Finder/Explorer may launch the first instance with one or more
             // file arguments. Queue them for the frontend after its event
             // listeners are attached; later launches arrive through the

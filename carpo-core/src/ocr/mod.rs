@@ -460,6 +460,7 @@ mod tests {
             proofread_provider: None,
             proofread_model: String::new(),
             proofread_prompt: String::new(),
+            theme: None,
         }
     }
 

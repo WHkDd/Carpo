@@ -294,7 +294,8 @@ export function PaddleJsonImportDialog({
     <div className="app-chrome fixed inset-0 z-50 flex items-center justify-center">
       <div
         role="presentation"
-        className="absolute inset-0 bg-foreground/25"
+        // Black rather than foreground-derived — see SettingsDialog scrim.
+        className="absolute inset-0 bg-black/35 dark:bg-black/55"
         onClick={onClose}
       />
 

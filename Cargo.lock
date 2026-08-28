@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "carpo"
-version = "0.3.1"
+version = "0.3.4"
 dependencies = [
  "carpo-core",
  "keyring",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "carpo-core"
-version = "0.3.1"
+version = "0.3.4"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "carpo-server"
-version = "0.3.0"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "axum",

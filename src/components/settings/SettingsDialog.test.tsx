@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getLanguage, setLanguage } from "@/i18n";
+import { getThemePreference, setThemePreference } from "@/lib/theme";
 import { getSecret, setSettings as ipcSetSettings } from "@/lib/tauri";
 import { DEFAULT_SETTINGS } from "@/store/settingsSlice";
 import { SettingsDialog } from "./SettingsDialog";
@@ -32,6 +33,7 @@ describe("SettingsDialog language selection", () => {
   afterEach(() => {
     cleanup();
     setLanguage("zh");
+    setThemePreference("system");
   });
 
   beforeEach(() => {
@@ -39,6 +41,7 @@ describe("SettingsDialog language selection", () => {
     vi.mocked(getSecret).mockResolvedValue(false);
     vi.mocked(ipcSetSettings).mockResolvedValue(undefined);
     setLanguage("zh");
+    setThemePreference("system");
   });
 
   it("previews the picked language and saves it with the settings", async () => {
@@ -66,6 +69,30 @@ describe("SettingsDialog language selection", () => {
     );
   });
 
+  it("previews the picked theme and saves it with the settings", async () => {
+    render(<SettingsDialog open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "外观" }));
+    fireEvent.change(screen.getByLabelText("界面主题"), {
+      target: { value: "dark" },
+    });
+
+    expect(getThemePreference()).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(ipcSetSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(ipcSetSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: "dark" })
+      )
+    );
+    expect(setCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: "dark" })
+    );
+  });
+
   it("warns on the proofread tab that the model must accept images", async () => {
     // Proofreading always attaches the original scan and has no text-only
     // mode, so a model without image input fails at send time rather than
@@ -77,9 +104,15 @@ describe("SettingsDialog language selection", () => {
     ).toBeTruthy();
   });
 
-  it("reverts the preview when the dialog is closed without saving", async () => {
+  it("reverts previews when the dialog is closed without saving", async () => {
     const onClose = vi.fn();
     render(<SettingsDialog open onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "外观" }));
+    fireEvent.change(screen.getByLabelText("界面主题"), {
+      target: { value: "dark" },
+    });
+    expect(getThemePreference()).toBe("dark");
 
     fireEvent.click(screen.getByRole("tab", { name: "语言 / Language" }));
     fireEvent.change(screen.getByLabelText("界面语言"), {
@@ -91,6 +124,8 @@ describe("SettingsDialog language selection", () => {
 
     expect(onClose).toHaveBeenCalled();
     expect(getLanguage()).toBe("zh");
+    expect(getThemePreference()).toBe("system");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(ipcSetSettings).not.toHaveBeenCalled();
   });
 });

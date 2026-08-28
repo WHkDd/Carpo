@@ -2,6 +2,10 @@ import type { Config } from "tailwindcss";
 import animate from "tailwindcss-animate";
 
 export default {
+  // Class strategy: the startup script applies `.dark` from the persisted
+  // preference before first paint, so the strategy has to be knowable without
+  // a media query round-trip. `media` alone cannot express "force light".
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     container: {

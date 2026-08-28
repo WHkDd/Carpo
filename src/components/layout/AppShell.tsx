@@ -16,6 +16,7 @@ import { assembleDocument } from "@/lib/format-doc";
 import { clearPendingJob, loadPendingJob } from "@/lib/job-persistence";
 import { isTauriRuntime, logWarn } from "@/lib/runtime";
 import { notifyOcrResult } from "@/lib/desktop";
+import { watchSystemTheme } from "@/lib/theme";
 import { getJobResult, getSettings, listJobs } from "@/lib/tauri";
 import {
   appErrorMessage,
@@ -133,6 +134,11 @@ function AppShellInner() {
     window.addEventListener("contextmenu", onContextMenu);
     return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
+
+  // Follow OS scheme changes while the theme preference is "system". One
+  // global subscription for the process; the callback no-ops for explicit
+  // light/dark choices.
+  useEffect(() => watchSystemTheme(), []);
 
   // Hydrate persisted settings into the slice on mount. Failures are
   // non-fatal — the slice's DEFAULT_SETTINGS keep the UI usable.

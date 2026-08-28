@@ -9,7 +9,10 @@ import {
 import { useStore } from "@/store";
 import { Pencil, Trash2 } from "lucide-react";
 import { isRowCommandTarget, useListKeyboard } from "@/hooks/useListKeyboard";
-import { articleHsl } from "@/lib/article-color-token";
+import {
+  articleHsl,
+  subscribeArticleColorTokens,
+} from "@/lib/article-color-token";
 import { isImeCommit } from "@/lib/ime";
 import { confirmDestructive } from "@/lib/confirm";
 import { useT } from "@/i18n";
@@ -93,7 +96,10 @@ const ArticleRow = forwardRef<HTMLDivElement, ArticleRowProps>(function ArticleR
       >
         <div
           aria-hidden
-          className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+          // White text works on the light-theme article hues (L 36-45%) but
+          // not on the dark-theme lifts (L 60-70%) — pick the badge text
+          // color from the theme so both stay readable.
+          className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white dark:text-[hsl(220_10%_10%)]"
           style={{ backgroundColor: color }}
         >
           {num}
@@ -214,6 +220,17 @@ export function ArticleList() {
   // stand down while the user is typing — otherwise every keystroke in the
   // title field would also drive type-ahead.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Article colours are CSS-variable backed and cached outside React. Theme
+  // changes invalidate that cache; bumping this version makes the DOM badges
+  // resolve the freshly active light/dark palette as the canvas already does.
+  const [, setColorVersion] = useState(0);
+  useEffect(
+    () =>
+      subscribeArticleColorTokens(() => {
+        setColorVersion((version) => version + 1);
+      }),
+    []
+  );
 
   const pageBlockCounts = useMemo(() => {
     const counts = new Map<string, number>();
