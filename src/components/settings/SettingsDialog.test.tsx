@@ -93,15 +93,17 @@ describe("SettingsDialog language selection", () => {
     );
   });
 
-  it("warns on the proofread tab that the model must accept images", async () => {
-    // Proofreading always attaches the original scan and has no text-only
-    // mode, so a model without image input fails at send time rather than
-    // degrading. This note is the only warning before that happens.
+  it("shows the proofread provider and model fields", async () => {
+    // The dedicated proofread pass reuses provider credentials and model
+    // selection; the tab surfaces which provider runs it and which model
+    // it falls back to, so a user can verify the setup before sending.
     render(<SettingsDialog open onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "校对" }));
-    expect(
-      screen.getByText(/必须使用支持图像输入的模型/)
-    ).toBeTruthy();
+    expect(screen.getByText("校对服务商")).toBeTruthy();
+    expect(screen.getByText("校对模型")).toBeTruthy();
+    // PaddleOCR is filtered out of the proofread provider list — it can
+    // recognize text but cannot chat, so it is never a proofread candidate.
+    expect(screen.queryByText("PaddleOCR", { selector: "option" })).toBeNull();
   });
 
   it("reverts previews when the dialog is closed without saving", async () => {
