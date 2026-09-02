@@ -209,11 +209,7 @@ function GroupedRail({ maxWidth }: StructureRailProps) {
             <div className="border-t border-border/40" />
             <ArticleList />
           </div>
-        ) : (
-          <p className="px-1.5 pt-3 text-[12px] leading-5 text-foreground-subtle">
-            {t("rail.groupedEmpty")}
-          </p>
-        )}
+        ) : null}
       </div>
 
       <div

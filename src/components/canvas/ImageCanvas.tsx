@@ -225,7 +225,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
       controller.revealRect(revealX, revealY, revealWidth, revealHeight);
     }, [revealX, revealY, revealWidth, revealHeight, controller]);
 
-    const showEmpty = !file;
     // A file is open but there is no bitmap to draw. Two ways to get here:
     // the backend refused the file at import and said why (`loadError`), or we
     // hold an object URL the webview then failed to decode — a revoked one, or
@@ -871,16 +870,6 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
                   {t("common.delete")}
                 </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {showEmpty && (
-          <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <div className="flex flex-col items-center gap-3 text-foreground-subtle">
-              <ImageOff className="h-9 w-9 opacity-60" strokeWidth={1.4} />
-              <div className="text-sm">{t("canvas.dropHint")}</div>
-              <div className="font-mono text-xs">{t("canvas.formats")}</div>
             </div>
           </div>
         )}

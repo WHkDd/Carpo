@@ -95,8 +95,6 @@ export const zh = {
   "settings.proofreadProviderFollow": "跟随 OCR 服务商",
   "settings.proofreadProviderNote":
     "校对需要对话型模型；PaddleOCR 仅用于识别，不能校对。",
-  "settings.proofreadImageNote":
-    "校对会把原件扫描连同文本一起发送，因此必须使用支持图像输入的模型。",
   "settings.proofreadModel": "校对模型",
   "settings.proofreadModelFollow": "跟随 OCR 模型（{model}）",
   "settings.proofreadModelFollowEmpty": "跟随 OCR 模型",
@@ -107,8 +105,6 @@ export const zh = {
   // Chinese has to be able to find this tab.
   "settings.languageTab": "语言 / Language",
   "settings.languageTitle": "语言",
-  "settings.languageDesc":
-    "切换界面语言。识别进度、导出文件名与后端提示信息都会跟随此设置。",
   "settings.languageField": "界面语言",
   "settings.languageNote": "选择后立即预览，保存后生效。",
   "language.zh": "简体中文",
@@ -116,8 +112,6 @@ export const zh = {
 
   "settings.appearanceTab": "外观",
   "settings.appearanceTitle": "外观",
-  "settings.appearanceDesc":
-    "选择浅色、深色或跟随系统。深色会同时应用于原生菜单与对话框。",
   "settings.appearanceField": "界面主题",
   "settings.appearanceNote": "切换后立即预览，保存后生效。",
   "theme.system": "跟随系统",
@@ -170,14 +164,13 @@ export const zh = {
   "queue.importPaddleJson": "导入 Paddle JSON",
   "queue.collapse": "收起队列",
   "queue.expand": "展开队列",
-  "queue.dropHintLine1": "将扫描件拖入窗口",
-  "queue.dropHintLine2": "或点此添加文件",
+  "queue.dropHintLine1": "添加文件",
+  "queue.dropHintLine2": "添加文件",
   "queue.remove": "从队列移除",
   "queue.removeNamed": "从队列移除 {name}",
   "queue.loadFailed": "无法读取",
 
   "rail.groupedTitle": "扫描文本结构",
-  "rail.groupedEmpty": "完成版块标注后，此处将显示报道结构与阅读顺序。",
   "rail.resizeOcrPanel": "拖动调整 OCR 文本区高度",
   "rail.resizeWidth": "拖动调整侧栏宽度",
   "rail.starting": "正在启动…",
@@ -209,7 +202,6 @@ export const zh = {
   "canvas.deleteConfirmBody": "将删除 {count} 个版块。此操作不会删除原始图像。",
   "canvas.dropHint": "将扫描件拖入此处，或使用顶栏「添加文件」",
   "canvas.dropTarget": "松开以导入",
-  "canvas.formats": "支持 PDF · PNG · JPG · TIFF · BMP · DNG(iPhone)",
   "canvas.previewFailed": "预览加载失败，切换文件或重新导入可重试",
 
   "ocr.pageHeading": "第 {page} 页",
@@ -486,8 +478,6 @@ export const en: Record<MessageKey, string> = {
   "settings.proofreadProviderFollow": "Follow OCR provider",
   "settings.proofreadProviderNote":
     "Proofreading needs a chat-capable model; PaddleOCR is recognition-only.",
-  "settings.proofreadImageNote":
-    "Proofreading sends the original scan along with the text, so the model must accept image input.",
   "settings.proofreadModel": "Proofread model",
   "settings.proofreadModelFollow": "Follow OCR model ({model})",
   "settings.proofreadModelFollowEmpty": "Follow OCR model",
@@ -496,8 +486,6 @@ export const en: Record<MessageKey, string> = {
     "You are proofreading the OCR transcript of a page from a historical Chinese newspaper. This is a transcription of the original artifact: fix only OCR errors (similar-character confusion, mojibake, dropped characters, mis-ordered lines) and never touch the original orthography — variant characters, old glyph forms, traditional forms and vertical-typeset punctuation habits are features, not bugs. Do not polish or rewrite the wording.\n\nFor each suggested correction, output one JSON object with these fields:\n- \"before\": the mis-recognized fragment, which must appear verbatim in the source text\n- \"after\": the corrected fragment (an empty string for a deletion)\n- \"context_before\": the source text immediately preceding \"before\", 5–20 characters, for unique anchoring (do not include \"before\" itself)\n- \"category\": one of punct, charform, garble, layout, semantic\n- \"confidence\": a number between 0 and 1\n- \"reason\": a one-sentence justification\n\nDo not propose corrections you are not confident about. Output a single JSON array only (possibly empty), with no other text, commentary, or code fences.",
   "settings.languageTab": "Language",
   "settings.languageTitle": "Language",
-  "settings.languageDesc":
-    "Choose the interface language. OCR progress, export file names and backend messages all follow this setting.",
   "settings.languageField": "Interface language",
   "settings.languageNote": "Previewed immediately, applied on save.",
   "language.zh": "简体中文",
@@ -505,8 +493,6 @@ export const en: Record<MessageKey, string> = {
 
   "settings.appearanceTab": "Appearance",
   "settings.appearanceTitle": "Appearance",
-  "settings.appearanceDesc":
-    "Choose light, dark, or follow the system. Dark also applies to native menus and dialogs.",
   "settings.appearanceField": "Theme",
   "settings.appearanceNote": "Previewed immediately, applied on save.",
   "theme.system": "System",
@@ -559,15 +545,13 @@ export const en: Record<MessageKey, string> = {
   "queue.importPaddleJson": "Import Paddle JSON",
   "queue.collapse": "Collapse queue",
   "queue.expand": "Expand queue",
-  "queue.dropHintLine1": "Drop scans onto the window",
-  "queue.dropHintLine2": "or click here to add files",
+  "queue.dropHintLine1": "Add files",
+  "queue.dropHintLine2": "Add files",
   "queue.remove": "Remove from queue",
   "queue.removeNamed": "Remove {name} from queue",
   "queue.loadFailed": "Unreadable",
 
   "rail.groupedTitle": "Document structure",
-  "rail.groupedEmpty":
-    "Once blocks are marked up, the article structure and reading order show up here.",
   "rail.resizeOcrPanel": "Drag to resize the OCR text area",
   "rail.resizeWidth": "Drag to resize the sidebar",
   "rail.starting": "Starting…",
@@ -600,7 +584,6 @@ export const en: Record<MessageKey, string> = {
     "{count} blocks will be deleted. The source image is left untouched.",
   "canvas.dropHint": "Drop scans here, or use “Add files” in the sidebar",
   "canvas.dropTarget": "Release to import",
-  "canvas.formats": "Supports PDF · PNG · JPG · TIFF · BMP · DNG (iPhone)",
   "canvas.previewFailed":
     "The preview could not be loaded — switch files or re-import to retry",
 

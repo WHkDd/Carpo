@@ -1228,18 +1228,9 @@ function ProofreadPanel({
       : modelOptions(effectiveProvider, draft.proofread_model, models);
   return (
     <div className="px-7 py-6">
-      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+      <h3 className="mb-5 text-[15px] font-medium text-foreground">
         {t("settings.proofreadTab")}
       </h3>
-      <p className="mb-2 text-[13px] text-foreground-muted">
-        {t("settings.proofreadProviderNote")}
-      </p>
-      {/* Proofreading has no text-only mode, so a model without image input
-          fails at send time rather than degrading. This is the only warning
-          the user gets before that happens. */}
-      <p className="mb-5 text-[13px] text-foreground-muted">
-        {t("settings.proofreadImageNote")}
-      </p>
       <div className="space-y-4">
         <Field label={t("settings.proofreadProvider")}>
           <select
@@ -1365,12 +1356,9 @@ function LanguagePanel({ value, onChange }: LanguagePanelProps) {
   const t = useT();
   return (
     <div className="px-7 py-6">
-      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+      <h3 className="mb-5 text-[15px] font-medium text-foreground">
         {t("settings.languageTitle")}
       </h3>
-      <p className="mb-5 text-[13px] text-foreground-muted">
-        {t("settings.languageDesc")}
-      </p>
       <Field label={t("settings.languageField")}>
         <select
           value={value}
@@ -1409,12 +1397,9 @@ function AppearancePanel({ value, onChange }: AppearancePanelProps) {
   const t = useT();
   return (
     <div className="px-7 py-6">
-      <h3 className="mb-1 text-[15px] font-medium text-foreground">
+      <h3 className="mb-5 text-[15px] font-medium text-foreground">
         {t("settings.appearanceTitle")}
       </h3>
-      <p className="mb-5 text-[13px] text-foreground-muted">
-        {t("settings.appearanceDesc")}
-      </p>
       <Field label={t("settings.appearanceField")}>
         <select
           value={value}

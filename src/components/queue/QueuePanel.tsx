@@ -207,9 +207,7 @@ export function QueuePanel({
               onClick={() => void onOpenFiles()}
               className="w-full rounded-md px-3 py-3 text-center text-[11px] leading-5 text-foreground-subtle transition-colors hover:bg-surface-2 hover:text-foreground-muted focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             >
-              {t("queue.dropHintLine1")}
-              <br />
-              {t("queue.dropHintLine2")}
+              {t("queue.addFile")}
             </button>
           ) : (
             <div
