@@ -1,8 +1,14 @@
 import { forwardRef } from "react";
-import { FileText, FileImage, FileWarning, Trash2, X } from "lucide-react";
+import { Check, FileText, FileImage, FileWarning, Trash2, X } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/store";
 import { useT } from "@/i18n";
+
+/** Stable fallback: a fresh `[]` per call would re-render (zustand v5
+ *  compares selector results by reference). */
+const NO_TAGS: string[] = [];
+const MAX_VISIBLE_TAGS = 2;
 
 interface QueueItemProps {
   entry: FileEntry;
@@ -13,6 +19,12 @@ interface QueueItemProps {
   tabbable: boolean;
   onSelect: (id: string) => void;
   onRemove?: (id: string) => void;
+  /** Batch-export selection mode: defined → the icon slot shows a checkbox
+   *  in this state. The checkbox toggles via `onToggleCheck`; the rest of
+   *  the row still opens the file, so dates can be filled in one by one
+   *  without leaving the selection. */
+  checked?: boolean;
+  onToggleCheck?: (id: string) => void;
 }
 
 /** Focus styling shared by both densities and by the row commands.
@@ -22,8 +34,12 @@ const CELL_FOCUS =
   "focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
 
 export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
-  function QueueItem({ entry, active, tabbable, onSelect, onRemove }, ref) {
+  function QueueItem(
+    { entry, active, tabbable, onSelect, onRemove, checked, onToggleCheck },
+    ref
+  ) {
     const t = useT();
+    const tags = useStore((s) => s.documentStates[entry.id]?.tags ?? NO_TAGS);
     const failed = !!entry.loadError;
     const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
     const meta = failed ? t("queue.loadFailed") : entry.ext.toUpperCase();
@@ -56,22 +72,69 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
             />
           )}
           <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-surface-2">
-            <Icon
-              className={cn("h-4 w-4", failed ? "text-destructive" : "text-foreground-subtle")}
-              strokeWidth={1.5}
-            />
+            {checked !== undefined ? (
+              <span
+                role="checkbox"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!failed) onToggleCheck?.(entry.id);
+                }}
+                // Keep focus where it is: focusing this row without making it
+                // current would leave Space acting on a different row.
+                onMouseDown={(e) => e.preventDefault()}
+                aria-checked={checked}
+                aria-disabled={failed || undefined}
+                aria-label={t("batch.selectFile", { name: entry.name })}
+                className={cn(
+                  "grid h-4 w-4 place-items-center rounded border",
+                  checked
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border-strong bg-background",
+                  failed && "opacity-40"
+                )}
+              >
+                {checked && <Check className="h-3 w-3" strokeWidth={2.5} />}
+              </span>
+            ) : (
+              <Icon
+                className={cn("h-4 w-4", failed ? "text-destructive" : "text-foreground-subtle")}
+                strokeWidth={1.5}
+              />
+            )}
           </span>
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold">
               {entry.name}
             </span>
-            <span
-              className={cn(
-                "mt-0.5 block truncate font-mono text-[11px]",
-                failed ? "text-destructive" : "text-foreground-subtle"
+            <span className="mt-0.5 flex min-w-0 items-center gap-1">
+              <span
+                className={cn(
+                  "shrink-0 truncate font-mono text-[11px]",
+                  failed ? "text-destructive" : "text-foreground-subtle"
+                )}
+              >
+                {meta}
+              </span>
+              {tags.length > 0 && (
+                <span
+                  className="flex min-w-0 items-center gap-1"
+                  title={t("queue.tags", { tags: tags.join(", ") })}
+                >
+                  {tags.slice(0, MAX_VISIBLE_TAGS).map((tag) => (
+                    <span
+                      key={tag}
+                      className="min-w-0 max-w-[72px] truncate rounded bg-surface-overlay px-1 text-[10px] leading-4 text-foreground-muted"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                  {tags.length > MAX_VISIBLE_TAGS && (
+                    <span className="shrink-0 text-[10px] text-foreground-subtle">
+                      +{tags.length - MAX_VISIBLE_TAGS}
+                    </span>
+                  )}
+                </span>
               )}
-            >
-              {meta}
             </span>
           </span>
           {pageBadge && (

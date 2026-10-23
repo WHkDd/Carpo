@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { t } from "@/i18n";
-import { getSecret, startWholeFileOcr } from "@/lib/tauri";
+import { startWholeFileOcr } from "@/lib/tauri";
+import { providerSetupError } from "@/lib/ocr-profile";
 import { enableNotificationsAfterUserAction } from "@/lib/desktop";
 import {
   PageRangeError,
@@ -10,17 +11,8 @@ import {
 } from "@/lib/page-range";
 import {
   appErrorMessage,
-  type Provider,
-  type SecretKey,
   type WholeFileOcrRequest,
 } from "@/lib/ipc-types";
-
-const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
-  paddleocr: "paddle_token",
-  openai: "openai_key",
-  openrouter: "openrouter_key",
-  openai_compatible: "openai_compatible_key",
-};
 
 export interface WholeFileTriggerState {
   /** Whether a click would be accepted, based purely on this file/range's
@@ -125,22 +117,9 @@ export function useWholeFileOcrTrigger() {
         return;
       }
       setStarting(true);
-      if (
-        settings.provider === "openai_compatible" &&
-        !settings.openai_compatible_base_url
-      ) {
-        setError(t("trigger.compatBaseUrlMissing"));
-        return;
-      }
-      const secretKey = PROVIDER_SECRET_KEY[settings.provider];
-      const hasSecret = await getSecret(secretKey);
-      if (!hasSecret) {
-        setError(
-          t("trigger.secretMissing", {
-            provider: settings.provider,
-            key: secretKey,
-          })
-        );
+      const setupError = await providerSetupError(settings);
+      if (setupError) {
+        setError(setupError);
         return;
       }
 

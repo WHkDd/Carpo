@@ -1,6 +1,6 @@
 import { useCallback, useRef } from "react";
 import { useStore } from "@/store";
-import { selectJobStartBlocked } from "@/store/jobSlice";
+import { batchBusyFileId, selectJobStartBlocked } from "@/store/jobSlice";
 import { useT } from "@/i18n";
 import {
   OCR_PANEL_MAX_RESERVE,
@@ -116,6 +116,7 @@ function GroupedRail({ maxWidth }: StructureRailProps) {
   // and the two OCR buttons cannot drift apart — and so the window between
   // "start RPC sent" and "activeJob written" is covered too.
   const jobStartBlocked = useStore(selectJobStartBlocked);
+  const batchBusy = useStore((s) => !!fileId && batchBusyFileId(s) === fileId);
 
   const { state, trigger } = useGroupedOcrTrigger();
   const canTrigger =
@@ -243,6 +244,11 @@ function GroupedRail({ maxWidth }: StructureRailProps) {
             {state.error}
           </p>
         )}
+        {batchBusy && (
+          <p className="text-[11px] leading-tight text-foreground-subtle">
+            {t("batch.busyFile")}
+          </p>
+        )}
         <div className="flex items-center justify-end">
           <button
             type="button"
@@ -268,6 +274,7 @@ function WholeFileRail({ maxWidth }: StructureRailProps) {
   // and the two OCR buttons cannot drift apart — and so the window between
   // "start RPC sent" and "activeJob written" is covered too.
   const jobStartBlocked = useStore(selectJobStartBlocked);
+  const batchBusy = useStore((s) => !!fileId && batchBusyFileId(s) === fileId);
 
   const { state, trigger } = useWholeFileOcrTrigger();
   const canTrigger =
@@ -304,6 +311,11 @@ function WholeFileRail({ maxWidth }: StructureRailProps) {
             role="alert"
           >
             {state.error}
+          </p>
+        )}
+        {batchBusy && (
+          <p className="text-[11px] leading-tight text-foreground-subtle">
+            {t("batch.busyFile")}
           </p>
         )}
         <div className="flex items-center justify-end">

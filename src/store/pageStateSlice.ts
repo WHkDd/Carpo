@@ -42,6 +42,9 @@ export interface DocumentState {
   articles: Article[];
   newspaperName: string;
   newspaperDate: string;
+  /** Free-form labels used to group files for batch export. Session-scoped
+   *  like the rest of the document state; order is insertion order. */
+  tags: string[];
 }
 
 /** Raw page-range input used by the whole-file OCR trigger. Empty or missing
@@ -57,6 +60,7 @@ export const EMPTY_DOCUMENT_STATE: DocumentState = Object.freeze({
   articles: Object.freeze([]) as unknown as Article[],
   newspaperName: "",
   newspaperDate: "",
+  tags: Object.freeze([]) as unknown as string[],
 }) as DocumentState;
 
 function makePageState(): PageState {
@@ -64,7 +68,14 @@ function makePageState(): PageState {
 }
 
 function makeDocumentState(): DocumentState {
-  return { articles: [], newspaperName: "", newspaperDate: "" };
+  return { articles: [], newspaperName: "", newspaperDate: "", tags: [] };
+}
+
+/** The canonical form a tag is stored in, or null when nothing is left.
+ *  Case is kept: "申報" and "申报" are different tags on purpose. */
+export function normalizeTag(tag: string): string | null {
+  const trimmed = tag.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export interface PageStateSlice {
@@ -114,6 +125,13 @@ export interface PageStateSlice {
     fileId: string,
     patch: Partial<Pick<DocumentState, "newspaperName" | "newspaperDate">>
   ) => void;
+  /** Batch metadata from the queue's selection mode. Each writes every
+   *  listed file in one update. An empty name clears it. */
+  setNewspaperNameForFiles: (fileIds: string[], name: string) => void;
+  /** No-op for a tag that normalizes to empty or a file that already has
+   *  it. */
+  addTagToFiles: (fileIds: string[], tag: string) => void;
+  removeTagFromFiles: (fileIds: string[], tag: string) => void;
   /** Set a raw page-range string for whole-file OCR. Pass `null` or an empty
    *  string to reset to "full range". The parser in `src/lib/page-range.ts`
    *  owns normalization and validation against the current file's `pdfTotal`. */
@@ -479,6 +497,7 @@ export const createPageStateSlice: StateCreator<
       state.documentStates[fileId] = doc;
       syncArticleBlocks(state, fileId, doc);
       delete state.articleOcrTexts[fileId];
+      delete state.articleOcrRegions[fileId];
       delete state.documentResults[fileId];
     }),
 
@@ -497,7 +516,45 @@ export const createPageStateSlice: StateCreator<
   updateDocumentMetadata: (fileId, patch) =>
     set((state) => {
       const doc = state.documentStates[fileId] ?? makeDocumentState();
-      state.documentStates[fileId] = { ...doc, ...patch };
+      const next = { ...doc, ...patch };
+      state.documentStates[fileId] = next;
+      // The assembled text opens with 报刊名 / 日期 — keep it in step, or the
+      // panel and the single-file export keep showing the old header.
+      if (state.articleOcrTexts[fileId]) rebuildDocumentResult(state, fileId, next);
+    }),
+
+  setNewspaperNameForFiles: (fileIds, name) =>
+    set((state) => {
+      const value = name.trim();
+      for (const fileId of fileIds) {
+        const doc = state.documentStates[fileId] ?? makeDocumentState();
+        doc.newspaperName = value;
+        state.documentStates[fileId] = doc;
+        if (state.articleOcrTexts[fileId]) rebuildDocumentResult(state, fileId, doc);
+      }
+    }),
+
+  addTagToFiles: (fileIds, tag) =>
+    set((state) => {
+      const value = normalizeTag(tag);
+      if (value === null) return;
+      for (const fileId of fileIds) {
+        const doc = state.documentStates[fileId] ?? makeDocumentState();
+        doc.tags ??= [];
+        if (!doc.tags.includes(value)) doc.tags.push(value);
+        state.documentStates[fileId] = doc;
+      }
+    }),
+
+  removeTagFromFiles: (fileIds, tag) =>
+    set((state) => {
+      const value = normalizeTag(tag);
+      if (value === null) return;
+      for (const fileId of fileIds) {
+        const doc = state.documentStates[fileId];
+        if (!doc?.tags?.includes(value)) continue;
+        doc.tags = doc.tags.filter((x) => x !== value);
+      }
     }),
 
   setWholeFileRange: (fileId, range) =>

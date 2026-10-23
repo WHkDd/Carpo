@@ -65,6 +65,7 @@ export const createQueueSlice: StateCreator<
       delete state.selectionOrders[id];
       delete state.documentResults[id];
       delete state.articleOcrTexts[id];
+      delete state.articleOcrRegions[id];
       delete state.pageOcrTexts[id];
       delete state.recognizedPages[id];
       delete state.proofreadReviews[id];
