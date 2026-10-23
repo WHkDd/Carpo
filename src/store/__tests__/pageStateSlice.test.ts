@@ -356,3 +356,60 @@ describe("pageStateSlice", () => {
     expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
   });
 });
+
+describe("batch metadata actions", () => {
+  let store: ReturnType<typeof makeStore>;
+
+  beforeEach(() => {
+    store = makeStore();
+  });
+
+  it("setNewspaperNameForFiles writes every listed file and keeps the date", () => {
+    store.getState().updateDocumentMetadata("f1", { newspaperDate: "1936-05-12" });
+    store.getState().setNewspaperNameForFiles(["f1", "f2"], "  申報 ");
+    expect(store.getState().getDocumentState("f1")).toMatchObject({
+      newspaperName: "申報",
+      newspaperDate: "1936-05-12",
+    });
+    expect(store.getState().getDocumentState("f2").newspaperName).toBe("申報");
+    expect(store.getState().getDocumentState("f3").newspaperName).toBe("");
+
+    store.getState().setNewspaperNameForFiles(["f1"], "");
+    expect(store.getState().getDocumentState("f1").newspaperName).toBe("");
+  });
+
+  it("addTagToFiles trims, skips duplicates and ignores empty tags", () => {
+    store.getState().addTagToFiles(["f1", "f2"], " 社會 ");
+    store.getState().addTagToFiles(["f1"], "社會");
+    store.getState().addTagToFiles(["f1"], "經濟");
+    store.getState().addTagToFiles(["f1"], "   ");
+    expect(store.getState().getDocumentState("f1").tags).toEqual(["社會", "經濟"]);
+    expect(store.getState().getDocumentState("f2").tags).toEqual(["社會"]);
+  });
+
+  it("removeTagFromFiles drops the tag only where present", () => {
+    store.getState().addTagToFiles(["f1", "f2"], "社會");
+    store.getState().addTagToFiles(["f1"], "經濟");
+    store.getState().removeTagFromFiles(["f1", "f2", "f3"], "社會");
+    expect(store.getState().getDocumentState("f1").tags).toEqual(["經濟"]);
+    expect(store.getState().getDocumentState("f2").tags).toEqual([]);
+    // No document state is conjured up for a file that never had one.
+    expect(store.getState().documentStates.f3).toBeUndefined();
+  });
+
+  it("renaming the newspaper re-assembles an already recognized document", () => {
+    store.getState().addArticle("f1", 1, { id: "a1", num: 0, title: "標題" }, []);
+    store.getState().addFile({ id: "f1", path: "/a", name: "a", ext: "png", kind: "image" });
+    store.getState().updateArticleOcrText("f1", "a1", "正文");
+    store.getState().setNewspaperNameForFiles(["f1"], "申報");
+    expect(store.getState().documentResults.f1).toBe("申報\n\n\n標題\n正文");
+    store.getState().updateDocumentMetadata("f1", { newspaperName: "大公報" });
+    expect(store.getState().documentResults.f1).toBe("大公報\n\n\n標題\n正文");
+  });
+
+  it("new and empty document states carry an empty tag list", () => {
+    expect(store.getState().getDocumentState("none").tags).toEqual([]);
+    store.getState().updateDocumentMetadata("f1", { newspaperName: "申報" });
+    expect(store.getState().getDocumentState("f1").tags).toEqual([]);
+  });
+});

@@ -12,7 +12,7 @@ import { useFileImport } from "@/hooks/useFileImport";
 import { useDesktopIntegration } from "@/hooks/useDesktopIntegration";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { isImeCommit } from "@/lib/ime";
-import { assembleDocument } from "@/lib/format-doc";
+import { routeBatchJobEvent } from "@/lib/batch-export";
 import { clearPendingJob, loadPendingJob } from "@/lib/job-persistence";
 import { isTauriRuntime, logWarn } from "@/lib/runtime";
 import { notifyOcrResult } from "@/lib/desktop";
@@ -37,7 +37,6 @@ import {
   QUEUE_WIDTH,
   railMaxWidth,
 } from "@/store/uiSlice";
-import type { RecognizedPage, RecognizedPageSourceMode } from "@/store/jobSlice";
 import { buildProofreadReview, type ProofreadReview } from "@/lib/proofread";
 import { Toolbar } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
@@ -83,9 +82,8 @@ function AppShellInner() {
   const applyProgress = useStore((s) => s.applyProgress);
   const applyJobDone = useStore((s) => s.applyJobDone);
   const applyJobError = useStore((s) => s.applyJobError);
-  const setDocumentResult = useStore((s) => s.setDocumentResult);
-  const setArticleOcrTexts = useStore((s) => s.setArticleOcrTexts);
-  const setRecognizedPages = useStore((s) => s.setRecognizedPages);
+  const writeGroupedJobResults = useStore((s) => s.writeGroupedJobResults);
+  const writeWholeFileJobResults = useStore((s) => s.writeWholeFileJobResults);
   const setProofreadReviews = useStore((s) => s.setProofreadReviews);
   const railWidth = useStore((s) => s.railWidth);
   const setRailWidth = useStore((s) => s.setRailWidth);
@@ -196,7 +194,14 @@ function AppShellInner() {
     let unlistens: Array<() => void> = [];
     let eventSource: EventSource | null = null;
     let cancelled = false;
+    const handleProgress = (payload: JobProgress) => {
+      if (routeBatchJobEvent("progress", payload)) return;
+      applyProgress(payload);
+    };
     const handleDone = (payload: JobDone) => {
+      // Background batch jobs never touch `activeJob`; the runner consumes
+      // its own events.
+      if (routeBatchJobEvent("done", payload)) return;
       const job = useStore.getState().activeJob;
       // Take the assembly action only when the done payload matches the
       // current activeJob and the run wasn't cancelled. Done payloads for
@@ -209,91 +214,20 @@ function AppShellInner() {
         useStore.getState().files.some((file) => file.id === job.fileId)
       ) {
         if (job.kind === "grouped_ocr") {
-          const grouped = payload as GroupedJobDone;
-          // Build a per-article text map for the articles that were part
-          // of *this* run. Errored articles get a sentinel so the slot
-          // exists and the user sees an explicit failure marker.
-          const errorById = new Map(
-            grouped.errors.map((er) => [er.article_id, er.message])
+          writeGroupedJobResults(
+            job.fileId,
+            job.requestedArticles,
+            payload as GroupedJobDone,
+            job.newspaperName,
+            job.newspaperDate
           );
-          const resultById = new Map(
-            grouped.results.map((r) => [r.article_id, r.text])
-          );
-          const perArticle: Record<string, string> = {};
-          for (const a of job.requestedArticles) {
-            const text = resultById.get(a.id);
-            const errMsg = errorById.get(a.id);
-            perArticle[a.id] = text !== undefined
-              ? text
-              : errMsg
-                ? t("job.recognizeFailed", { message: errMsg })
-                : t("job.notRecognized");
-          }
-          // Merge into the per-file map first, then re-assemble the full
-          // document from *every* article that has text — including ones
-          // OCR'd in prior partial runs. The article order follows the
-          // current document state so re-ordering after OCR is honored.
-          setArticleOcrTexts(job.fileId, perArticle);
-          const doc = useStore.getState().getDocumentState(job.fileId);
-          const merged =
-            useStore.getState().articleOcrTexts[job.fileId] ?? {};
-          const ordered = doc.articles
-            .map((a) => ({
-              id: a.id,
-              title: a.title,
-              text: merged[a.id] ?? "",
-            }))
-            .filter((a) => a.text.length > 0);
-          const assembled = assembleDocument({
-            newspaperName: job.newspaperName,
-            newspaperDate: job.newspaperDate,
-            articles: ordered,
-          });
-          setDocumentResult(job.fileId, assembled);
         } else if (job.kind === "whole_file") {
-          // whole_file: zip requestedPages with results/errors, then
-          // write normalized page results while keeping legacy page text
-          // in sync for older consumers.
-          const whole = payload as WholeFileJobDone;
-          const sourceMode: RecognizedPageSourceMode =
-            whole.source === "paddle_document_chunk"
-              ? "paddle_document_chunk"
-              : whole.source === "paddle_document"
-                ? "paddle_document"
-                : "page_image";
-          const errorByPage = new Map(
-            whole.errors.map((er) => [er.page, er.message])
+          writeWholeFileJobResults(
+            job.fileId,
+            job.jobId,
+            job.requestedPages,
+            payload as WholeFileJobDone
           );
-          const resultByPage = new Map(whole.results.map((r) => [r.page, r]));
-          const perPage: Record<number, RecognizedPage> = {};
-          for (const page of job.requestedPages) {
-            const row = resultByPage.get(page);
-            const errMsg = errorByPage.get(page);
-            perPage[page] =
-              row !== undefined
-                ? {
-                    text: row.text,
-                    status: "done",
-                    sourceMode,
-                    sourceJobId: job.jobId,
-                    ...(row.layout !== undefined ? { layout: row.layout } : {}),
-                    ...(row.chunk_id !== undefined ? { chunkId: row.chunk_id } : {}),
-                    ...(row.chunk_page !== undefined
-                      ? { chunkPage: row.chunk_page }
-                      : {}),
-                  }
-                : {
-                    text:
-                      errMsg !== undefined
-                        ? t("job.recognizeFailed", { message: errMsg })
-                        : t("job.notRecognized"),
-                    status: "failed",
-                    error: errMsg ?? t("job.noResultReturned"),
-                    sourceMode,
-                    sourceJobId: job.jobId,
-                  };
-          }
-          setRecognizedPages(job.fileId, perPage);
         } else if (job.kind === "proofread") {
           // proofread: zip the submitted units with results/errors and build
           // one review per unit. `baseText` comes from the submitted unit,
@@ -344,6 +278,7 @@ function AppShellInner() {
     };
 
     const handleError = (payload: JobError) => {
+      if (routeBatchJobEvent("error", payload)) return;
       const job = useStore.getState().activeJob;
       if (
         job &&
@@ -412,7 +347,7 @@ function AppShellInner() {
           void reconcile();
         });
         source.addEventListener("progress", (event) => {
-          applyProgress(JSON.parse((event as MessageEvent).data) as JobProgress);
+          handleProgress(JSON.parse((event as MessageEvent).data) as JobProgress);
         });
         source.addEventListener("done", (event) => {
           handleDone(JSON.parse((event as MessageEvent).data) as JobDone);
@@ -427,7 +362,7 @@ function AppShellInner() {
       }
       const { listen } = await import("@tauri-apps/api/event");
       const subs = await Promise.all([
-        listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => applyProgress(e.payload)),
+        listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => handleProgress(e.payload)),
         listen<JobDone>(EVENTS.JOB_DONE, (e) => handleDone(e.payload)),
         listen<JobError>(EVENTS.JOB_ERROR, (e) => handleError(e.payload)),
       ]);
@@ -447,9 +382,8 @@ function AppShellInner() {
     applyProgress,
     applyJobDone,
     applyJobError,
-    setDocumentResult,
-    setArticleOcrTexts,
-    setRecognizedPages,
+    writeGroupedJobResults,
+    writeWholeFileJobResults,
     setProofreadReviews,
   ]);
 

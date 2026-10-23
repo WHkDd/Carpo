@@ -1,25 +1,70 @@
 import { useCallback, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { t } from "@/i18n";
-import { pageKey } from "@/store/pageStateSlice";
-import { getSecret, startGroupedOcr } from "@/lib/tauri";
-import { ACTIVE_PREVIEW_DPI } from "@/lib/ocr-profile";
+import { pageKey, type DocumentState, type PageState } from "@/store/pageStateSlice";
+import { startGroupedOcr } from "@/lib/tauri";
+import { ACTIVE_PREVIEW_DPI, providerSetupError } from "@/lib/ocr-profile";
 import { enableNotificationsAfterUserAction } from "@/lib/desktop";
 import {
   appErrorMessage,
   type ArticleOcrPlan,
   type BlockRef,
   type GroupedOcrRequest,
-  type Provider,
-  type SecretKey,
 } from "@/lib/ipc-types";
 
-const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
-  paddleocr: "paddle_token",
-  openai: "openai_key",
-  openrouter: "openrouter_key",
-  openai_compatible: "openai_compatible_key",
-};
+/** Identity of the region an article was recognized from: every block's
+ *  page, reading order and rect. Two plans with equal keys would OCR the
+ *  same pixels; the title is deliberately not part of it. */
+export function articleRegionKey(article: ArticleOcrPlan): string {
+  return article.blocks
+    .map(
+      (b) =>
+        `${b.page}:${b.order}:${b.rect.x},${b.rect.y},${b.rect.width},${b.rect.height}`
+    )
+    .join(";");
+}
+
+/** Resolves an article selection into the wire plan, block rects included.
+ *  Fails on the first article whose block vanished or that has no blocks —
+ *  sending it would OCR a different region than the user sees. Shared with
+ *  the background batch runner, which plans files other than the current
+ *  one. */
+export function buildArticlePlans(
+  fileId: string,
+  docState: DocumentState,
+  pageStates: Record<string, PageState>,
+  include: (articleId: string) => boolean
+): { articles: ArticleOcrPlan[] } | { error: string } {
+  const articles: ArticleOcrPlan[] = [];
+  for (const art of docState.articles) {
+    if (!include(art.id)) continue;
+    const blocks: BlockRef[] = [];
+    for (const ref of art.blockRefs) {
+      const ps = pageStates[pageKey(fileId, ref.page)];
+      const block = ps?.blocks.find((b) => b.id === ref.blockId);
+      if (!block) {
+        return {
+          error: t("trigger.blockMissing", {
+            num: art.num,
+            blockId: ref.blockId,
+            page: ref.page,
+          }),
+        };
+      }
+      blocks.push({
+        page: ref.page,
+        block_id: ref.blockId,
+        rect: { x: block.x, y: block.y, width: block.w, height: block.h },
+        order: ref.order,
+      });
+    }
+    if (blocks.length === 0) {
+      return { error: t("trigger.articleNoBlocks", { num: art.num }) };
+    }
+    articles.push({ id: art.id, title: art.title, num: art.num, blocks });
+  }
+  return { articles };
+}
 
 export interface TriggerState {
   /** True iff there is a current file, at least one article exists, and at
@@ -93,60 +138,20 @@ export function useGroupedOcrTrigger() {
         return;
       }
       setStarting(true);
-      const secretKey = PROVIDER_SECRET_KEY[settings.provider];
-      const hasSecret = await getSecret(secretKey);
-      if (
-        settings.provider === "openai_compatible" &&
-        !settings.openai_compatible_base_url
-      ) {
-        setError(t("trigger.compatBaseUrlMissing"));
-        return;
-      }
-      if (!hasSecret) {
-        setError(
-          t("trigger.secretMissing", {
-            provider: settings.provider,
-            key: secretKey,
-          })
-        );
+      const setupError = await providerSetupError(settings);
+      if (setupError) {
+        setError(setupError);
         return;
       }
 
-      const articles: ArticleOcrPlan[] = [];
-      for (const art of docState.articles) {
-        if (!selectedSet.has(art.id)) continue;
-        const blocks: BlockRef[] = [];
-        for (const ref of art.blockRefs) {
-          const ps = pageStates[pageKey(currentFileId, ref.page)];
-          const block = ps?.blocks.find((b) => b.id === ref.blockId);
-          if (!block) {
-            setError(
-              t("trigger.blockMissing", {
-                num: art.num,
-                blockId: ref.blockId,
-                page: ref.page,
-              })
-            );
-            return;
-          }
-          blocks.push({
-            page: ref.page,
-            block_id: ref.blockId,
-            rect: { x: block.x, y: block.y, width: block.w, height: block.h },
-            order: ref.order,
-          });
-        }
-        if (blocks.length === 0) {
-          setError(t("trigger.articleNoBlocks", { num: art.num }));
-          return;
-        }
-        articles.push({
-          id: art.id,
-          title: art.title,
-          num: art.num,
-          blocks,
-        });
+      const plans = buildArticlePlans(currentFileId, docState, pageStates, (id) =>
+        selectedSet.has(id)
+      );
+      if ("error" in plans) {
+        setError(plans.error);
+        return;
       }
+      const articles = plans.articles;
 
       if (articles.length === 0) {
         setError(t("trigger.articlesGone"));
@@ -177,7 +182,11 @@ export function useGroupedOcrTrigger() {
         fileId: currentFileId,
         newspaperName: docState.newspaperName,
         newspaperDate: docState.newspaperDate,
-        requestedArticles: articles.map((a) => ({ id: a.id, title: a.title })),
+        requestedArticles: articles.map((a) => ({
+          id: a.id,
+          title: a.title,
+          region: articleRegionKey(a),
+        })),
         stage: { kind: "preparing_articles", total: articles.length },
       });
     } catch (e) {

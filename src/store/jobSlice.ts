@@ -6,13 +6,17 @@ import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { UiSlice } from "./uiSlice";
 import type {
+  GroupedJobDone,
   JobDone,
   JobError,
   JobProgress,
   ProgressStage,
   ProofreadCategory,
   ProofreadUnit,
+  WholeFileJobDone,
 } from "@/lib/ipc-types";
+import { t } from "@/i18n";
+import { assembleDocument } from "@/lib/format-doc";
 import { clearPendingJob, savePendingJob } from "@/lib/job-persistence";
 import type { LayoutPage } from "@/lib/layout-document";
 import {
@@ -50,9 +54,13 @@ interface BaseActiveJob {
   newspaperDate: string;
 }
 
+/** `region` is `articleRegionKey` of the blocks sent — recorded with the
+ *  result so a later batch can tell when the boxes moved since. */
+export type RequestedArticle = { id: string; title: string; region?: string };
+
 export interface GroupedActiveJob extends BaseActiveJob {
   kind: "grouped_ocr";
-  requestedArticles: Array<{ id: string; title: string }>;
+  requestedArticles: RequestedArticle[];
 }
 
 export interface WholeFileActiveJob extends BaseActiveJob {
@@ -185,7 +193,7 @@ export type StartJobInfo =
       fileId: string;
       newspaperName: string;
       newspaperDate: string;
-      requestedArticles: Array<{ id: string; title: string }>;
+      requestedArticles: RequestedArticle[];
       stage?: ProgressStage;
     }
   | {
@@ -207,6 +215,63 @@ export type StartJobInfo =
       stage?: ProgressStage;
     };
 
+export type BatchExportLayout = "separate" | "merged" | "by_tag";
+export type BatchExportFormat = "docx" | "md";
+export type BatchFileMode = "grouped" | "whole_file";
+export type BatchItemStatus = "pending" | "running" | "done" | "failed" | "skipped";
+
+export interface BatchExportItem {
+  fileId: string;
+  name: string;
+  /** Decided once at batch start: articles with blocks → grouped, else
+   *  whole-file. */
+  mode: BatchFileMode;
+  /** Articles (grouped) or pages (whole-file) in the file's plan. */
+  unitCount: number;
+  status: BatchItemStatus;
+  /** Progress of this file's OCR job. Stays 0/0 when every unit already had
+   *  a result and no job was started. */
+  done: number;
+  total: number;
+  /** Units whose OCR returned an error; the export still includes their
+   *  failure marker. */
+  failedUnits: number;
+  error?: string;
+}
+
+/** Background batch OCR + export. Runs beside — never inside — `activeJob`,
+ *  so the foreground entry points stay usable while it works through its
+ *  queue. The runner lives in `src/lib/batch-export.ts`; this is only its
+ *  observable state. In-memory only: quitting the app stops the batch. */
+export interface BatchExportState {
+  status: "running" | "cancelling" | "done" | "cancelled";
+  layout: BatchExportLayout;
+  format: BatchExportFormat;
+  items: BatchExportItem[];
+  /** Index of the file being processed, or null between files. */
+  currentIndex: number | null;
+  currentJobId: string | null;
+  /** Directory (separate / by_tag) or file path (merged). Empty for
+   *  browser downloads. */
+  target: string;
+  /** Batch-level failure, e.g. the merged file could not be written. */
+  error?: string;
+}
+
+/** File the background batch is working on right now, or null. The
+ *  foreground entry points refuse that one file so the two writers cannot
+ *  overwrite each other's results. */
+export function batchBusyFileId(
+  s: Partial<Pick<JobSlice, "batchExport">>
+): string | null {
+  const batch = s.batchExport;
+  if (!batch || (batch.status !== "running" && batch.status !== "cancelling")) {
+    return null;
+  }
+  if (batch.currentIndex === null) return null;
+  return batch.items[batch.currentIndex]?.fileId ?? null;
+}
+
 let jobStartOwnerSeq = 0;
 
 export interface JobSlice {
@@ -222,6 +287,11 @@ export interface JobSlice {
    *  triggers (proofread / whole-file / grouped) each own a local `starting`
    *  flag that the other two cannot see, so the claim has to live here. */
   jobStartClaim: string | null;
+  /** File the current claim is for — the current file at claim time, which
+   *  is what every foreground entry point acts on. Recorded because the user
+   *  can switch files while the start RPC is in flight; the batch runner
+   *  must keep away from the claimed file, not the one now on screen. */
+  jobStartClaimFileId: string | null;
   /** Takes the job slot, synchronously, and returns the owner token that
    *  `releaseJobStart` needs — or null when a job is running or another
    *  attempt already holds the slot. The test-and-set happens inside one
@@ -243,6 +313,10 @@ export interface JobSlice {
    *  re-OCR doesn't wipe results for articles outside the new selection.
    *  Cleared when the file is removed from the queue. */
   articleOcrTexts: Record<string, Record<string, string>>;
+  /** fileId → articleId → `articleRegionKey` of the blocks the article's
+   *  current OCR text was recognized from. A mismatch means the boxes were
+   *  edited afterwards and the text no longer describes them. */
+  articleOcrRegions: Record<string, Record<string, string>>;
   /** fileId → page → raw OCR text. Populated by whole-file OCR runs and
    *  rendered in the "按页" tab of the OCR text panel. Merged across runs so
    *  re-running a subrange doesn't wipe the previous pages' results.
@@ -291,6 +365,28 @@ export interface JobSlice {
   undoProofreadReview: (fileId: string, key: string) => boolean;
   /** Drops a review without touching the text. */
   discardProofreadReview: (fileId: string, key: string) => void;
+  /** Writes a finished grouped-OCR payload back into the file: per-article
+   *  texts (failure markers for errored ones), then the re-assembled
+   *  document. Shared by the foreground job handler and the batch runner. */
+  writeGroupedJobResults: (
+    fileId: string,
+    requested: RequestedArticle[],
+    payload: GroupedJobDone,
+    newspaperName: string,
+    newspaperDate: string
+  ) => void;
+  /** Writes a finished whole-file payload back as normalized page results.
+   *  Pages that came back without a result are recorded as failed. */
+  writeWholeFileJobResults: (
+    fileId: string,
+    jobId: string,
+    requestedPages: number[],
+    payload: WholeFileJobDone
+  ) => void;
+  batchExport: BatchExportState | null;
+  setBatchExport: (next: BatchExportState | null) => void;
+  /** Mutates the running batch in place; no-op when there is none. */
+  updateBatchExport: (fn: (draft: BatchExportState) => void) => void;
   /** Called immediately after `startGroupedOcr` / `startWholeFileOcr` returns
    *  the job id. The first `JobProgress` event will fill in `total`; until
    *  then we show 0/0. */
@@ -337,11 +433,13 @@ export interface JobSlice {
  *  truth for every trigger's `disabled`, so the three entry points cannot
  *  drift apart again. */
 export const selectJobStartBlocked = (
-  s: Pick<JobSlice, "activeJob" | "jobStartClaim">
+  s: Pick<JobSlice, "activeJob" | "jobStartClaim"> &
+    Partial<Pick<JobSlice, "batchExport">> & { currentFileId?: string | null }
 ): boolean =>
   s.jobStartClaim !== null ||
   (s.activeJob !== null &&
-    (s.activeJob.status === "running" || s.activeJob.status === "cancelling"));
+    (s.activeJob.status === "running" || s.activeJob.status === "cancelling")) ||
+  (!!s.currentFileId && batchBusyFileId(s) === s.currentFileId);
 
 /** Reads the live text a review target points at, or `null` when the target
  *  no longer exists. Exported for the review panel's stale check. */
@@ -382,8 +480,11 @@ export const createJobSlice: StateCreator<
 > = (set, get) => ({
   activeJob: null,
   jobStartClaim: null,
+  jobStartClaimFileId: null,
+  batchExport: null,
   documentResults: {},
   articleOcrTexts: {},
+  articleOcrRegions: {},
   pageOcrTexts: {},
   recognizedPages: {},
   proofreadReviews: {},
@@ -397,7 +498,12 @@ export const createJobSlice: StateCreator<
       if (job && (job.status === "running" || job.status === "cancelling")) {
         return;
       }
+      // Every foreground entry point acts on the current file.
+      if (state.currentFileId && batchBusyFileId(state) === state.currentFileId) {
+        return;
+      }
       state.jobStartClaim = owner;
+      state.jobStartClaimFileId = state.currentFileId;
       granted = true;
     });
     return granted ? owner : null;
@@ -406,6 +512,7 @@ export const createJobSlice: StateCreator<
     set((state) => {
       if (state.jobStartClaim !== owner) return;
       state.jobStartClaim = null;
+      state.jobStartClaimFileId = null;
     }),
   startJob: (info) =>
     set((state) => {
@@ -413,6 +520,7 @@ export const createJobSlice: StateCreator<
       // Hand the slot from the claim to the job in one update: any gap here
       // is a window where both are empty and a second start slips through.
       state.jobStartClaim = null;
+      state.jobStartClaimFileId = null;
       const base: BaseActiveJob = {
         jobId: info.jobId,
         status: "running",
@@ -665,6 +773,108 @@ export const createJobSlice: StateCreator<
       if (Object.keys(byFile).length === 0) {
         delete state.proofreadReviews[fileId];
       }
+    }),
+  writeGroupedJobResults: (
+    fileId,
+    requested,
+    payload,
+    newspaperName,
+    newspaperDate
+  ) => {
+    const requestedArticleIds = requested.map((a) => a.id);
+    // Build a per-article text map for the articles that were part of
+    // *this* run. Errored articles get a sentinel so the slot exists and the
+    // user sees an explicit failure marker.
+    const errorById = new Map(
+      payload.errors.map((er) => [er.article_id, er.message])
+    );
+    const resultById = new Map(
+      payload.results.map((r) => [r.article_id, r.text])
+    );
+    const perArticle: Record<string, string> = {};
+    for (const id of requestedArticleIds) {
+      const text = resultById.get(id);
+      const errMsg = errorById.get(id);
+      perArticle[id] = text !== undefined
+        ? text
+        : errMsg
+          ? t("job.recognizeFailed", { message: errMsg })
+          : t("job.notRecognized");
+    }
+    // Merge into the per-file map first, then re-assemble the full document
+    // from *every* article that has text — including ones OCR'd in prior
+    // partial runs. The article order follows the current document state so
+    // re-ordering after OCR is honored.
+    get().setArticleOcrTexts(fileId, perArticle);
+    set((state) => {
+      const regions = { ...(state.articleOcrRegions[fileId] ?? {}) };
+      for (const a of requested) {
+        // A failure marker describes no region; it is retried regardless.
+        if (resultById.has(a.id) && a.region !== undefined) regions[a.id] = a.region;
+        else delete regions[a.id];
+      }
+      state.articleOcrRegions[fileId] = regions;
+    });
+    const doc = get().getDocumentState(fileId);
+    const merged = get().articleOcrTexts[fileId] ?? {};
+    const ordered = doc.articles
+      .map((a) => ({ id: a.id, title: a.title, text: merged[a.id] ?? "" }))
+      .filter((a) => a.text.length > 0);
+    get().setDocumentResult(
+      fileId,
+      assembleDocument({ newspaperName, newspaperDate, articles: ordered })
+    );
+  },
+  writeWholeFileJobResults: (fileId, jobId, requestedPages, payload) => {
+    // Zip requestedPages with results/errors, then write normalized page
+    // results while keeping legacy page text in sync for older consumers.
+    const sourceMode: RecognizedPageSourceMode =
+      payload.source === "paddle_document_chunk"
+        ? "paddle_document_chunk"
+        : payload.source === "paddle_document"
+          ? "paddle_document"
+          : "page_image";
+    const errorByPage = new Map(
+      payload.errors.map((er) => [er.page, er.message])
+    );
+    const resultByPage = new Map(payload.results.map((r) => [r.page, r]));
+    const perPage: Record<number, RecognizedPage> = {};
+    for (const page of requestedPages) {
+      const row = resultByPage.get(page);
+      const errMsg = errorByPage.get(page);
+      perPage[page] =
+        row !== undefined
+          ? {
+              text: row.text,
+              status: "done",
+              sourceMode,
+              sourceJobId: jobId,
+              ...(row.layout !== undefined ? { layout: row.layout } : {}),
+              ...(row.chunk_id !== undefined ? { chunkId: row.chunk_id } : {}),
+              ...(row.chunk_page !== undefined
+                ? { chunkPage: row.chunk_page }
+                : {}),
+            }
+          : {
+              text:
+                errMsg !== undefined
+                  ? t("job.recognizeFailed", { message: errMsg })
+                  : t("job.notRecognized"),
+              status: "failed",
+              error: errMsg ?? t("job.noResultReturned"),
+              sourceMode,
+              sourceJobId: jobId,
+            };
+    }
+    get().setRecognizedPages(fileId, perPage);
+  },
+  setBatchExport: (next) =>
+    set((state) => {
+      state.batchExport = next;
+    }),
+  updateBatchExport: (fn) =>
+    set((state) => {
+      if (state.batchExport) fn(state.batchExport);
     }),
 });
 
