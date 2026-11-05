@@ -9,6 +9,7 @@ import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { PageBitmapCacheProvider } from "@/hooks/PageBitmapCacheContext";
 import { useElementSize } from "@/hooks/useElementSize";
 import { useFileImport } from "@/hooks/useFileImport";
+import { useAgentBridge } from "@/hooks/useAgentBridge";
 import { useDesktopIntegration } from "@/hooks/useDesktopIntegration";
 import { usePdfPageSync } from "@/hooks/usePdfPageSync";
 import { isImeCommit } from "@/lib/ime";
@@ -112,6 +113,7 @@ function AppShellInner() {
   const fileImport = useFileImport();
   const { openFiles, importPaths, pasteClipboardImage } = fileImport;
   const paddleJson = usePaddleJsonImportFlow();
+  useAgentBridge(importPaths);
 
   useDesktopIntegration({
     openFiles,

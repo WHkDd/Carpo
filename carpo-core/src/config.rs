@@ -167,6 +167,8 @@ pub struct NonSecretSettings {
     /// title bar match the WebView instead of staying light.
     #[serde(default)]
     pub theme: Option<Theme>,
+    #[serde(default)]
+    pub agent_bridge_enabled: bool,
 }
 
 /// UI theme preference, shared with the frontend's `theme` union.
@@ -198,6 +200,7 @@ impl Default for NonSecretSettings {
             proofread_model: String::new(),
             proofread_prompt: default_proofread_prompt(i18n::language()),
             theme: None,
+            agent_bridge_enabled: false,
         }
     }
 }

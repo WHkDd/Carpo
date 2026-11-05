@@ -1,3 +1,4 @@
+mod agent_bridge;
 mod commands;
 mod config;
 mod desktop;
@@ -22,6 +23,7 @@ async fn ping() -> Result<&'static str, AppError> {
 pub fn run() {
     let builder = tauri::Builder::default()
         .manage(desktop::DesktopState::default())
+        .manage(agent_bridge::AgentBridge::default())
         // Register this first: the plugin must claim the process-wide
         // single-instance endpoint before other setup work begins.
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -61,6 +63,9 @@ pub fn run() {
     let app = builder
         .invoke_handler(tauri::generate_handler![
             ping,
+            agent_bridge::agent_bridge_reply,
+            agent_bridge::agent_bridge_unit_images,
+            agent_bridge::agent_bridge_write_export,
             desktop::take_pending_open_paths,
             desktop::notify_ocr_result,
             commands::files::load_raster_image,
@@ -103,7 +108,16 @@ pub fn run() {
             // light menu bar flash ahead of the (correctly dark) WebView.
             // config::load is synchronous and reads the same settings.json
             // the frontend's get_settings will.
+            // A disabled launch also removes discovery left by an unclean exit.
+            let _ =
+                std::fs::remove_dir_all(app.path().app_cache_dir()?.join("agent-bridge-images"));
+            let _ =
+                std::fs::remove_dir_all(app.path().app_cache_dir()?.join("agent-bridge-exports"));
+            let discovery = app.path().app_data_dir()?.join("agent-bridge.json");
+            let _ = std::fs::remove_file(discovery);
             if let Ok(settings) = config::load(app.handle()) {
+                app.state::<agent_bridge::AgentBridge>()
+                    .set_enabled(app.handle(), settings.agent_bridge_enabled)?;
                 for window in app.webview_windows().values() {
                     let _ = window.set_theme(commands::settings::native_theme(settings.theme));
                 }

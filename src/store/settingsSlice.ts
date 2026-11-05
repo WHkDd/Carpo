@@ -94,6 +94,7 @@ export const DEFAULT_SETTINGS: NonSecretSettings = {
   // Follow the OS until the user picks. `startup.ts` has already resolved
   // this (or the persisted value) before React mounted.
   theme: null,
+  agent_bridge_enabled: false,
 };
 
 export interface SettingsSlice {

@@ -69,8 +69,17 @@ pub async fn get_settings<R: Runtime>(app: AppHandle<R>) -> AppResult<NonSecretS
 }
 
 #[tauri::command]
-pub async fn set_settings<R: Runtime>(app: AppHandle<R>, s: NonSecretSettings) -> AppResult<()> {
-    config::save(&app, &s)?;
+pub async fn set_settings(app: AppHandle, s: NonSecretSettings) -> AppResult<()> {
+    let previous = config::load(&app)?;
+    app.state::<crate::agent_bridge::AgentBridge>()
+        .set_enabled(&app, s.agent_bridge_enabled)
+        .map_err(carpo_core::error::AppError::Config)?;
+    if let Err(error) = config::save(&app, &s) {
+        let _ = app
+            .state::<crate::agent_bridge::AgentBridge>()
+            .set_enabled(&app, previous.agent_bridge_enabled);
+        return Err(error);
+    }
     // Keep the native shell (window chrome, menus, dialogs) on the same theme
     // the WebView just switched to. Fire after the persist so a failed theme
     // application never leaves settings.json behind the UI.

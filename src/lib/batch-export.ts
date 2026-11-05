@@ -15,6 +15,7 @@
  * it through `routeBatchJobEvent`, which `AppShell` calls before its own
  * handlers.
  */
+import { invoke } from "@tauri-apps/api/core";
 import { getLanguage, t } from "@/i18n";
 import { en, zh } from "@/i18n/messages";
 import { useStore, type AppStore } from "@/store";
@@ -610,6 +611,9 @@ export interface BatchExportOptions {
   fileIds: string[];
   layout: BatchExportLayout;
   format: BatchExportFormat;
+  target?: string;
+  recognizeOnly?: boolean;
+  exportOnly?: boolean;
 }
 
 export type BatchStartResult =
@@ -618,7 +622,18 @@ export type BatchStartResult =
   | { status: "aborted" }
   | { status: "error"; error: string };
 
-export async function startBatchExport(
+let preparingBatch = false;
+export async function startBatchExport(opts: BatchExportOptions): Promise<BatchStartResult> {
+  if (preparingBatch) return { status: "error", error: t("batch.alreadyRunning") };
+  preparingBatch = true;
+  try {
+    return await prepareBatchExport(opts);
+  } finally {
+    preparingBatch = false;
+  }
+}
+
+async function prepareBatchExport(
   opts: BatchExportOptions
 ): Promise<BatchStartResult> {
   const state = useStore.getState();
@@ -639,15 +654,15 @@ export async function startBatchExport(
     const missing = missingUnits(state, p);
     return missing.articles.length + missing.pages.length > 0;
   });
-  if (needsOcr) {
+  if (needsOcr && !opts.exportOnly) {
     const setupError = await providerSetupError(state.settings);
     if (setupError) return { status: "error", error: setupError };
   }
 
   // Ask for the destination now: once started, the batch runs unattended and
   // must not pop a dialog over whatever the user is doing.
-  let target = "";
-  if (isTauriRuntime()) {
+  let target = opts.target ?? "";
+  if (isTauriRuntime() && opts.target === undefined && !opts.recognizeOnly) {
     const { open, save } = await import("@tauri-apps/plugin-dialog");
     if (opts.layout !== "merged") {
       const dir = await open({ directory: true, multiple: false });
@@ -667,7 +682,9 @@ export async function startBatchExport(
       target = path;
     }
   }
-  await enableNotificationsAfterUserAction();
+  if (opts.target === undefined && !opts.recognizeOnly) {
+    await enableNotificationsAfterUserAction();
+  }
 
   const items: BatchExportItem[] = plans.map((p) => ({
     fileId: p.fileId,
@@ -688,9 +705,13 @@ export async function startBatchExport(
     currentIndex: null,
     currentJobId: null,
     target,
+    outputs: [],
   };
   useStore.getState().setBatchExport(initial);
-  void runBatch(plans, entries).catch((e) => {
+  void runBatch(
+    plans, entries, opts.recognizeOnly ?? false,
+    opts.exportOnly ?? false, opts.target !== undefined
+  ).catch((e) => {
     const message = appErrorMessage(e);
     void logWarn(`batch export failed: ${message}`);
     useStore.getState().updateBatchExport((d) => {
@@ -738,10 +759,35 @@ function patchItem(index: number, patch: Partial<BatchExportItem>): void {
 const fileExists = (s: AppStore, fileId: string) =>
   s.files.some((f) => f.id === fileId);
 
-async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<void> {
+async function runBatch(
+  plans: BatchFilePlan[],
+  entries: BatchEntry[],
+  recognizeOnly: boolean,
+  exportOnly: boolean,
+  directTarget: boolean
+): Promise<void> {
   const batch = useStore.getState().batchExport!;
   const { layout, format, target } = batch;
   const usedNames = new Set<string>();
+  const writeDirect = async (data: Uint8Array | string, stem?: string) => {
+    const result = await invoke<{ targetPath: string }>(
+      "agent_bridge_write_export",
+      {
+        output: {
+          target,
+          stem,
+          format,
+          data: Array.from(
+            typeof data === "string" ? new TextEncoder().encode(data) : data,
+          ),
+        },
+      },
+    );
+    useStore.getState().updateBatchExport((d) => {
+      (d.outputs ??= []).push(result.targetPath);
+    });
+  };
+
   // fileId → content, filled as files finish. Merged layouts render from it
   // at the end, so a file under several tags is recognized once and only
   // written several times.
@@ -779,7 +825,7 @@ async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<
     });
     patchItem(index, { status: "running" });
 
-    const outcome = await recognizeFile(index, plan);
+    const outcome = exportOnly ? "ok" : await recognizeFile(index, plan);
     useStore.getState().updateBatchExport((d) => {
       d.currentIndex = null;
       d.currentJobId = null;
@@ -812,6 +858,10 @@ async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<
       continue;
     }
     patchItem(index, { failedUnits: content.failedUnits });
+    if (recognizeOnly) {
+      patchItem(index, { status: "done" });
+      continue;
+    }
     if (layout !== "separate") {
       contents.set(plan.fileId, content);
       patchItem(index, { status: "done" });
@@ -824,7 +874,9 @@ async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<
         () => standaloneDocBlocks(content)
       );
       const stem = safeFileStem(stemOf(plan.name));
-      if (isTauriRuntime()) {
+      if (directTarget) {
+        await writeDirect(data, stem);
+      } else if (isTauriRuntime()) {
         await writeOutput(await uniqueTargetPath(target, stem, format, usedNames), data);
       } else {
         download(`${stem}.${format}`, format, data);
@@ -839,7 +891,7 @@ async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<
   }
 
   let batchError: string | undefined;
-  if (layout !== "separate" && !isCancelling(useStore.getState())) {
+  if (!recognizeOnly && layout !== "separate" && !isCancelling(useStore.getState())) {
     const docs = planOutputDocs(layout, entries).filter((doc) =>
       doc.entries.some((e) => contents.has(e.fileId))
     );
@@ -855,7 +907,8 @@ async function runBatch(plans: BatchFilePlan[], entries: BatchEntry[]): Promise<
           () => mergedDocBlocks(doc, contents)
         );
         const stem = safeFileStem(doc.stem);
-        if (!isTauriRuntime()) download(`${stem}.${format}`, format, data);
+        if (directTarget) await writeDirect(data, layout === "merged" ? undefined : stem);
+        else if (!isTauriRuntime()) download(`${stem}.${format}`, format, data);
         else if (layout === "merged") await writeOutput(target, data);
         else await writeOutput(await uniqueTargetPath(target, stem, format, usedNames), data);
       } catch (e) {
