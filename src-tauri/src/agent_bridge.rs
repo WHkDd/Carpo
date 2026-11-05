@@ -609,7 +609,16 @@ mod tests {
             );
         }
         let active = Arc::new(AtomicBool::new(true));
-        let task = serve(listener, Router::new().fallback(|| async { "ok" }));
+        // Same body as `serve`, with a completion signal. Dropping this future
+        // closes its listener, so the signal fires exactly when shutdown takes
+        // effect; probing the port instead races with port reuse.
+        let (ended, ended_rx) = oneshot::channel();
+        let router = Router::new().fallback(|| async { "ok" });
+        let task = tauri::async_runtime::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            let _ = axum::serve(listener, router).await;
+            let _ = ended.send(());
+        });
         *bridge.running.lock().unwrap() = Some(Running {
             task,
             active: active.clone(),
@@ -620,16 +629,12 @@ mod tests {
         bridge.stop();
         assert!(!path.exists());
         assert!(!active.load(Ordering::SeqCst));
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if tokio::net::TcpStream::connect(addr).await.is_err() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), ended_rx)
+                .await
+                .is_ok(),
+            "serve task kept running after stop"
+        );
         bridge.stop();
     }
     #[test]
