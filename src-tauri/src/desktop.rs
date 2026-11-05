@@ -38,7 +38,10 @@ fn has_supported_extension(path: &Path) -> bool {
         })
 }
 
-fn collect_open_paths(args: impl IntoIterator<Item = String>, cwd: &Path) -> Vec<String> {
+pub(crate) fn collect_open_paths(
+    args: impl IntoIterator<Item = String>,
+    cwd: &Path,
+) -> Vec<String> {
     let mut seen = HashSet::new();
     args.into_iter()
         .filter(|arg| !arg.starts_with('-'))
@@ -70,7 +73,7 @@ pub fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn queue_open_paths<R: Runtime>(app: &AppHandle<R>, paths: Vec<String>) {
+pub(crate) fn queue_open_paths<R: Runtime>(app: &AppHandle<R>, paths: Vec<String>, notify: bool) {
     if paths.is_empty() {
         return;
     }
@@ -82,12 +85,14 @@ fn queue_open_paths<R: Runtime>(app: &AppHandle<R>, paths: Vec<String>) {
         }
     }
     drop(pending);
-    let _ = app.emit(OPEN_PATHS_AVAILABLE, ());
+    if notify {
+        let _ = app.emit(OPEN_PATHS_AVAILABLE, ());
+    }
 }
 
 pub fn queue_cli_open_paths<R: Runtime>(app: &AppHandle<R>, args: Vec<String>, cwd: &str) {
     let paths = collect_open_paths(args, Path::new(cwd));
-    queue_open_paths(app, paths);
+    queue_open_paths(app, paths, true);
 }
 
 #[cfg(target_os = "macos")]
@@ -98,7 +103,7 @@ pub fn queue_open_urls<R: Runtime>(app: &AppHandle<R>, urls: Vec<tauri::Url>) {
         .filter(|path| path.is_file() && has_supported_extension(path))
         .map(|path| path.to_string_lossy().into_owned())
         .collect();
-    queue_open_paths(app, paths);
+    queue_open_paths(app, paths, true);
 }
 
 #[tauri::command]
@@ -167,7 +172,11 @@ fn cancel_active_jobs<R: Runtime>(app: &AppHandle<R>) {
 
 pub fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
     match event {
-        tauri::RunEvent::ExitRequested { .. } => cancel_active_jobs(app),
+        // Native macOS Quit can terminate directly through RunEvent::Exit.
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            app.state::<crate::agent_bridge::AgentBridge>().stop();
+            cancel_active_jobs(app);
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::WindowEvent {
             label,

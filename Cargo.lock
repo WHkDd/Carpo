@@ -681,7 +681,9 @@ dependencies = [
 name = "carpo"
 version = "0.3.7"
 dependencies = [
+ "axum",
  "carpo-core",
+ "image",
  "keyring",
  "log",
  "notify-rust",

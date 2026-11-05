@@ -254,6 +254,7 @@ export interface BatchExportState {
   /** Directory (separate / by_tag) or file path (merged). Empty for
    *  browser downloads. */
   target: string;
+  outputs?: string[];
   /** Batch-level failure, e.g. the merged file could not be written. */
   error?: string;
 }
@@ -729,6 +730,9 @@ export const createJobSlice: StateCreator<
     if (current === null || current !== review.baseText) return false;
     const result = reviewOutput(review);
     const nextText = result.text;
+    // A valid no-op stays pending: writing identical text would mark the page
+    // edited and discard its block layout in reading-PDF exports.
+    if (nextText === current) return true;
     if (review.target.mode === "whole_file") {
       get().updateRecognizedPageText(fileId, review.target.page, nextText);
     } else {

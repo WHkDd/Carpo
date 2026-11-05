@@ -637,6 +637,7 @@ mod tests {
             proofread_model: String::new(),
             proofread_prompt: String::new(),
             theme: None,
+            agent_bridge_enabled: false,
         }
     }
 

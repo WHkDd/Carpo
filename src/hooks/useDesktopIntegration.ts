@@ -9,6 +9,21 @@ import {
 import { isTauriRuntime, logWarn } from "@/lib/runtime";
 import { useStore } from "@/store";
 
+// Serialize desktop and agent consumers so an import acknowledgement waits for
+// any consumer already loading the same pending paths.
+let consuming = Promise.resolve();
+export function consumePendingOpenPaths(
+  importPaths: (paths: string[]) => void | Promise<void>,
+): Promise<void> {
+  consuming = consuming
+    .catch(() => {})
+    .then(async () => {
+      const paths = await takePendingOpenPaths();
+      if (paths.length > 0) await importPaths(paths);
+    });
+  return consuming;
+}
+
 interface DesktopIntegrationOptions {
   openFiles: () => void | Promise<void>;
   importPaths: (paths: string[]) => void | Promise<void>;
@@ -42,8 +57,7 @@ export function useDesktopIntegration({
 
     const consumeOpenPaths = async () => {
       try {
-        const paths = await takePendingOpenPaths();
-        if (!cancelled && paths.length > 0) await importPaths(paths);
+        if (!cancelled) await consumePendingOpenPaths(importPaths);
       } catch (error) {
         void logWarn(`external file open failed: ${String(error)}`);
       }

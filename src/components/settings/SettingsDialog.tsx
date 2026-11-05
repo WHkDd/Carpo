@@ -30,6 +30,7 @@ import type {
   SecretKey,
   Theme,
 } from "@/lib/ipc-types";
+import { isTauriRuntime } from "@/lib/runtime";
 import { appErrorMessage } from "@/lib/ipc-types";
 
 function providerLabel(provider: Provider, t: Translator): string {
@@ -59,7 +60,7 @@ const PROVIDER_SECRET_KEY: Record<Provider, SecretKey> = {
   openai_compatible: "openai_compatible_key",
 };
 
-type TabId = Provider | "prompt" | "proofread" | "appearance" | "language";
+type TabId = Provider | "prompt" | "proofread" | "appearance" | "language" | "agent";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -98,6 +99,18 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   });
   const [refreshing, setRefreshing] = useState<Provider | null>(null);
   const [refreshError, setRefreshError] = useState<Partial<Record<Provider, string>>>({});
+  const [discoveryPath, setDiscoveryPath] = useState(
+    "<Carpo app data>/agent-bridge.json",
+  );
+  useEffect(() => {
+    if (!open || !isTauriRuntime()) return;
+    void import("@tauri-apps/api/path")
+      .then(async ({ appDataDir, join }) => {
+        setDiscoveryPath(await join(await appDataDir(), "agent-bridge.json"));
+      })
+      .catch(() => {});
+  }, [open]);
+
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -315,7 +328,53 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             tabIndex={-1}
             className="flex-1 overflow-y-auto overscroll-contain"
           >
-            {tab === "language" ? (
+            {tab === "agent" ? (
+              <div className="px-7 py-6 space-y-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!committed.agent_bridge_enabled}
+                    disabled={saving}
+                    onChange={async (event) => {
+                      const enabled = event.target.checked;
+                      setSaving(true);
+                      setSaveError(null);
+                      try {
+                        const next = {
+                          ...useStore.getState().settings,
+                          agent_bridge_enabled: enabled,
+                        };
+                        await ipcSetSettings(next);
+                        setCommitted(next);
+                        setDraft((d) => ({
+                          ...d,
+                          agent_bridge_enabled: enabled,
+                        }));
+                      } catch (e) {
+                        setSaveError(appErrorMessage(e));
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                  />
+                  {t("settings.agentEnabled")}
+                </label>
+                <p className="text-xs text-foreground-subtle">
+                  {t("settings.agentNote")}
+                </p>
+                <p className="text-xs text-foreground-subtle">
+                  {t("settings.agentInstallNote")}
+                </p>
+                <Field label={t("settings.agentInstructions")}>
+                  <textarea
+                    readOnly
+                    value={t("settings.agentPaste", { path: discoveryPath })}
+                    aria-label={t("settings.agentInstructions")}
+                    className="h-52 w-full resize-none rounded border border-border bg-background p-3 text-xs select-text"
+                  />
+                </Field>
+              </div>
+            ) : tab === "language" ? (
               <LanguagePanel
                 value={draft.language ?? languageOnOpenRef.current}
                 onChange={(language) => {
@@ -421,6 +480,7 @@ const TAB_ORDER: TabId[] = [
   ...PROVIDER_ORDER,
   "prompt",
   "proofread",
+  "agent",
   "appearance",
   "language",
 ];
@@ -509,6 +569,12 @@ function TabRail({
         active={tab === "proofread"}
         label={t("settings.proofreadTab")}
         onClick={() => setTab("proofread")}
+      />
+      <TabButton
+        id="agent"
+        active={tab === "agent"}
+        label={t("settings.agentTab")}
+        onClick={() => setTab("agent")}
       />
       <TabButton
         id="appearance"

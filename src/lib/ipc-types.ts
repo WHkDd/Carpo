@@ -84,6 +84,7 @@ export interface NonSecretSettings {
    *  `null` via serde default. The desktop backend also applies this to the
    *  native appearance on save. */
   theme: Theme | null;
+  agent_bridge_enabled?: boolean;
 }
 
 export interface PdfInfo {

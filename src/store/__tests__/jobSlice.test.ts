@@ -166,6 +166,36 @@ describe("proofreadReviews", () => {
   });
 
   describe("applyProofreadReview", () => {
+    it.each(["empty", "identical", "rejected"] as const)(
+      "preserves recognized state and keeps a %s no-op review pending",
+      (kind) => {
+        const store = makeStore();
+        openFile(store);
+        const review = pageReview();
+        if (kind === "empty") review.suggestions = [];
+        else if (kind === "identical")
+          review.suggestions[0]!.after = review.suggestions[0]!.before;
+        else review.suggestions[0]!.verdict = "rejected";
+        store.getState().setRecognizedPages("file-1", {
+          1: { text: review.baseText, status: "done", sourceMode: "page_image" },
+        });
+        store.getState().setProofreadReviews("file-1", { "page:1": review });
+        const before = store.getState();
+
+        expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
+          true
+        );
+        expect(store.getState().recognizedPages).toBe(before.recognizedPages);
+        expect(store.getState().pageOcrTexts).toBe(before.pageOcrTexts);
+        expect(
+          store.getState().proofreadReviews["file-1"]!["page:1"]!.status
+        ).toBe("pending");
+        expect(
+          store.getState().proofreadReviews["file-1"]!["page:1"]!.appliedText
+        ).toBeUndefined();
+      },
+    );
+
     it("records the conflict-skipped count and clears it on undo", () => {
       const store = makeStore();
       openFile(store);
