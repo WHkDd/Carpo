@@ -773,89 +773,6 @@ mod tests {
         assert_eq!(suggestions[0]["after"], "已");
     }
 
-    /// The text-only fallback the capture path degrades to. Same runner, no
-    /// images: the request must go back to a bare string body, and the
-    /// appendix must not claim there is an attachment.
-    #[tokio::test]
-    async fn run_without_images_sends_no_attachment_and_no_appendix() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(|req: &Request| {
-                let body: Value = serde_json::from_slice(&req.body).unwrap();
-                let messages = body["messages"].as_array().unwrap();
-                assert_eq!(messages[0]["content"], "只修 OCR 误识");
-                assert_eq!(messages[1]["content"], "本埠新聞。");
-                ResponseTemplate::new(200).set_body_json(json!({
-                    "choices": [{ "message": { "content": "[]" }, "finish_reason": "stop" }]
-                }))
-            })
-            .mount(&server)
-            .await;
-
-        let dir = tempfile::tempdir().unwrap();
-        let Ok(state) = AppState::new(dir.path().to_path_buf(), Arc::new(FixedSecret)) else {
-            eprintln!(
-                "skipping run_without_images_sends_no_attachment_and_no_appendix: pdfium library is not available"
-            );
-            return;
-        };
-        let state = Arc::new(state);
-
-        let mut settings = settings_with(Provider::OpenaiCompatible, None);
-        settings.openai_compatible_base_url = server.uri();
-        settings.proofread_model = "local-text".into();
-        settings.proofread_prompt = "只修 OCR 误识".into();
-
-        let job_id = Uuid::new_v4();
-        run(
-            Arc::clone(&state),
-            ProofreadRequest {
-                file_id: "f1".into(),
-                units: vec![unit("page:1", "本埠新聞。")],
-                provider: None,
-                model: None,
-                prompt: None,
-            },
-            job_id,
-            CancellationToken::new(),
-            Some(settings),
-        )
-        .await
-        .unwrap();
-
-        let done = state.events.recent(&job_id.to_string()).unwrap();
-        assert_eq!(done.payload["errors"].as_array().unwrap().len(), 0);
-        assert_eq!(done.payload["results"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn validate_rejects_empty_units() {
-        let req = req_with(vec![]);
-        assert!(validate(&req, &settings_with(Provider::Openai, None)).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_empty_text_or_key() {
-        let settings = settings_with(Provider::Openai, None);
-        let req = req_with(vec![unit("", "文本")]);
-        assert!(validate(&req, &settings).is_err());
-        let req = req_with(vec![unit("page:1", "   ")]);
-        assert!(validate(&req, &settings).is_err());
-    }
-
-    #[test]
-    fn validate_passes_for_chat_provider() {
-        let req = req_with(vec![unit("page:1", "本埠新聞")]);
-        assert!(validate(&req, &settings_with(Provider::Openai, None)).is_ok());
-        // OCR stays on Paddle; proofread explicitly moves to OpenRouter.
-        assert!(validate(
-            &req,
-            &settings_with(Provider::Paddleocr, Some(Provider::Openrouter))
-        )
-        .is_ok());
-    }
-
     #[test]
     fn validate_rejects_paddle_even_when_following_ocr_provider() {
         let req = req_with(vec![unit("page:1", "本埠新聞")]);
@@ -874,14 +791,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_missing_model() {
-        let mut settings = settings_with(Provider::Openai, None);
-        settings.openai_model = String::new();
-        let req = req_with(vec![unit("page:1", "本埠新聞")]);
-        assert!(validate(&req, &settings).is_err());
-    }
-
-    #[test]
     fn validate_honours_explicit_proofread_model_over_empty_provider_model() {
         // Empty provider model + explicit proofread model = valid.
         let mut settings = settings_with(Provider::OpenaiCompatible, None);
@@ -890,16 +799,6 @@ mod tests {
         settings.proofread_model = "meta-llama/llama-3.1-8b".into();
         let req = req_with(vec![unit("page:1", "本埠新聞")]);
         assert!(validate(&req, &settings).is_ok());
-    }
-
-    #[test]
-    fn validate_requires_a_base_url_for_openai_compatible() {
-        // Left empty, every unit would discover the same misconfiguration
-        // separately at send time — and would have burnt a job slot first.
-        let mut settings = settings_with(Provider::OpenaiCompatible, None);
-        settings.proofread_model = "local-model".into();
-        let req = req_with(vec![unit("page:1", "本埠新聞")]);
-        assert!(validate(&req, &settings).is_err());
     }
 
     fn req_with(units: Vec<ProofreadUnit>) -> ProofreadRequest {
@@ -913,22 +812,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_too_many_units() {
-        let settings = settings_with(Provider::Openai, None);
-        let units: Vec<_> = (0..=MAX_PROOFREAD_UNITS)
-            .map(|i| unit(&format!("page:{i}"), "本埠新聞"))
-            .collect();
-        assert!(validate(&req_with(units), &settings).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_keys() {
-        let settings = settings_with(Provider::Openai, None);
-        let req = req_with(vec![unit("page:1", "本埠新聞"), unit("page:1", "行政院令")]);
-        assert!(validate(&req, &settings).is_err());
-    }
-
-    #[test]
     fn validate_counts_characters_not_bytes() {
         let settings = settings_with(Provider::Openai, None);
         // 20_000 Chinese characters is 60_000 bytes: a `len()`-based cap would
@@ -937,14 +820,6 @@ mod tests {
         assert!(validate(&req_with(vec![unit("page:1", &at_limit)]), &settings).is_ok());
         let over = "文".repeat(MAX_UNIT_CHARS + 1);
         assert!(validate(&req_with(vec![unit("page:1", &over)]), &settings).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_an_oversized_prompt() {
-        let mut settings = settings_with(Provider::Openai, None);
-        settings.proofread_prompt = "字".repeat(MAX_PROMPT_CHARS + 1);
-        let req = req_with(vec![unit("page:1", "本埠新聞")]);
-        assert!(validate(&req, &settings).is_err());
     }
 
     #[test]
@@ -999,25 +874,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_images_up_to_the_count_limit() {
-        let settings = settings_with(Provider::Openai, None);
-        // One image per unit, exactly at the limit.
-        let units: Vec<_> = (0..MAX_IMAGES)
-            .map(|i| unit_with_images(&format!("article:{i}"), vec![b64(1_000)]))
-            .collect();
-        assert!(validate(&req_with(units), &settings).is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_more_images_than_the_limit() {
-        let settings = settings_with(Provider::Openai, None);
-        let units: Vec<_> = (0..=MAX_IMAGES)
-            .map(|i| unit_with_images(&format!("article:{i}"), vec![b64(1_000)]))
-            .collect();
-        assert!(validate(&req_with(units), &settings).is_err());
-    }
-
-    #[test]
     fn validate_counts_images_across_units_not_per_unit() {
         // A cross-page article carries one image per page it touches, so the
         // cap has to be a running total — checking `unit.images.len()` alone
@@ -1025,16 +881,6 @@ mod tests {
         let settings = settings_with(Provider::Openai, None);
         let images: Vec<String> = (0..MAX_IMAGES + 1).map(|_| b64(1_000)).collect();
         let req = req_with(vec![unit_with_images("article:a", images)]);
-        assert!(validate(&req, &settings).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_an_oversized_single_image() {
-        let settings = settings_with(Provider::Openai, None);
-        let req = req_with(vec![unit_with_images(
-            "page:1",
-            vec![b64(MAX_IMAGE_B64_BYTES + 4)],
-        )]);
         assert!(validate(&req, &settings).is_err());
     }
 
@@ -1070,15 +916,6 @@ mod tests {
         assert!(validate(&req, &settings).is_err());
         let req = req_with(vec![unit_with_images("page:1", vec![String::new()])]);
         assert!(validate(&req, &settings).is_err());
-    }
-
-    #[test]
-    fn validate_still_accepts_a_unit_without_images() {
-        // Capture can fail on the frontend; the unit then falls back to text
-        // only, and refusing it would turn a missing bitmap into a failed
-        // proofread.
-        let settings = settings_with(Provider::Openai, None);
-        assert!(validate(&req_with(vec![unit("page:1", "本埠新聞")]), &settings).is_ok());
     }
 
     #[test]

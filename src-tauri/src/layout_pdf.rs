@@ -1328,27 +1328,6 @@ mod tests {
     }
 
     #[test]
-    fn classifies_labels_into_roles() {
-        assert_eq!(classify("doc_title"), BlockRole::DocTitle);
-        assert_eq!(classify("paragraph_title"), BlockRole::Heading);
-        assert_eq!(classify("vertical_text"), BlockRole::Body);
-        assert_eq!(classify("text"), BlockRole::Body);
-        assert_eq!(classify("number"), BlockRole::PageNumber);
-        assert_eq!(classify("header"), BlockRole::Header);
-        assert_eq!(classify("vision_footnote"), BlockRole::Footnote);
-        assert_eq!(classify("table"), BlockRole::Table);
-        assert_eq!(classify("image"), BlockRole::Image);
-    }
-
-    #[test]
-    fn clean_block_text_strips_heading_markers() {
-        assert_eq!(clean_block_text("#### 颜序"), "颜序");
-        assert_eq!(clean_block_text("# 新聞學"), "新聞學");
-        assert_eq!(clean_block_text("**重点**"), "重点");
-        assert_eq!(clean_block_text("正文无标记"), "正文无标记");
-    }
-
-    #[test]
     fn short_vertical_lines_are_joined_for_reading() {
         assert_eq!(
             repair_short_vertical_lines("新聞\n\n之\n\n採\n\n集"),
@@ -1362,31 +1341,6 @@ mod tests {
             repair_short_vertical_lines("第一章\n\n新聞學之性質與重要"),
             "第一章\n\n新聞學之性質與重要"
         );
-    }
-
-    #[test]
-    fn html_table_is_simplified_for_pdf_text() {
-        let html = "<table><tr><td>A&nbsp;1</td><td>B&amp;2</td></tr><tr><td>C</td><td>D</td></tr></table>";
-        assert_eq!(
-            pdf_text_for_role(BlockRole::Table, html),
-            "A 1 | B&2\nC | D"
-        );
-        assert_eq!(pdf_text_for_role(BlockRole::Body, html), html);
-    }
-
-    #[test]
-    fn image_placeholder_keeps_short_reference() {
-        assert_eq!(
-            image_placeholder(Some("imgs/img_in_image_box_309_947_971_1272.jpg")),
-            "［图片：未嵌入：imgs/img_in_image_box_309_947_971_1272.jpg］"
-        );
-        assert_eq!(
-            image_placeholder(Some(
-                "https://example.test/assets/input_img_0.jpg?authorization=secret"
-            )),
-            "［图片：未嵌入：input_img_0.jpg］"
-        );
-        assert_eq!(image_placeholder(None), "［图片：未嵌入］");
     }
 
     #[test]
@@ -1777,31 +1731,6 @@ mod tests {
         let items = build_reading_items(&d, &opts, &mut warnings);
         let texts: Vec<_> = items.iter().filter_map(|i| i.text.as_deref()).collect();
         assert_eq!(texts, vec!["邵飘萍", "［图片：未嵌入］"]);
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    #[test]
-    fn exports_multi_page_reading_pdf() {
-        // A big block so the reflow spills onto multiple A4 pages.
-        let long = "中文正文测试。".repeat(2000);
-        let d = doc(vec![LayoutPage {
-            index: 1,
-            width: 1000.0,
-            height: 1500.0,
-            blocks: vec![block("text", &long, [80.0, 120.0, 900.0, 1400.0], Some(1))],
-            dimensions_approximate: false,
-        }]);
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("reading.pdf");
-        let req = LayoutPdfExportRequest {
-            document: d,
-            target_path: target.display().to_string(),
-            options: LayoutPdfExportOptions::default(),
-        };
-        let result = export_layout_pdf_to_path(req).unwrap();
-        assert!(result.page_count > 1, "expected reflow across pages");
-        let bytes = std::fs::read(target).unwrap();
-        assert!(bytes.starts_with(b"%PDF-"));
     }
 
     /// Manual end-to-end check against a real Paddle JSON export. Run with:

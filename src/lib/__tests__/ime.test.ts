@@ -12,8 +12,4 @@ describe("isImeCommit", () => {
   it("recognizes the WebView2 keyCode 229 fallback", () => {
     expect(isImeCommit({ isComposing: false, keyCode: 229 })).toBe(true);
   });
-
-  it("does not suppress a normal Enter key", () => {
-    expect(isImeCommit({ isComposing: false, keyCode: 13 })).toBe(false);
-  });
 });

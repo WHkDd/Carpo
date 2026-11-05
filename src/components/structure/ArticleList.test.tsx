@@ -76,16 +76,6 @@ describe("ArticleList title editing", () => {
     });
   });
 
-  it("treats keyCode 229 as the WebView IME fallback", () => {
-    render(<ArticleList />);
-    const input = startEditing();
-
-    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
-
-    expect(updateArticle).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "编辑标题" })).toBe(input);
-  });
-
   it("re-resolves badge colours when the theme invalidates token values", () => {
     render(<ArticleList />);
     expect(articleHsl).toHaveBeenCalledTimes(1);

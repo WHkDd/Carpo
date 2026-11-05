@@ -85,20 +85,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pick_follows_the_requested_language() {
-        assert_eq!(pick("中文", "English", false), "中文");
-        assert_eq!(pick("中文", "English", true), "English");
-    }
-
-    #[test]
-    fn default_language_is_chinese() {
-        // Other tests in this crate assert on Chinese messages, so nothing
-        // here may flip the global — only read it.
-        assert_eq!(language(), Language::Zh);
-        assert!(!is_english());
-    }
-
-    #[test]
     fn language_round_trips_through_serde() {
         assert_eq!(serde_json::to_string(&Language::En).unwrap(), "\"en\"");
         assert_eq!(

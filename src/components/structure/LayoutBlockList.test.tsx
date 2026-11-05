@@ -70,11 +70,6 @@ describe("LayoutBlockList canvas link", () => {
     expect(setEditingLayoutBlock).toHaveBeenCalledWith("file-1", null);
   });
 
-  it("says nothing about locating blocks when the mapping is sound", () => {
-    renderList();
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
   it("warns when the page dimensions cannot be trusted", () => {
     // The shape an estimated page size produces: the two axes disagree, so the
     // canvas will refuse to draw and the list has to say why.

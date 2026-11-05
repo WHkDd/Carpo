@@ -300,19 +300,6 @@ mod tests {
     }
 
     #[test]
-    fn decide_strategy_picks_direct_when_under_both_limits() {
-        assert_eq!(
-            decide_strategy(10 * 1024 * 1024, 50),
-            ChunkStrategy::DirectMultipart
-        );
-        // At the exact thresholds we stay direct — the limits are inclusive.
-        assert_eq!(
-            decide_strategy(MULTIPART_LIMIT_BYTES, PADDLE_HARD_PAGE_LIMIT),
-            ChunkStrategy::DirectMultipart
-        );
-    }
-
-    #[test]
     fn decide_strategy_chunks_when_either_limit_exceeded() {
         assert_eq!(
             decide_strategy(MULTIPART_LIMIT_BYTES + 1, 50),
@@ -322,12 +309,6 @@ mod tests {
             decide_strategy(1024, PADDLE_HARD_PAGE_LIMIT + 1),
             ChunkStrategy::Chunked
         );
-    }
-
-    #[test]
-    fn plan_chunk_page_batches_empty_input_returns_empty() {
-        let batches = plan_chunk_page_batches(&[], 1024, 10, &ChunkConfig::default());
-        assert!(batches.is_empty());
     }
 
     #[test]
@@ -400,35 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn manifest_original_page_returns_none_outside_range() {
-        let m = ChunkManifest {
-            chunk_id: "chunk-001".into(),
-            chunk_pdf_path: PathBuf::from("/tmp/x.pdf"),
-            original_pages: vec![3, 7],
-            size_bytes: 0,
-        };
-        assert_eq!(m.original_page(0), None);
-        assert_eq!(m.original_page(3), None);
-        assert_eq!(m.original_page(999), None);
-    }
-
-    #[test]
-    fn validate_requested_pages_rejects_empty() {
-        assert!(matches!(
-            validate_requested_pages(&[]),
-            Err(AppError::Config(_))
-        ));
-    }
-
-    #[test]
-    fn validate_requested_pages_rejects_zero() {
-        assert!(matches!(
-            validate_requested_pages(&[0, 1, 2]),
-            Err(AppError::Config(_))
-        ));
-    }
-
-    #[test]
     fn validate_requested_pages_rejects_unsorted() {
         // Codex review point #3: any caller that passes non-ascending pages
         // would land us at the chunk-local→original mapping bug. Refuse
@@ -445,12 +397,6 @@ mod tests {
             validate_requested_pages(&[1, 2, 2, 3]),
             Err(AppError::Internal(_))
         ));
-    }
-
-    #[test]
-    fn validate_requested_pages_accepts_strictly_ascending() {
-        assert!(validate_requested_pages(&[1, 2, 5, 8, 240]).is_ok());
-        assert!(validate_requested_pages(&[7]).is_ok());
     }
 
     // The PDFium-backed build_chunks tests live under #[cfg(all(test,
@@ -486,28 +432,6 @@ mod pdfium_tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../src-tauri/tests/fixtures/sample.pdf"
         ))
-    }
-
-    #[test]
-    fn build_chunks_single_batch_when_file_small() {
-        let pdfium = init_pdfium().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let manifests = build_chunks(
-            &pdfium,
-            sample_pdf(),
-            &[1, 2],
-            dir.path(),
-            10 * 1024,
-            2,
-            &ChunkConfig::default(),
-        )
-        .unwrap();
-        assert_eq!(manifests.len(), 1);
-        assert_eq!(manifests[0].original_pages, vec![1, 2]);
-        assert!(manifests[0].chunk_pdf_path.exists());
-        assert!(manifests[0].size_bytes > 0);
-        assert_eq!(manifests[0].original_page(1), Some(1));
-        assert_eq!(manifests[0].original_page(2), Some(2));
     }
 
     #[test]

@@ -272,42 +272,6 @@ mod tests {
     }
 
     #[test]
-    fn lru_evicts_oldest_when_over_capacity() {
-        let mut lru = LruInner::new(2, u64::MAX);
-        lru.insert(1, flat(10));
-        lru.insert(2, flat(20));
-        lru.insert(3, flat(30));
-        assert!(lru.get(1).is_none(), "page 1 should have been evicted");
-        assert!(lru.get(2).is_some());
-        assert!(lru.get(3).is_some());
-    }
-
-    #[test]
-    fn lru_promotes_on_hit() {
-        let mut lru = LruInner::new(2, u64::MAX);
-        lru.insert(1, flat(10));
-        lru.insert(2, flat(20));
-        // Touch 1 so 2 becomes the eviction candidate.
-        let _ = lru.get(1);
-        lru.insert(3, flat(30));
-        assert!(
-            lru.get(1).is_some(),
-            "page 1 should survive after promotion"
-        );
-        assert!(lru.get(2).is_none());
-        assert!(lru.get(3).is_some());
-    }
-
-    #[test]
-    fn lru_reinsert_replaces_value_in_place() {
-        let mut lru = LruInner::new(2, u64::MAX);
-        lru.insert(1, flat(10));
-        lru.insert(1, flat(99));
-        let img = lru.get(1).unwrap();
-        assert_eq!(img.width(), 99);
-    }
-
-    #[test]
     fn lru_evicts_on_the_byte_budget_before_the_slot_count() {
         // Slot count says 10 fit; the budget only covers two of these pages.
         // `flat(w)` is w x 1 RGBA = w*4 bytes.

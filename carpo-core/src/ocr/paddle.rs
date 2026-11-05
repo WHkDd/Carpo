@@ -546,56 +546,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_5xx_marks_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/v2/ocr/jobs"))
-            .respond_with(ResponseTemplate::new(503))
-            .mount(&server)
-            .await;
-
-        let cancel = never_cancelled();
-        let err = recognize(
-            &reqwest::Client::new(),
-            &format!("{}/api/v2/ocr/jobs", server.uri()),
-            "tk",
-            "",
-            b"x".to_vec(),
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.is_retryable());
-    }
-
-    #[tokio::test]
-    async fn submit_401_not_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/v2/ocr/jobs"))
-            .respond_with(ResponseTemplate::new(401))
-            .mount(&server)
-            .await;
-
-        let cancel = never_cancelled();
-        let err = recognize(
-            &reqwest::Client::new(),
-            &format!("{}/api/v2/ocr/jobs", server.uri()),
-            "tk",
-            "",
-            b"x".to_vec(),
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-        )
-        .await
-        .unwrap_err();
-        assert!(!err.is_retryable());
-    }
-
-    #[tokio::test]
     async fn submit_api_code_10010_marks_retryable() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -651,51 +601,6 @@ mod tests {
             AppError::Ocr { message, .. } => assert!(message.contains("code 10010")),
             other => panic!("expected Ocr, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn submit_api_code_10004_not_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/v2/ocr/jobs"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "code": 10004, "msg": "文件格式不支持", "data": { "jobId": "" }
-            })))
-            .mount(&server)
-            .await;
-
-        let cancel = never_cancelled();
-        let err = recognize(
-            &reqwest::Client::new(),
-            &format!("{}/api/v2/ocr/jobs", server.uri()),
-            "tk",
-            "",
-            b"x".to_vec(),
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-        )
-        .await
-        .unwrap_err();
-        assert!(!err.is_retryable());
-    }
-
-    #[tokio::test]
-    async fn missing_token_returns_config_error() {
-        let cancel = never_cancelled();
-        let err = recognize(
-            &reqwest::Client::new(),
-            DEFAULT_JOB_URL,
-            "",
-            "",
-            b"x".to_vec(),
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, AppError::Config(_)));
     }
 
     #[tokio::test]

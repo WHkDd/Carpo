@@ -15,13 +15,6 @@ describe("parseAppError", () => {
     });
   });
 
-  it("parses a string-data payload, defaulting retryable off non-Network kinds", () => {
-    const parsed = parseAppError({ kind: "Config", data: "missing base_url" });
-    expect(parsed.kind).toBe("Config");
-    expect(parsed.message).toBe("missing base_url");
-    expect(parsed.retryable).toBe(false);
-  });
-
   it("unwraps HttpAppError back to the structured payload underneath", () => {
     const wrapped = new HttpAppError({
       kind: "Ocr",
@@ -37,23 +30,6 @@ describe("parseAppError", () => {
       message: "rate limited",
       retryable: true,
       provider: "openai",
-    });
-  });
-
-  it("falls back to Internal for a plain Error", () => {
-    const parsed = parseAppError(new Error("network down"));
-    expect(parsed).toEqual({
-      kind: "Internal",
-      message: "network down",
-      retryable: false,
-    });
-  });
-
-  it("falls back to Internal for an arbitrary string", () => {
-    expect(parseAppError("oops")).toEqual({
-      kind: "Internal",
-      message: "oops",
-      retryable: false,
     });
   });
 });

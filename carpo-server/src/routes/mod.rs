@@ -41,6 +41,7 @@ pub fn router() -> Router<ServerState> {
             post(files::upload_file).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
         )
         .route("/api/files/:file_id", delete(files::delete_file))
+        .route("/api/files/:file_id/rotate", post(files::rotate_file))
         .route("/api/files/:file_id/pdf-info", get(render::pdf_info))
         .route("/api/files/:file_id/pages/:page", get(render::render_page))
         .route("/api/files/:file_id/raster", get(render::raster))

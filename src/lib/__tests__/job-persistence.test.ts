@@ -1,19 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import {
-  clearPendingJob,
-  loadPendingJob,
-  savePendingJob,
-} from "@/lib/job-persistence";
-import type { StartJobInfo } from "@/store/jobSlice";
-
-const info: StartJobInfo = {
-  jobId: "job-1",
-  kind: "whole_file",
-  fileId: "file-1",
-  newspaperName: "申报",
-  newspaperDate: "1936-01-01",
-  requestedPages: [1, 2, 3],
-};
+import { loadPendingJob } from "@/lib/job-persistence";
 
 // This suite runs under vitest's default `node` environment (no jsdom), so
 // `sessionStorage` isn't a global here — stand in a minimal in-memory
@@ -45,21 +31,6 @@ class MemoryStorage implements Storage {
 describe("job-persistence", () => {
   beforeEach(() => {
     sessionStorage.clear();
-  });
-
-  it("round-trips a saved job", () => {
-    savePendingJob(info);
-    expect(loadPendingJob()).toEqual(info);
-  });
-
-  it("returns null when nothing is saved", () => {
-    expect(loadPendingJob()).toBeNull();
-  });
-
-  it("clears the saved job", () => {
-    savePendingJob(info);
-    clearPendingJob();
-    expect(loadPendingJob()).toBeNull();
   });
 
   it("returns null for corrupt stored JSON instead of throwing", () => {

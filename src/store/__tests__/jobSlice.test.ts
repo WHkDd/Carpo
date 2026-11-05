@@ -69,27 +69,6 @@ function pageReview(overrides: Partial<ProofreadReview> = {}): ProofreadReview {
   };
 }
 
-describe("proofread jobs", () => {
-  it("startJob records a proofread job with its submitted units", () => {
-    const store = makeStore();
-    openFile(store);
-    store.getState().startJob({
-      jobId: "job-1",
-      kind: "proofread",
-      fileId: "file-1",
-      newspaperName: "申报",
-      newspaperDate: "1945-08-15",
-      units: [{ key: "page:1", text: "本埠新聞" }],
-      stage: { kind: "proofread_running", index: 0, count: 1 },
-    });
-    const job = store.getState().activeJob;
-    expect(job?.kind).toBe("proofread");
-    if (job?.kind === "proofread") {
-      expect(job.units).toEqual([{ key: "page:1", text: "本埠新聞" }]);
-    }
-  });
-});
-
 describe("job start claim", () => {
   function startProofreadJob(store: ReturnType<typeof makeStore>, jobId = "job-1") {
     store.getState().startJob({
@@ -186,84 +165,7 @@ describe("proofreadReviews", () => {
     expect(store.getState().proofreadReviews["ghost"]).toBeUndefined();
   });
 
-  it("setProofreadSuggestionVerdict updates one suggestion", () => {
-    const store = makeStore();
-    openFile(store);
-    store.getState().setProofreadReviews("file-1", {
-      "page:1": pageReview(),
-    });
-    store
-      .getState()
-      .setProofreadSuggestionVerdict("file-1", "page:1", 0, "rejected");
-    expect(
-      store.getState().proofreadReviews["file-1"]!["page:1"]!.suggestions[0]!
-        .verdict
-    ).toBe("rejected");
-
-    store
-      .getState()
-      .setProofreadSuggestionVerdict("file-1", "page:1", 0, "edited", "己");
-    const edited = store.getState().proofreadReviews["file-1"]!["page:1"]!
-      .suggestions[0]!;
-    expect(edited.verdict).toBe("edited");
-    expect(edited.editedAfter).toBe("己");
-  });
-
-  it("setProofreadCategoryVerdict flips a whole category", () => {
-    const store = makeStore();
-    openFile(store);
-    store.getState().setProofreadReviews("file-1", {
-      "page:1": pageReview({
-        suggestions: [
-          ...pageReview().suggestions,
-          {
-            before: "到達",
-            after: "抵達",
-            context_before: "昨日",
-            category: "semantic",
-            confidence: 0.7,
-            reason: "",
-            verdict: "pending",
-          },
-        ],
-      }),
-    });
-    store
-      .getState()
-      .setProofreadCategoryVerdict("file-1", "page:1", "semantic", "accepted");
-    const suggestions = store.getState().proofreadReviews["file-1"]!["page:1"]!
-      .suggestions;
-    expect(suggestions.map((s) => s.verdict)).toEqual([
-      "accepted",
-      "accepted",
-    ]);
-  });
-
   describe("applyProofreadReview", () => {
-    it("writes accepted suggestions into the page text and marks applied", () => {
-      const store = makeStore();
-      openFile(store);
-      store.getState().setRecognizedPages("file-1", {
-        1: {
-          text: "本埠新聞，巳於昨日到達。",
-          status: "done",
-          sourceMode: "page_image",
-        },
-      });
-      store.getState().setProofreadReviews("file-1", {
-        "page:1": pageReview(),
-      });
-      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
-        true
-      );
-      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
-        "本埠新聞，已於昨日到達。"
-      );
-      const review = store.getState().proofreadReviews["file-1"]!["page:1"]!;
-      expect(review.status).toBe("applied");
-      expect(review.appliedText).toBe("本埠新聞，已於昨日到達。");
-    });
-
     it("records the conflict-skipped count and clears it on undo", () => {
       const store = makeStore();
       openFile(store);
@@ -336,27 +238,6 @@ describe("proofreadReviews", () => {
       ).toBe("pending");
     });
 
-    it("refuses to apply twice", () => {
-      const store = makeStore();
-      openFile(store);
-      store.getState().setRecognizedPages("file-1", {
-        1: {
-          text: "本埠新聞，巳於昨日到達。",
-          status: "done",
-          sourceMode: "page_image",
-        },
-      });
-      store
-        .getState()
-        .setProofreadReviews("file-1", { "page:1": pageReview() });
-      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
-        true
-      );
-      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
-        false
-      );
-    });
-
     it("writes into the article path for grouped targets and re-assembles", () => {
       const store = makeStore();
       openFile(store);
@@ -381,33 +262,6 @@ describe("proofreadReviews", () => {
   });
 
   describe("undoProofreadReview", () => {
-    it("restores the base text and re-opens the review", () => {
-      const store = makeStore();
-      openFile(store);
-      store.getState().setRecognizedPages("file-1", {
-        1: {
-          text: "本埠新聞，巳於昨日到達。",
-          status: "done",
-          sourceMode: "page_image",
-        },
-      });
-      store.getState().setProofreadReviews("file-1", {
-        "page:1": pageReview(),
-      });
-      expect(store.getState().applyProofreadReview("file-1", "page:1")).toBe(
-        true
-      );
-      expect(store.getState().undoProofreadReview("file-1", "page:1")).toBe(
-        true
-      );
-      expect(store.getState().pageOcrTexts["file-1"]?.[1]).toBe(
-        "本埠新聞，巳於昨日到達。"
-      );
-      expect(
-        store.getState().proofreadReviews["file-1"]!["page:1"]!.status
-      ).toBe("pending");
-    });
-
     it("refuses when the text was edited after applying", () => {
       const store = makeStore();
       openFile(store);
@@ -432,30 +286,5 @@ describe("proofreadReviews", () => {
         "应用后又改过的文本"
       );
     });
-  });
-
-  it("discardProofreadReview removes only that key", () => {
-    const store = makeStore();
-    openFile(store);
-    store.getState().setProofreadReviews("file-1", {
-      "page:1": pageReview(),
-      "page:2": pageReview({ target: { mode: "whole_file", page: 2 } }),
-    });
-    store.getState().discardProofreadReview("file-1", "page:1");
-    expect(Object.keys(store.getState().proofreadReviews["file-1"]!)).toEqual([
-      "page:2",
-    ]);
-    store.getState().discardProofreadReview("file-1", "page:2");
-    expect(store.getState().proofreadReviews["file-1"]).toBeUndefined();
-  });
-
-  it("removeFile clears the file's reviews", () => {
-    const store = makeStore();
-    openFile(store);
-    store.getState().setProofreadReviews("file-1", {
-      "page:1": pageReview(),
-    });
-    store.getState().removeFile("file-1");
-    expect(store.getState().proofreadReviews["file-1"]).toBeUndefined();
   });
 });

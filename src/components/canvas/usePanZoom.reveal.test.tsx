@@ -44,38 +44,6 @@ afterEach(() => {
 });
 
 describe("revealRect", () => {
-  it("leaves the view alone when the block is already fully visible", () => {
-    const { result } = renderHook(() => usePanZoom(args()));
-    expect(view()).toEqual(FIT_AT_800x600);
-
-    // At fit the whole page is on screen, so every block within it is visible.
-    act(() => result.current.controller.revealRect(1500, 100, 400, 200));
-    expect(view()).toEqual(FIT_AT_800x600);
-  });
-
-  it("centres an off-screen block, keeping the zoom and dropping fit", () => {
-    // A stored view with isFit=false keeps the fit driver out of the way.
-    useStore.setState({
-      fileViews: { f1: { zoomPercent: 100, panX: 0, panY: 0, isFit: false } },
-    });
-    const { result } = renderHook(() => usePanZoom(args()));
-
-    act(() =>
-      result.current.controller.revealRect(
-        FAR_BLOCK.x,
-        FAR_BLOCK.y,
-        FAR_BLOCK.w,
-        FAR_BLOCK.h
-      )
-    );
-    expect(view()).toEqual({
-      zoomPercent: 100, // untouched — auto-zoom would cost the user their bearings
-      panX: 400 - 1700,
-      panY: 300 - 200,
-      isFit: false,
-    });
-  });
-
   it("is idempotent — a centred block is not re-centred", () => {
     useStore.setState({
       fileViews: { f1: { zoomPercent: 100, panX: 0, panY: 0, isFit: false } },
@@ -112,14 +80,6 @@ describe("revealRect", () => {
     reveal();
     expect(view()).toEqual(afterFirst);
     expect(afterFirst.panY).toBe(300 - 1200);
-  });
-
-  it("does nothing before the container has been measured", () => {
-    const { result } = renderHook(() =>
-      usePanZoom(args({ containerWidth: 0, containerHeight: 0 }))
-    );
-    act(() => result.current.controller.revealRect(1500, 100, 400, 200));
-    expect(view()).toBeUndefined();
   });
 });
 

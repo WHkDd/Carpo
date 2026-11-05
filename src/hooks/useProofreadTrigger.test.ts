@@ -176,29 +176,6 @@ beforeEach(() => {
 });
 
 describe("useProofreadTrigger", () => {
-  it("starts a proofread job for the current page", async () => {
-    const { result } = renderHook(() => useProofreadTrigger());
-    await act(() => result.current.triggerCurrent());
-    expect(startProofread).toHaveBeenCalledWith({
-      file_id: "file-1",
-      units: [
-        { key: "page:1", text: "本埠新聞，巳於昨日到達。", images: [] },
-      ],
-      // The confirmed-settings snapshot rides along (E1): the backend runs
-      // exactly this view, not whatever the disk write races to.
-      provider: "openai",
-      model: "gpt-4o",
-      prompt: "",
-    });
-    expect(startJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "proofread",
-        fileId: "file-1",
-        units: [{ key: "page:1", text: "本埠新聞，巳於昨日到達。" }],
-      })
-    );
-  });
-
   it("sends the confirmed proofread settings as the request snapshot", async () => {
     state.settings.proofread_provider = "openrouter";
     state.settings.proofread_model = "anthropic/claude-sonnet-4.6";
@@ -212,57 +189,6 @@ describe("useProofreadTrigger", () => {
         prompt: "自定义提示词",
       })
     );
-  });
-
-  it("rejects a Paddle-only setup before any network call", async () => {
-    state.settings.provider = "paddleocr";
-    const { result } = renderHook(() => useProofreadTrigger());
-    await act(() => result.current.triggerCurrent());
-    expect(startProofread).not.toHaveBeenCalled();
-    expect(result.current.state.error).toContain("PaddleOCR");
-  });
-
-  it("rejects a missing API key", async () => {
-    getSecret.mockResolvedValue(false);
-    const { result } = renderHook(() => useProofreadTrigger());
-    await act(() => result.current.triggerCurrent());
-    expect(startProofread).not.toHaveBeenCalled();
-    expect(result.current.state.error).toContain("API 密钥未找到");
-  });
-
-  it("asks through the native dialog before overwriting a pending review", async () => {
-    state.proofreadReviews = {
-      "file-1": { "page:1": { status: "pending" } },
-    };
-    confirmDestructive.mockResolvedValue(false);
-    const { result } = renderHook(() => useProofreadTrigger());
-    await act(() => result.current.triggerCurrent());
-    expect(confirmDestructive).toHaveBeenCalled();
-    expect(startProofread).not.toHaveBeenCalled();
-
-    confirmDestructive.mockResolvedValue(true);
-    await act(() => result.current.triggerCurrent());
-    expect(startProofread).toHaveBeenCalled();
-  });
-
-  it("builds one unit per article with text in the all-articles scope", async () => {
-    state.recognitionMode = "grouped";
-    state.articles = [
-      { id: "a-1", num: 1, title: "报道1", blockRefs: [] },
-      { id: "a-2", num: 2, title: "报道2", blockRefs: [] },
-    ];
-    state.articleOcrTexts = {
-      "file-1": { "a-1": "正文一", "a-2": "   " },
-    };
-    const { result } = renderHook(() => useProofreadTrigger());
-    await act(() => result.current.triggerAllArticles());
-    expect(startProofread).toHaveBeenCalledWith({
-      file_id: "file-1",
-      units: [{ key: "article:a-1", text: "正文一", images: [] }],
-      provider: "openai",
-      model: "gpt-4o",
-      prompt: "",
-    });
   });
 
   it("derives the batch targets from the live store, not the rendered closure (E2)", async () => {

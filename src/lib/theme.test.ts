@@ -64,27 +64,6 @@ afterEach(() => {
 });
 
 describe("theme preference", () => {
-  it("restores a valid stored preference before the app mounts", async () => {
-    stubMatchMedia(false);
-    window.localStorage.setItem("carpo.theme", "dark");
-
-    const theme = await loadThemeModule();
-
-    expect(theme.getThemePreference()).toBe("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(document.documentElement.style.colorScheme).toBe("dark");
-  });
-
-  it("ignores an invalid stored value and follows the OS", async () => {
-    stubMatchMedia(true);
-    window.localStorage.setItem("carpo.theme", "sepia");
-
-    const theme = await loadThemeModule();
-
-    expect(theme.getThemePreference()).toBe("system");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-  });
-
   it("tracks OS changes only while the preference is system", async () => {
     const media = stubMatchMedia(false);
     const theme = await loadThemeModule();

@@ -66,6 +66,7 @@ pub fn run() {
             commands::files::load_raster_image,
             commands::files::list_supported_extensions,
             commands::files::import_clipboard_image,
+            commands::files::rotate_image,
             commands::render::get_pdf_info,
             commands::render::render_page,
             commands::settings::get_secret,
@@ -86,9 +87,9 @@ pub fn run() {
             commands::system::open_log_dir
         ])
         .setup(|app| {
-            // PNGs materialized from clipboard pastes are single-session
-            // scratch files. Reclaim last run's on launch — scoped to the
-            // names we wrote, in our own cache dir.
+            // PNGs materialized from clipboard pastes and rotations are
+            // single-session scratch files. Reclaim last run's on launch —
+            // scoped to the names we wrote, in our own cache dir.
             commands::files::clear_clipboard_imports(app.handle());
             let data_dir = app.path().app_data_dir()?;
             let secrets = Arc::new(KeychainSecretProvider);

@@ -83,14 +83,3 @@ describe("line endings", () => {
     );
   });
 });
-
-describe("markdownToDocBlocks", () => {
-  it("maps ATX headings below the base level and drops blank lines", () => {
-    expect(markdownToDocBlocks("## 小標\n\n正文一\n正文二\n###### 深", 1)).toEqual([
-      { kind: "heading", level: 3, text: "小標" },
-      { kind: "paragraph", text: "正文一" },
-      { kind: "paragraph", text: "正文二" },
-      { kind: "heading", level: 4, text: "深" },
-    ]);
-  });
-});

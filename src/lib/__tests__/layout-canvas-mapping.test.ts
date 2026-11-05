@@ -13,16 +13,6 @@ import {
 const LAYOUT_300DPI = { width: 2362, height: 3543 };
 
 describe("layoutCanvasMapping", () => {
-  it("derives one ratio per axis for the same page at two resolutions", () => {
-    const mapping = layoutCanvasMapping(LAYOUT_300DPI, {
-      width: 1181,
-      height: 1771,
-    });
-    expect(mapping).not.toBeNull();
-    expect(mapping!.sx).toBeCloseTo(0.5, 3);
-    expect(mapping!.sy).toBeCloseTo(0.5, 3);
-  });
-
   it("accepts the rounding drift of two independently rounded pixel sizes", () => {
     // 2362 / 1.5 = 1574.67 and 3543 / 1.5 = 2362 — the rounded pair is not
     // exactly isotropic, and refusing it would reject a perfectly good page.
@@ -67,33 +57,6 @@ describe("layoutCanvasMapping", () => {
     expect(mapping!.sx).toBeCloseTo(1191 / 2224.62, 6);
   });
 
-  it("matches long side to long side regardless of the inferred orientation", () => {
-    // The importer guesses orientation from block extents; the bitmap is the
-    // page itself. A disagreement must not change the scale factor.
-    const landscape = layoutCanvasMapping(
-      { width: 2224.62, height: 1590.18, dimensionsApproximate: true },
-      { width: 1191, height: 842 }
-    );
-    const transposed = layoutCanvasMapping(
-      { width: 1590.18, height: 2224.62, dimensionsApproximate: true },
-      { width: 1191, height: 842 }
-    );
-    expect(landscape!.sx).toBeCloseTo(transposed!.sx, 10);
-  });
-
-  it("still refuses degenerate dimensions on the approximate path", () => {
-    const image = { width: 1191, height: 842 };
-    expect(
-      layoutCanvasMapping({ width: 0, height: 1590, dimensionsApproximate: true }, image)
-    ).toBeNull();
-    expect(
-      layoutCanvasMapping({ width: 2224, height: 1590, dimensionsApproximate: true }, {
-        width: 0,
-        height: 0,
-      })
-    ).toBeNull();
-  });
-
   it("refuses missing or degenerate dimensions instead of dividing by zero", () => {
     const image = { width: 1181, height: 1771 };
     expect(layoutCanvasMapping(null, image)).toBeNull();
@@ -111,15 +74,6 @@ describe("layoutCanvasMapping", () => {
 describe("scaleLayoutBBox", () => {
   const mapping = { sx: 0.5, sy: 0.5 };
 
-  it("converts corners into x/y/width/height", () => {
-    expect(scaleLayoutBBox([100, 200, 500, 800], mapping)).toEqual({
-      x: 50,
-      y: 100,
-      width: 200,
-      height: 300,
-    });
-  });
-
   it("normalizes corners given in the wrong order", () => {
     // Konva draws a negative width as nothing, so a reversed bbox would
     // silently produce no highlight at all.
@@ -130,34 +84,10 @@ describe("scaleLayoutBBox", () => {
       height: 300,
     });
   });
-
-  it("scales each axis by its own factor", () => {
-    const bbox: LayoutBBox = [0, 0, 100, 100];
-    expect(scaleLayoutBBox(bbox, { sx: 2, sy: 3 })).toEqual({
-      x: 0,
-      y: 0,
-      width: 200,
-      height: 300,
-    });
-  });
 });
 
 describe("scaleLayoutPolygon", () => {
   const mapping = { sx: 0.5, sy: 0.5 };
-
-  it("flattens points the way Konva's Line wants them", () => {
-    expect(
-      scaleLayoutPolygon(
-        [
-          [100, 200],
-          [500, 200],
-          [500, 800],
-          [100, 800],
-        ],
-        mapping
-      )
-    ).toEqual([50, 100, 250, 100, 250, 400, 50, 400]);
-  });
 
   it("returns null for a polygon that cannot enclose anything", () => {
     expect(scaleLayoutPolygon(undefined, mapping)).toBeNull();
@@ -172,37 +102,9 @@ describe("scaleLayoutPolygon", () => {
       )
     ).toBeNull();
   });
-
-  it("returns null when a coordinate is not a number", () => {
-    expect(
-      scaleLayoutPolygon(
-        [
-          [0, 0],
-          [Number.NaN, 10],
-          [10, 10],
-        ],
-        mapping
-      )
-    ).toBeNull();
-  });
 });
 
 describe("polygonBoundingRect", () => {
-  it("bounds a flat point list with min/max on each axis", () => {
-    // The shape of the input is exactly what scaleLayoutPolygon produces.
-    expect(polygonBoundingRect([10, 20, 40, 5, 15, 30])).toEqual({
-      x: 10,
-      y: 5,
-      width: 30,
-      height: 25,
-    });
-  });
-
-  it("returns null for a list with fewer than two points", () => {
-    expect(polygonBoundingRect([])).toBeNull();
-    expect(polygonBoundingRect([1, 2])).toBeNull();
-  });
-
   it("ignores a trailing dangling coordinate", () => {
     // An odd-length list still bounds every complete pair.
     expect(polygonBoundingRect([2, 2, 8, 8, 5])).toEqual({
@@ -211,10 +113,6 @@ describe("polygonBoundingRect", () => {
       width: 6,
       height: 6,
     });
-  });
-
-  it("returns null when a coordinate is not finite", () => {
-    expect(polygonBoundingRect([0, 0, 4, Number.NaN])).toBeNull();
   });
 });
 

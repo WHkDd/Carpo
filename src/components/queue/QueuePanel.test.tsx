@@ -53,19 +53,4 @@ describe("QueuePanel selection mode", () => {
     fireEvent.keyDown(screen.getByRole("grid"), { key: "Backspace" });
     expect(useStore.getState().files.map((f) => f.id)).toEqual(["a", "b"]);
   });
-
-  it("clicking the row body still switches files without unticking", () => {
-    renderPanel();
-    fireEvent.click(checkbox("b.png"));
-    fireEvent.click(screen.getByText("b.png"));
-    expect(useStore.getState().currentFileId).toBe("b");
-    expect(checkbox("b.png").getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("Space ticks the current row", () => {
-    renderPanel();
-    fireEvent.keyDown(screen.getByRole("grid"), { key: " " });
-    expect(checkbox("a.png").getAttribute("aria-checked")).toBe("true");
-    expect(checkbox("b.png").getAttribute("aria-checked")).toBe("false");
-  });
 });

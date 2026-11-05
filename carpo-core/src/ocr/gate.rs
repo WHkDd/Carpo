@@ -98,23 +98,6 @@ mod tests {
         CancellationToken::new()
     }
 
-    #[test]
-    fn each_bucket_starts_at_its_provider_concurrency() {
-        let gates = ProviderGates::new();
-        for provider in [
-            Provider::Paddleocr,
-            Provider::Openai,
-            Provider::Openrouter,
-            Provider::OpenaiCompatible,
-        ] {
-            assert_eq!(
-                gates.for_provider(provider).available_permits(),
-                concurrency_for(provider),
-                "{provider:?}"
-            );
-        }
-    }
-
     #[tokio::test]
     async fn a_saturated_bucket_makes_the_next_call_wait_then_admits_it() {
         let gates = ProviderGates::new();

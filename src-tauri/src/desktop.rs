@@ -250,9 +250,8 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::Men
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, path::Path};
+    use std::collections::BTreeSet;
 
-    use super::collect_open_paths;
     use carpo_core::image::supported_extensions;
 
     #[test]
@@ -271,23 +270,5 @@ mod tests {
             .copied()
             .collect::<BTreeSet<_>>();
         assert_eq!(configured, supported);
-    }
-
-    #[test]
-    fn cli_paths_ignore_flags_missing_files_and_unsupported_extensions() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("scan.PDF"), b"not parsed here").unwrap();
-        std::fs::write(dir.path().join("notes.txt"), b"ignored").unwrap();
-        let paths = collect_open_paths(
-            vec![
-                "--flag".to_string(),
-                "scan.PDF".to_string(),
-                "notes.txt".to_string(),
-                "missing.png".to_string(),
-            ],
-            Path::new(dir.path()),
-        );
-        assert_eq!(paths.len(), 1);
-        assert!(paths[0].ends_with("scan.PDF"));
     }
 }

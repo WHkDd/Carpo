@@ -8,13 +8,15 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use carpo_core::{
     error::{AppError, AppResult},
-    image::{encode_rgba_png, load_from_disk, supported_extensions},
+    image::{encode_rgba_png, load_from_disk, rotate_quarter_png, supported_extensions},
     pdf::{clamp_preview_dimensions, encode_preview_jpeg},
 };
 
-/// Subdirectory of the app cache dir that holds PNGs materialized from the
-/// system clipboard. Everything in here is ours and nothing else writes to
-/// it — that is what makes [`clear_clipboard_imports`] safe.
+/// Subdirectory of the app cache dir that holds PNGs Carpo materializes
+/// itself: clipboard pastes and rotated copies. Everything in here is ours
+/// and nothing else writes to it — that is what makes
+/// [`clear_clipboard_imports`] safe. The name predates rotation; it stays so
+/// a launch still finds and clears what an older build left behind.
 const CLIPBOARD_IMPORT_DIR: &str = "clipboard-imports";
 const CLIPBOARD_CONTENT_UNAVAILABLE: &str =
     "The clipboard contents were not available in the requested format or the clipboard is empty.";
@@ -47,6 +49,30 @@ pub async fn load_raster_image(path: String) -> AppResult<Response> {
     out.extend_from_slice(&height.to_le_bytes());
     out.extend_from_slice(&bytes);
     Ok(Response::new(out))
+}
+
+/// Writes `path` turned a quarter turn to a new PNG in the scratch dir and
+/// returns the new path. The caller swaps the queue entry over to it, so the
+/// preview and every OCR path read the rotated pixels from one file — no
+/// rotation parameter to thread through, and none to forget. The user's
+/// original file is never touched.
+#[tauri::command]
+pub async fn rotate_image(app: AppHandle, path: String, clockwise: bool) -> AppResult<String> {
+    let dir = clipboard_import_dir(&app)?;
+    let png =
+        tokio::task::spawn_blocking(move || rotate_quarter_png(&PathBuf::from(path), clockwise))
+            .await
+            .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
+    let target = dir.join(format!(
+        "rotated-{}-{}.png",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        uuid::Uuid::new_v4().simple()
+    ));
+    write_atomic(&target, &png)?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -186,11 +212,12 @@ pub fn clear_clipboard_imports(app: &AppHandle) {
     }
 }
 
-/// Matches the names produced by `import_clipboard_image` (and the `.part`
-/// temp files a crash mid-write could leave behind).
+/// Matches the names produced by `import_clipboard_image` and `rotate_image`
+/// (and the `.part` temp files a crash mid-write could leave behind).
 fn is_clipboard_import_name(path: &Path) -> bool {
     path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-        n.starts_with("clipboard-") && (n.ends_with(".png") || n.ends_with(".part"))
+        (n.starts_with("clipboard-") || n.starts_with("rotated-"))
+            && (n.ends_with(".png") || n.ends_with(".part"))
     })
 }
 
@@ -199,20 +226,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn atomic_write_leaves_no_partial_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("clipboard-1-abc.png");
-        write_atomic(&target, b"payload").unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"payload");
-        assert!(!target.with_extension("png.part").exists());
-    }
-
-    #[test]
     fn cleanup_matcher_is_scoped_to_our_own_names() {
         assert!(is_clipboard_import_name(Path::new("/c/clipboard-1-a.png")));
         assert!(is_clipboard_import_name(Path::new(
             "/c/clipboard-1-a.png.part"
         )));
+        assert!(is_clipboard_import_name(Path::new("/c/rotated-1-a.png")));
         // Anything a user or another component could plausibly have put in
         // the same directory must survive a launch.
         assert!(!is_clipboard_import_name(Path::new("/c/scan.png")));

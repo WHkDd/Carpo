@@ -68,6 +68,21 @@ export async function loadRasterImage(path: string): Promise<FetchedBitmap> {
   return unpackPageBytes(buffer);
 }
 
+/** Turns an image a quarter turn and returns the path the queue entry should
+ *  read from now on. Desktop writes a rotated PNG to the app cache and
+ *  returns its path (the user's original is never touched); the server
+ *  swaps its own upload copy under the same id, so the path is unchanged. */
+export async function rotateImage(path: string, clockwise: boolean): Promise<string> {
+  if (!isTauriRuntime()) {
+    await httpJson<boolean>(`/api/files/${path}/rotate`, {
+      method: "POST",
+      body: JSON.stringify({ clockwise }),
+    });
+    return path;
+  }
+  return invoke<string>("rotate_image", { path, clockwise });
+}
+
 export async function listSupportedExtensions(): Promise<string[]> {
   if (!isTauriRuntime()) {
     return ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "pdf"];

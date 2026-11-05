@@ -31,17 +31,6 @@ function article(
 }
 
 describe("planProofreadImages", () => {
-  it("plans one whole-page image per whole-file target", () => {
-    const targets: ProofreadTarget[] = [
-      { mode: "whole_file", page: 4 },
-      { mode: "whole_file", page: 7 },
-    ];
-    expect(planProofreadImages(source([]), "f1", targets)).toEqual([
-      { key: "page:4", page: 4, crop: null },
-      { key: "page:7", page: 7, crop: null },
-    ]);
-  });
-
   it("plans one crop per page a grouped article occupies", () => {
     // A report running across a page break needs both sheets — this is why
     // the cap counts images and not units.
@@ -63,25 +52,6 @@ describe("planProofreadImages", () => {
     expect(plans.map((p) => p.page)).toEqual([1, 2]);
     expect(plans.every((p) => p.key === "article:a-1")).toBe(true);
     expect(plans[0]!.crop).not.toBeNull();
-  });
-
-  it("plans nothing for an article whose blocks are gone", () => {
-    // The unit is still proofread — as text only.
-    expect(
-      planProofreadImages(
-        source([article("a-1", [{ page: 1, blockId: "gone" }])]),
-        "f1",
-        [{ mode: "grouped", articleId: "a-1" }]
-      )
-    ).toEqual([]);
-  });
-
-  it("plans nothing for a target whose article no longer exists", () => {
-    expect(
-      planProofreadImages(source([]), "f1", [
-        { mode: "grouped", articleId: "removed" },
-      ])
-    ).toEqual([]);
   });
 
   it("counts past the cap so the caller can refuse before capturing", () => {

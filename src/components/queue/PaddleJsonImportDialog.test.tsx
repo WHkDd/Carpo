@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup,  render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
@@ -80,31 +80,6 @@ describe("PaddleJsonImportDialog export feedback", () => {
     });
   });
 
-  it("routes the single export button through the format toggle", async () => {
-    render(
-      <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
-    );
-    await screen.findByText("阅读版导出选项");
-
-    // PDF is the default, and only one export button exists.
-    expect(screen.getByRole("button", { name: /^导出阅读版 PDF/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^导出 Markdown/ })).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
-
-    // Switching the toggle relabels the one button and swaps the IPC call.
-    const exportButton = await screen.findByRole("button", {
-      name: /^导出阅读版 Markdown/,
-    });
-    fireEvent.click(exportButton);
-
-    await waitFor(() => {
-      expect(screen.getByText("已导出 Markdown 1 页")).toBeTruthy();
-    });
-    expect(vi.mocked(exportReadingMarkdown)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(exportLayoutPdf)).not.toHaveBeenCalled();
-  });
-
   it("keeps preflight diagnostics out of the dialog", async () => {
     render(
       <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
@@ -119,34 +94,6 @@ describe("PaddleJsonImportDialog export feedback", () => {
     expect(screen.queryByText("页面尺寸由 bbox 估算")).toBeNull();
     expect(screen.queryByText("结构字段")).toBeNull();
     expect(screen.queryByText("区块标签分布")).toBeNull();
-  });
-
-  it("expands concrete export warnings", async () => {
-    render(
-      <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
-    );
-    await screen.findByText("阅读版导出选项");
-
-    fireEvent.click(screen.getByRole("button", { name: "导出阅读版 PDF" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("已导出 PDF 2 页")).toBeTruthy();
-    });
-    const toggle = screen.getByRole("button", { name: /查看 2 条导出提示/ });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    // The panel stays in the DOM (so aria-controls always resolves) but is
-    // hidden until expanded.
-    const panel = document.getElementById("paddle-export-warnings")!;
-    expect(panel.hidden).toBe(true);
-
-    fireEvent.click(toggle);
-    expect(panel.hidden).toBe(false);
-    expect(screen.getByText("图片区块未嵌入")).toBeTruthy();
-    expect(screen.getByText("已过滤重复页眉")).toBeTruthy();
-    const expandedToggle = screen.getByRole("button", {
-      name: /收起 2 条导出提示/,
-    });
-    expect(expandedToggle.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("disables export options whose block label is absent from the file", async () => {

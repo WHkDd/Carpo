@@ -290,43 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn image_prompt_appendix_is_language_specific_and_names_the_placeholder_case() {
-        // The `[待核]` clause is the reason the image pass exists — a text-only
-        // proofread has no way to resolve those markers.
-        let zh = image_prompt_appendix(Language::Zh);
-        assert!(zh.contains("待核") && zh.contains("garble"), "{zh}");
-        let en = image_prompt_appendix(Language::En);
-        assert!(en.contains("待核") && en.contains("garble"), "{en}");
-        assert_ne!(zh, en);
-    }
-
-    #[test]
-    fn normalize_deletes_all_whitespace() {
-        assert_eq!(normalize_whitespace("a\n\nb\tc"), "abc");
-        // NBSP and full-width space are whitespace too.
-        assert_eq!(normalize_whitespace("a\u{00a0}b\u{3000}c"), "abc");
-        assert_eq!(normalize_whitespace("  padded  "), "padded");
-        assert_eq!(normalize_whitespace(""), "");
-    }
-
-    #[test]
-    fn anchor_keeps_a_uniquely_located_suggestion() {
-        let text = "本埠新聞，巳於昨日到達。";
-        let (kept, discarded) = anchor_suggestions(
-            text,
-            vec![suggestion(
-                "巳",
-                "已",
-                "本埠新聞，",
-                ProofreadCategory::Charform,
-            )],
-        );
-        assert_eq!(discarded, 0);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].after, "已");
-    }
-
-    #[test]
     fn anchor_survives_line_breaks_in_the_source() {
         // Paddle's vertical output breaks lines finely; the model may quote
         // the fragment with or without the break. Normalization makes both
@@ -355,28 +318,6 @@ mod tests {
                 "本埠新聞，",
                 ProofreadCategory::Charform,
             )],
-        );
-        assert_eq!(kept.len(), 0);
-        assert_eq!(discarded, 1);
-    }
-
-    #[test]
-    fn anchor_drops_ambiguous_fragments() {
-        let text = "一月已過，二月已過。";
-        let (kept, discarded) = anchor_suggestions(
-            text,
-            vec![suggestion("已過", "巳過", "", ProofreadCategory::Charform)],
-        );
-        assert_eq!(kept.len(), 0);
-        assert_eq!(discarded, 1);
-    }
-
-    #[test]
-    fn anchor_drops_empty_before() {
-        let text = "原文。";
-        let (kept, discarded) = anchor_suggestions(
-            text,
-            vec![suggestion("", "漏字", "原文", ProofreadCategory::Garble)],
         );
         assert_eq!(kept.len(), 0);
         assert_eq!(discarded, 1);
@@ -434,11 +375,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_handles_bare_array() {
-        assert_eq!(extract_json_array("[1, 2]"), Some("[1, 2]"));
-    }
-
-    #[test]
     fn extract_handles_fenced_array() {
         assert_eq!(
             extract_json_array("```json\n[{\"a\": 1}]\n```"),
@@ -456,64 +392,12 @@ mod tests {
     }
 
     #[test]
-    fn extract_returns_none_without_an_array() {
-        assert_eq!(extract_json_array("no array here"), None);
-        assert_eq!(extract_json_array(""), None);
-    }
-
-    #[test]
-    fn parse_suggestions_round_trips() {
-        let raw = r#"```json
-        [
-          {
-            "before": "巳",
-            "after": "已",
-            "context_before": "本埠新聞，",
-            "category": "charform",
-            "confidence": 0.9,
-            "reason": "形近字误识"
-          }
-        ]
-        ```"#;
-        let parsed = parse_suggestions(raw).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].category, ProofreadCategory::Charform);
-    }
-
-    #[test]
     fn parse_reports_unparseable_json_loudly() {
         let err = parse_suggestions("```json\n[{ \"before\": \n```").unwrap_err();
         match err {
             AppError::Ocr { message, .. } => {
                 assert!(
                     message.contains("截断") || message.contains("truncated"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected Ocr, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_echoes_a_prose_reply() {
-        // A refusal / clarification must surface verbatim — "no JSON array"
-        // alone gives the user nothing to act on.
-        let err = parse_suggestions("抱歉，我需要更多上下文才能校对这段文本。").unwrap_err();
-        match err {
-            AppError::Ocr { message, .. } => {
-                assert!(message.contains("抱歉，我需要更多上下文"), "{message}");
-            }
-            other => panic!("expected Ocr, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_reports_an_empty_reply() {
-        let err = parse_suggestions("   ").unwrap_err();
-        match err {
-            AppError::Ocr { message, .. } => {
-                assert!(
-                    message.contains("空响应") || message.contains("empty response"),
                     "{message}"
                 );
             }

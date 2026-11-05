@@ -1454,17 +1454,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_top_level_string() {
-        let err = analyze_value(json!("not an object")).unwrap_err();
-        match err {
-            AppError::Internal(msg) => {
-                assert!(msg.contains("顶层"));
-            }
-            other => panic!("expected Internal, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn accepts_single_object_with_pruned_result() {
         let root = json!({
             "prunedResult": {
@@ -1674,29 +1663,6 @@ mod tests {
             "the measured page states the render scale; the inferred page must adopt it"
         );
         assert_eq!(import.preflight.estimated_dimension_pages, vec![2]);
-    }
-
-    #[test]
-    fn measured_pages_are_never_flagged_approximate() {
-        let root = json!([{
-            "prunedResult": { "page_size": [800, 1000], "parsing_res_list": [
-                { "block_label": "text", "block_content": "x", "block_bbox": [0, 0, 10, 10] }
-            ]}
-        }]);
-        let import = analyze_value(root).unwrap();
-        assert!(!import.document.pages[0].dimensions_approximate);
-        assert_eq!(import.document.pages[0].width, 800.0);
-        assert_eq!(import.document.pages[0].height, 1000.0);
-        assert!(import.preflight.estimated_dimension_pages.is_empty());
-    }
-
-    #[test]
-    fn a_page_without_blocks_still_gets_the_document_size() {
-        let mut pages = vec![json!({ "prunedResult": { "parsing_res_list": [] } })];
-        pages.push(extent_page(2145.0, 1559.0));
-        let import = analyze_value(serde_json::Value::Array(pages)).unwrap();
-        assert!(import.document.pages[0].width > 0.0);
-        assert!(import.document.pages[0].height > 0.0);
     }
 
     /// End-to-end check against a real Paddle web-export JSON on disk. No

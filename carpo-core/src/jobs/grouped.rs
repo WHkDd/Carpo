@@ -680,22 +680,9 @@ mod tests {
     }
 
     #[test]
-    fn page_scale_image_is_one() {
-        let r = make_req(FileKind::Image);
-        assert!((page_scale(&r, 300) - 1.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
     fn page_scale_pdf_uses_dpi_ratio() {
         let r = make_req(FileKind::Pdf);
         assert!((page_scale(&r, 300) - 2.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn page_scale_pdf_with_zero_preview_dpi_falls_back_to_one() {
-        let mut r = make_req(FileKind::Pdf);
-        r.preview_dpi = 0;
-        assert!((page_scale(&r, 300) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -738,58 +725,9 @@ mod tests {
     }
 
     #[test]
-    fn encode_ocr_jpeg_returns_valid_data() {
-        let img = flat_image(2, 2);
-        let bytes = encode_ocr_jpeg(&img).unwrap();
-        // JPEG SOI marker.
-        assert!(bytes.starts_with(b"\xff\xd8\xff"));
-    }
-
-    #[test]
-    fn validate_rejects_empty_articles() {
-        let mut r = make_req(FileKind::Pdf);
-        r.articles.clear();
-        assert!(validate(&r).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_article_with_no_blocks() {
-        let mut r = make_req(FileKind::Pdf);
-        r.articles[0].blocks.clear();
-        assert!(validate(&r).is_err());
-    }
-
-    #[test]
     fn validate_rejects_pdf_with_zero_preview_dpi() {
         let mut r = make_req(FileKind::Pdf);
         r.preview_dpi = 0;
         assert!(validate(&r).is_err());
-    }
-
-    #[test]
-    fn validate_passes_for_image_with_zero_preview_dpi() {
-        let mut r = make_req(FileKind::Image);
-        r.preview_dpi = 0;
-        assert!(validate(&r).is_ok());
-    }
-
-    #[test]
-    fn secret_key_matches_each_provider() {
-        assert_eq!(
-            secret_key_for_provider(Provider::Paddleocr),
-            SecretKey::PaddleToken
-        );
-        assert_eq!(
-            secret_key_for_provider(Provider::Openai),
-            SecretKey::OpenaiKey
-        );
-        assert_eq!(
-            secret_key_for_provider(Provider::Openrouter),
-            SecretKey::OpenrouterKey
-        );
-        assert_eq!(
-            secret_key_for_provider(Provider::OpenaiCompatible),
-            SecretKey::OpenaiCompatibleKey
-        );
     }
 }

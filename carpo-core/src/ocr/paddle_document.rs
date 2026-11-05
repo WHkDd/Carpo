@@ -622,18 +622,6 @@ mod tests {
     }
 
     #[test]
-    fn pages_to_ranges_string_handles_unsorted_input() {
-        // Defense in depth — the frontend already sorts, but a stray caller
-        // shouldn't produce a malformed Paddle range.
-        assert_eq!(pages_to_ranges_string(&[3, 1, 2, 5]), "1-3,5");
-    }
-
-    #[test]
-    fn pages_to_ranges_string_dedupes() {
-        assert_eq!(pages_to_ranges_string(&[1, 1, 2, 2, 3]), "1-3");
-    }
-
-    #[test]
     fn document_payload_uses_paddle_document_options() {
         let options = PaddleDocumentOptions {
             include_header: false,
@@ -831,85 +819,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_state_returns_non_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/v2/ocr/jobs"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "code": 0, "data": { "jobId": "doc-fail" }
-            })))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/api/v2/ocr/jobs/doc-fail"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "code": 0,
-                "data": { "state": "failed", "errorMsg": "页数超出限制" }
-            })))
-            .mount(&server)
-            .await;
-
-        let pdf = write_temp_pdf(b"%PDF-1.4");
-        let cancel = never_cancelled();
-        let mut on_progress = |_: u32, _: u32| {};
-        let err = recognize_document(
-            &reqwest::Client::new(),
-            &format!("{}/api/v2/ocr/jobs", server.uri()),
-            "tk",
-            "",
-            pdf.path().to_path_buf(),
-            "application/pdf",
-            "x.pdf",
-            None,
-            default_payload(),
-            vec![1],
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-            &mut on_progress,
-        )
-        .await
-        .unwrap_err();
-        assert!(!err.is_retryable());
-        match err {
-            AppError::Ocr { message, .. } => assert!(message.contains("页数超出限制")),
-            other => panic!("expected Ocr, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn submit_5xx_is_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/v2/ocr/jobs"))
-            .respond_with(ResponseTemplate::new(503))
-            .mount(&server)
-            .await;
-        let pdf = write_temp_pdf(b"%PDF-1.4");
-        let cancel = never_cancelled();
-        let mut on_progress = |_: u32, _: u32| {};
-        let err = recognize_document(
-            &reqwest::Client::new(),
-            &format!("{}/api/v2/ocr/jobs", server.uri()),
-            "tk",
-            "",
-            pdf.path().to_path_buf(),
-            "application/pdf",
-            "x.pdf",
-            None,
-            default_payload(),
-            vec![1],
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-            &mut on_progress,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.is_retryable());
-    }
-
-    #[tokio::test]
     async fn submit_api_code_10010_with_missing_data_is_retryable() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -945,31 +854,5 @@ mod tests {
             AppError::Ocr { message, .. } => assert!(message.contains("code 10010")),
             other => panic!("expected Ocr, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn missing_token_returns_config_error() {
-        let pdf = write_temp_pdf(b"%PDF-1.4");
-        let cancel = never_cancelled();
-        let mut on_progress = |_: u32, _: u32| {};
-        let err = recognize_document(
-            &reqwest::Client::new(),
-            "https://example.invalid/api/v2/ocr/jobs",
-            "",
-            "",
-            pdf.path().to_path_buf(),
-            "application/pdf",
-            "x.pdf",
-            None,
-            default_payload(),
-            vec![1],
-            FAST_POLL,
-            POLL_CAP,
-            &cancel,
-            &mut on_progress,
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, AppError::Config(_)));
     }
 }

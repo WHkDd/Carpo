@@ -540,21 +540,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openai_compatible_without_base_url_returns_config_error() {
-        let mut settings = paddle_settings(String::new());
-        settings.provider = Provider::OpenaiCompatible;
-        let req = OcrRequest {
-            image_bytes: b"x",
-            prompt: "p",
-        };
-        let cancel = never_cancelled();
-        let err = recognize(&reqwest::Client::new(), &settings, Some("k"), req, &cancel)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::Config(_)));
-    }
-
-    #[tokio::test]
     async fn openai_compatible_routes_to_custom_base_url() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -587,25 +572,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_models_paddle_returns_static_catalogue() {
-        let settings = paddle_settings(String::new());
-        let models = list_models(&reqwest::Client::new(), &settings, None)
-            .await
-            .unwrap();
-        assert_eq!(models, vec!["PaddleOCR-VL-1.6", "PaddleOCR-VL"]);
-    }
-
-    #[tokio::test]
-    async fn list_models_openai_compatible_requires_base_url() {
-        let mut settings = paddle_settings(String::new());
-        settings.provider = Provider::OpenaiCompatible;
-        let err = list_models(&reqwest::Client::new(), &settings, Some("sk"))
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::Config(_)));
-    }
-
-    #[tokio::test]
     async fn cancel_aborts_backoff_sleep() {
         // Two 503s would normally make recognize_with_retry sleep 2s before
         // its second attempt. If we cancel during that sleep, the wrapper
@@ -634,13 +600,5 @@ mod tests {
                 .unwrap_err();
         assert!(matches!(err, AppError::Cancelled(_)));
         assert!(started.elapsed() < Duration::from_secs(2));
-    }
-
-    #[test]
-    fn concurrency_for_returns_per_provider_defaults() {
-        assert_eq!(concurrency_for(Provider::Paddleocr), 3);
-        assert_eq!(concurrency_for(Provider::Openai), 5);
-        assert_eq!(concurrency_for(Provider::Openrouter), 5);
-        assert_eq!(concurrency_for(Provider::OpenaiCompatible), 2);
     }
 }

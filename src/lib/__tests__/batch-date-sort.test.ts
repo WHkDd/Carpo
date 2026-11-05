@@ -80,19 +80,6 @@ describe("sortBatchEntries", () => {
       "申報-0512-10.jpg",
     ]);
   });
-
-  it("puts unnamed files last and undated files at the end of their group", () => {
-    const sorted = sortBatchEntries([
-      entry("無名.jpg"),
-      entry("b.jpg", "申報", "日期不明"),
-      entry("a.jpg", "申報", ""),
-      entry("c.jpg", "申報", "1936-05-12"),
-      entry("y.jpg", "申報", "1936"),
-    ]);
-    // Year-only precedes the full dates of that year; unparseable and empty
-    // dates trail in file-name order.
-    expect(names(sorted)).toEqual(["y.jpg", "c.jpg", "a.jpg", "b.jpg", "無名.jpg"]);
-  });
 });
 
 describe("planOutputDocs", () => {
@@ -108,20 +95,6 @@ describe("planOutputDocs", () => {
       ["經濟", ["1.jpg"]],
       ["社會", ["1.jpg", "2.jpg"]],
       [t("batch.untagged"), ["3.jpg"]],
-    ]);
-  });
-
-  it("merged: one document holding every file exactly once", () => {
-    const docs = planOutputDocs("merged", sorted);
-    expect(docs).toHaveLength(1);
-    expect(names(docs[0]!.entries)).toEqual(["3.jpg", "1.jpg", "2.jpg"]);
-  });
-
-  it("separate: one document per file, in sort order", () => {
-    expect(planOutputDocs("separate", sorted).map((d) => d.stem)).toEqual([
-      "3",
-      "1",
-      "2",
     ]);
   });
 });

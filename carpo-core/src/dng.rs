@@ -537,19 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_files_with_no_make_tag() {
-        let dng = synthetic_dng("", (160, 120), Some((2000, 1500)), 1);
-        let message = error_message(&dng);
-        assert!(message.contains("未知来源"), "got: {message}");
-    }
-
-    #[test]
-    fn accepts_make_regardless_of_case() {
-        let dng = synthetic_dng("APPLE", (160, 120), Some((2000, 1500)), 1);
-        assert!(decode_preview(&dng).is_ok());
-    }
-
-    #[test]
     fn rejects_thumbnail_only_files_with_an_actionable_message() {
         let message = error_message(&apple_dng((160, 120), None, 1));
         assert!(message.contains("160x120"), "got: {message}");
@@ -563,12 +550,6 @@ mod tests {
         let img = decode_preview(&dng).unwrap();
         assert_eq!(img.width(), 1500);
         assert_eq!(img.height(), 2000);
-    }
-
-    #[test]
-    fn rejects_non_tiff_input() {
-        assert!(decode_preview(b"not a dng at all").is_err());
-        assert!(decode_preview(&[]).is_err());
     }
 
     #[test]

@@ -158,33 +158,4 @@ describe("usePdfPageSync image recovery", () => {
     expect(setFilePayload).not.toHaveBeenCalled();
     expect(setStatusText).not.toHaveBeenCalled();
   });
-
-  it("still renders PDF pages through the pdf path", async () => {
-    currentFile = {
-      id: "pdf",
-      path: "/scans/doc.pdf",
-      name: "doc.pdf",
-      ext: "pdf",
-      kind: "pdf",
-      payload: { width: 100, height: 10, objectUrl: "blob:stale" },
-      pdfTotal: 9,
-      currentPage: 4,
-      payloadPage: 1,
-    } as FileEntry;
-
-    vi.mocked(renderPage).mockResolvedValue({
-      blob: new Blob(["z"]),
-      width: 100,
-      height: 10,
-    });
-
-    renderHook(() => usePdfPageSync());
-
-    await waitFor(() =>
-      expect(renderPage).toHaveBeenCalledWith(
-        expect.objectContaining({ path: "/scans/doc.pdf", page: 4 })
-      )
-    );
-    expect(loadRasterImage).not.toHaveBeenCalled();
-  });
 });

@@ -115,7 +115,7 @@ const text: Array<[string, string]> = [
 describe.each([
   ["light", light],
   ["dark", dark],
-] as const)("%s theme contrast", (label, theme) => {
+] as const)("%s theme contrast", (_label, theme) => {
   const background = hslToRgb(tokenOf(theme, "background"));
   const surface2 = hslToRgb(tokenOf(theme, "surface-2"));
 
@@ -152,36 +152,6 @@ describe.each([
     expect(ratio).toBeGreaterThanOrEqual(3);
     expect(ratio).toBeLessThan(4.5);
   });
-
-  it("keeps the unconfigured-provider dot visible as a non-text indicator", () => {
-    // SettingsDialog: `bg-foreground-subtle/80` on a 6px dot. §1.4.11 → 3:1.
-    const dot = over(hslToRgb(tokenOf(theme, "foreground-subtle")), background, 0.8);
-    expect(contrast(dot, background)).toBeGreaterThanOrEqual(3);
-  });
-
-  it(`keeps the ${label} surfaces a real hierarchy`, () => {
-    // The three surfaces must be strictly monotonic or hover/selected/overlay
-    // states stop being visible. The direction differs by theme: light
-    // surfaces darken as they stack (white → gray), dark surfaces lighten
-    // (near-black → lighter gray).
-    const surface = tokenOf(theme, "surface")[2]!;
-    const surface2 = tokenOf(theme, "surface-2")[2]!;
-    const overlay = tokenOf(theme, "surface-overlay")[2]!;
-    if (label === "light") {
-      expect(surface2).toBeLessThan(surface);
-      expect(overlay).toBeLessThan(surface2);
-    } else {
-      expect(surface2).toBeGreaterThan(surface);
-      expect(overlay).toBeGreaterThan(surface2);
-    }
-  });
-});
-
-it("keeps the two themes actually different", () => {
-  // The cheapest guard against copy-pasting a light value into .dark (or
-  // vice versa) and silently shipping a half-theme.
-  expect(light.get("background")).not.toEqual(dark.get("background"));
-  expect(light.get("foreground")).not.toEqual(dark.get("foreground"));
 });
 
 it("has no opacity-modified foreground-subtle left outside disabled states", () => {

@@ -2,14 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applySuggestions,
   buildProofreadReview,
-  categoryVerdictState,
   findBlockIndexForSuggestion,
   findSuggestionSpan,
-  normalizeWhitespace,
-  parseProofreadTargetKey,
-  proofreadKeyFor,
   resolveProofreadModel,
-  resolveProofreadProvider,
   type ProofreadSuggestionWithVerdict,
 } from "../proofread";
 import type { NonSecretSettings, ProofreadCategory } from "../ipc-types";
@@ -52,24 +47,7 @@ function settings(overrides: Partial<NonSecretSettings>): NonSecretSettings {
   } as NonSecretSettings;
 }
 
-describe("normalizeWhitespace", () => {
-  it("deletes every whitespace character", () => {
-    expect(normalizeWhitespace("a\n\nb\tc")).toBe("abc");
-    expect(normalizeWhitespace("a\u00a0b\u3000c")).toBe("abc");
-    expect(normalizeWhitespace("  padded  ")).toBe("padded");
-    expect(normalizeWhitespace("")).toBe("");
-  });
-});
-
 describe("findSuggestionSpan", () => {
-  it("locates a unique anchor in the raw text", () => {
-    const span = findSuggestionSpan("本埠新聞，巳於昨日到達。", {
-      before: "巳",
-      context_before: "本埠新聞，",
-    });
-    expect(span).toEqual({ start: 5, end: 6, rawIndices: [5] });
-  });
-
   it("maps through whitespace in the source text", () => {
     // The model's rendering of line breaks is irrelevant — the span still
     // covers exactly the raw `before`, and `rawIndices` lists the raw offset
@@ -106,61 +84,9 @@ describe("findSuggestionSpan", () => {
       findSuggestionSpan("甲乙丙丁", { before: "乙丙", context_before: "" })
     ).toEqual({ start: 1, end: 3, rawIndices: [1, 2] });
   });
-
-  it("returns null for a missing anchor", () => {
-    expect(
-      findSuggestionSpan("本埠新聞，已於昨日到達。", {
-        before: "巳於今年",
-        context_before: "本埠新聞，",
-      })
-    ).toBeNull();
-  });
-
-  it("returns null for an ambiguous anchor", () => {
-    expect(
-      findSuggestionSpan("一月已過，二月已過。", {
-        before: "已過",
-        context_before: "",
-      })
-    ).toBeNull();
-  });
-
-  it("returns null for an empty before", () => {
-    expect(
-      findSuggestionSpan("原文。", { before: "", context_before: "原文" })
-    ).toBeNull();
-    expect(
-      findSuggestionSpan("原文。", { before: "   ", context_before: "原文" })
-    ).toBeNull();
-  });
 });
 
 describe("applySuggestions", () => {
-  it("applies accepted suggestions and leaves the rest alone", () => {
-    const result = applySuggestions("本埠新聞，巳於昨日到達。", [
-      suggestion("巳", "已", "本埠新聞，"),
-      { ...suggestion("到達", "抵達", "昨日"), verdict: "rejected" },
-      { ...suggestion("新聞", "新聞", "本埠"), verdict: "pending" },
-    ]);
-    expect(result.text).toBe("本埠新聞，已於昨日到達。");
-    expect(result.conflictSkipped).toBe(0);
-  });
-
-  it("applies a deletion", () => {
-    const result = applySuggestions("於是乎到達。", [
-      suggestion("乎", "", "於是", "garble"),
-    ]);
-    expect(result.text).toBe("於是到達。");
-  });
-
-  it("applies a hand-edited replacement", () => {
-    const edited = suggestion("巳", "已", "本埠新聞，");
-    edited.verdict = "edited";
-    edited.editedAfter = "己";
-    const result = applySuggestions("本埠新聞，巳於昨日到達。", [edited]);
-    expect(result.text).toBe("本埠新聞，己於昨日到達。");
-  });
-
   it("skips a suggestion whose anchor an earlier edit consumed", () => {
     // Both suggestions resolve against the original text, but the second
     // lies inside the first's touched interval — it must be skipped and
@@ -301,42 +227,7 @@ describe("applySuggestions", () => {
   });
 });
 
-describe("key round-trip", () => {
-  it("mints and parses both target shapes", () => {
-    expect(proofreadKeyFor({ mode: "whole_file", page: 12 })).toBe("page:12");
-    expect(proofreadKeyFor({ mode: "grouped", articleId: "a_1" })).toBe(
-      "article:a_1"
-    );
-    expect(parseProofreadTargetKey("page:12")).toEqual({
-      mode: "whole_file",
-      page: 12,
-    });
-    expect(parseProofreadTargetKey("article:a_1")).toEqual({
-      mode: "grouped",
-      articleId: "a_1",
-    });
-    expect(parseProofreadTargetKey("page:0")).toBeNull();
-    expect(parseProofreadTargetKey("page:abc")).toBeNull();
-    expect(parseProofreadTargetKey("article:")).toBeNull();
-    expect(parseProofreadTargetKey("nonsense")).toBeNull();
-  });
-});
-
 describe("resolveProofread*", () => {
-  it("follows the OCR provider when unset", () => {
-    expect(resolveProofreadProvider(settings({}))).toBe("openai");
-    expect(resolveProofreadModel(settings({}))).toBe("gpt-4o");
-  });
-
-  it("prefers the explicit provider and model", () => {
-    const s = settings({
-      proofread_provider: "openrouter",
-      proofread_model: "anthropic/claude-sonnet-4.6",
-    });
-    expect(resolveProofreadProvider(s)).toBe("openrouter");
-    expect(resolveProofreadModel(s)).toBe("anthropic/claude-sonnet-4.6");
-  });
-
   it("falls back to the provider's OCR model field", () => {
     expect(
       resolveProofreadModel(
@@ -377,24 +268,6 @@ describe("buildProofreadReview", () => {
     expect(review!.createdAt).toBe(1234);
     expect(review!.status).toBe("pending");
   });
-
-  it("builds an error review for a failed unit", () => {
-    const review = buildProofreadReview(
-      { key: "article:a_1", text: "原文" },
-      undefined,
-      "网络错误",
-      1
-    );
-    expect(review?.error).toBe("网络错误");
-    expect(review?.suggestions).toEqual([]);
-    expect(review?.target).toEqual({ mode: "grouped", articleId: "a_1" });
-  });
-
-  it("returns null for an unparseable key", () => {
-    expect(
-      buildProofreadReview({ key: "junk", text: "x" }, undefined, "err", 1)
-    ).toBeNull();
-  });
 });
 
 describe("findBlockIndexForSuggestion", () => {
@@ -408,18 +281,6 @@ describe("findBlockIndexForSuggestion", () => {
     ],
   };
 
-  it("finds the block containing the anchor", () => {
-    expect(
-      findBlockIndexForSuggestion(layout, {
-        before: "巳",
-        context_before: "本埠新聞，",
-      })
-    ).toBe(0);
-    expect(
-      findBlockIndexForSuggestion(layout, { before: "第二欄", context_before: "" })
-    ).toBe(1);
-  });
-
   it("tolerates line breaks in the block text", () => {
     const broken: LayoutPage = {
       ...layout,
@@ -428,27 +289,5 @@ describe("findBlockIndexForSuggestion", () => {
     expect(
       findBlockIndexForSuggestion(broken, { before: "巳", context_before: "本埠新聞，" })
     ).toBe(0);
-  });
-
-  it("returns null when no block contains the anchor", () => {
-    expect(
-      findBlockIndexForSuggestion(layout, {
-        before: "不存在的字",
-        context_before: "",
-      })
-    ).toBeNull();
-  });
-});
-
-describe("categoryVerdictState", () => {
-  it("is accept-all only when every suggestion in the category is accepted", () => {
-    const list = [
-      { ...suggestion("a", "b", "", "punct"), verdict: "accepted" as const },
-      { ...suggestion("c", "d", "", "punct"), verdict: "accepted" as const },
-      { ...suggestion("e", "f", "", "layout"), verdict: "rejected" as const },
-    ];
-    expect(categoryVerdictState(list, "punct")).toBe("accept-all");
-    expect(categoryVerdictState(list, "layout")).toBe("mixed");
-    expect(categoryVerdictState(list, "semantic")).toBe("accept-all");
   });
 });

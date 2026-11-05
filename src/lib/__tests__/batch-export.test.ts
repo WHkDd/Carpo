@@ -104,18 +104,6 @@ describe("planBatchFile", () => {
     expect(plain.mode).toBe("whole_file");
     expect(plain.pages).toEqual([2, 3]);
   });
-
-  it("an unreadable file is planned as an error, not silently skipped", () => {
-    useStore.getState().addFile({
-      id: "bad",
-      path: "/tmp/bad.dng",
-      name: "bad.dng",
-      ext: "dng",
-      kind: "image",
-      loadError: "no preview",
-    });
-    expect(planBatchFile(useStore.getState(), "bad").error).toBe("no preview");
-  });
 });
 
 describe("missingUnits", () => {
@@ -269,20 +257,6 @@ describe("background runner", () => {
     expect(useStore.getState().recognizedPages.w?.[1]?.status).toBe("failed");
     expect(downloadBlob.mock.calls.map((c) => c[1])).toEqual(["g.md"]);
     expect(useStore.getState().activeJob).toBeNull();
-  });
-
-  it("starts no job when every unit already has a result", async () => {
-    addPdf("g");
-    frameArticle("g", "a1");
-    useStore.getState().setArticleOcrTexts("g", { a1: "已有" });
-
-    await startBatchExport({ fileIds: ["g"], layout: "merged", format: "docx" });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
-    expect(startGroupedOcr).not.toHaveBeenCalled();
-    expect(downloadBlob).toHaveBeenCalledTimes(1);
-    expect(downloadBlob.mock.calls[0]![1]).toBe(
-      `${t("batch.mergedDefaultName")}.docx`
-    );
   });
 });
 

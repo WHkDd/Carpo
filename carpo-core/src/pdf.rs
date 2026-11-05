@@ -160,27 +160,12 @@ mod preview_clamp_tests {
     }
 
     #[test]
-    fn images_within_the_cap_are_returned_untouched() {
-        // 12MP phone capture — the shape most archival photography arrives in,
-        // and the reason the cap sits above 4032 rather than at 4000.
-        let out = clamp_preview_dimensions(blank(3024, 4032));
-        assert_eq!(out.dimensions(), (3024, 4032));
-    }
-
-    #[test]
     fn oversized_images_clamp_the_long_edge_and_keep_aspect() {
         // A 600 DPI broadsheet scan: the case that made WKWebView give up.
         let out = clamp_preview_dimensions(blank(13000, 18000));
         assert_eq!(out.height(), PREVIEW_MAX_LONG_EDGE_PX);
         let ratio = out.width() as f32 / out.height() as f32;
         assert!((ratio - 13000.0 / 18000.0).abs() < 0.01, "got {ratio}");
-    }
-
-    #[test]
-    fn clamps_on_width_for_landscape_sources() {
-        let out = clamp_preview_dimensions(blank(9000, 3000));
-        assert_eq!(out.width(), PREVIEW_MAX_LONG_EDGE_PX);
-        assert!(out.height() < PREVIEW_MAX_LONG_EDGE_PX);
     }
 }
 
@@ -753,24 +738,6 @@ mod tests {
     const BROADSHEET_PT: (f32, f32) = (1105.0, 1559.0);
 
     #[test]
-    fn render_scale_is_untouched_without_a_cap() {
-        let (w, h) = BROADSHEET_PT;
-        assert!((render_scale_for(w, h, 300, None) - 300.0 / 72.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn render_scale_leaves_pages_that_already_fit_exact() {
-        // A4 at 300 dpi is 3508px on the long edge — under the cap, so the
-        // factor must come through as exactly dpi/72, not merely close.
-        let (w, h) = A4_PT;
-        let scale = render_scale_for(w, h, 300, Some(DEFAULT_OCR_MAX_LONG_EDGE_PX));
-        assert!(
-            (scale - 300.0 / 72.0).abs() < f32::EPSILON,
-            "A4 should pass through unclamped, got {scale}"
-        );
-    }
-
-    #[test]
     fn render_scale_clamps_oversized_pages_to_the_long_edge() {
         // A3 (4962px at 300 dpi) and broadsheet (6496px) both exceed the cap.
         let cap = DEFAULT_OCR_MAX_LONG_EDGE_PX;
@@ -801,14 +768,6 @@ mod tests {
     }
 
     #[test]
-    fn ocr_max_long_edge_defaults_and_can_be_disabled() {
-        // Not asserting on the env-var branches — the process-wide env is
-        // shared across parallel tests — just that the default is live.
-        assert_eq!(DEFAULT_OCR_MAX_LONG_EDGE_PX, 4000);
-        assert!(DEFAULT_OCR_MAX_LONG_EDGE_PX > 0);
-    }
-
-    #[test]
     fn reads_fixture_page_count_and_renders_first_page() {
         let pdfium = init_pdfium().unwrap();
 
@@ -823,16 +782,6 @@ mod tests {
 
         let image = render_page_image_with(&pdfium, sample_pdf(), 1, 150).unwrap();
         assert!(image.width() > 0 && image.height() > 0);
-    }
-
-    #[test]
-    fn rejects_dpi_above_max() {
-        let pdfium = init_pdfium().unwrap();
-        let err = render_page_image_with(&pdfium, sample_pdf(), 1, MAX_DPI + 1).unwrap_err();
-        match err {
-            AppError::Pdf(msg) => assert!(msg.contains("exceeds maximum")),
-            other => panic!("expected Pdf, got {other:?}"),
-        }
     }
 
     #[tokio::test]

@@ -24,16 +24,26 @@ export interface QueueSlice {
     payload: RenderedPagePayload,
     payloadPage?: number
   ) => void;
+  /** Points an image entry at a rotated copy of itself. Called as soon as the
+   *  backend has committed the rotation — before the new preview loads — so
+   *  no window exists where the new source sits beside old-frame state.
+   *  Blocks, articles and every OCR / proofread result are dropped: their
+   *  coordinates belong to the old orientation. Newspaper name, date and tags
+   *  survive — they describe the document, not its pixels. The payload is
+   *  cleared too; `usePdfPageSync` reloads it from the new path. */
+  replaceRotatedImage: (id: string, path: string) => void;
 }
 
+type CombinedState = QueueSlice &
+  UiSlice &
+  FileViewSlice &
+  PageStateSlice &
+  SelectionSlice &
+  SettingsSlice &
+  JobSlice;
+
 export const createQueueSlice: StateCreator<
-  QueueSlice &
-    UiSlice &
-    FileViewSlice &
-    PageStateSlice &
-    SelectionSlice &
-    SettingsSlice &
-    JobSlice,
+  CombinedState,
   [["zustand/immer", never]],
   [],
   QueueSlice
@@ -62,26 +72,11 @@ export const createQueueSlice: StateCreator<
       state.files.splice(index, 1);
       delete state.documentStates[id];
       delete state.fileViews[id];
-      delete state.selectionOrders[id];
-      delete state.documentResults[id];
-      delete state.articleOcrTexts[id];
-      delete state.articleOcrRegions[id];
-      delete state.pageOcrTexts[id];
-      delete state.recognizedPages[id];
-      delete state.proofreadReviews[id];
       delete state.wholeFileRange[id];
-      delete state.editingBlock[id];
-      delete state.editingLayoutBlock[id];
-      delete state.focusedRegion[id];
+      clearFileWork(state, id);
       // If we were viewing this file's drawer, drop the article scope so the
       // drawer (now empty) doesn't keep dangling articleId state.
       state.selectedArticleIds = [];
-      const pagePrefix = `${id}::`;
-      Object.keys(state.pageStates).forEach((key) => {
-        if (key.startsWith(pagePrefix)) {
-          delete state.pageStates[key];
-        }
-      });
       if (state.currentFileId !== id) return;
 
       const replacement = state.files[index] ?? state.files[index - 1] ?? null;
@@ -141,7 +136,45 @@ export const createQueueSlice: StateCreator<
         }
       }
     }),
+  replaceRotatedImage: (id, path) =>
+    set((state) => {
+      const file = state.files.find((entry) => entry.id === id);
+      if (!file || file.kind !== "image") return;
+      file.path = path;
+      file.payload = undefined;
+      clearFileWork(state, id);
+      const doc = state.documentStates[id];
+      if (doc) doc.articles = [];
+      // The rotation may finish after the user moved to another file; only
+      // drop the article scope if it belongs to this one.
+      if (state.currentFileId === id) state.selectedArticleIds = [];
+      // No stored view + dimensions arriving from zero = the canvas seeds a
+      // fresh fit, square images included.
+      delete state.fileViews[id];
+    }),
 });
+
+/** Drops everything derived from a file's pixels: blocks, selection and
+ *  editing refs, and every OCR / proofread result. Shared by removal and
+ *  rotation so a new per-file map only has to be added in one place. */
+function clearFileWork(state: CombinedState, id: string): void {
+  delete state.selectionOrders[id];
+  delete state.documentResults[id];
+  delete state.articleOcrTexts[id];
+  delete state.articleOcrRegions[id];
+  delete state.pageOcrTexts[id];
+  delete state.recognizedPages[id];
+  delete state.proofreadReviews[id];
+  delete state.editingBlock[id];
+  delete state.editingLayoutBlock[id];
+  delete state.focusedRegion[id];
+  const pagePrefix = `${id}::`;
+  Object.keys(state.pageStates).forEach((key) => {
+    if (key.startsWith(pagePrefix)) {
+      delete state.pageStates[key];
+    }
+  });
+}
 
 function normalizeFileEntry(entry: FileEntry): FileEntry {
   const pdfTotal = normalizeTotal(entry.pdfTotal ?? 1);

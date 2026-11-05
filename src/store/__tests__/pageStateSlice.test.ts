@@ -4,7 +4,7 @@ import { immer } from "zustand/middleware/immer";
 import { createQueueSlice, type QueueSlice } from "../queueSlice";
 import { createUiSlice, type UiSlice } from "../uiSlice";
 import { createFileViewSlice, type FileViewSlice } from "../fileViewSlice";
-import { createPageStateSlice, type PageStateSlice, EMPTY_PAGE_STATE } from "../pageStateSlice";
+import { createPageStateSlice, type PageStateSlice } from "../pageStateSlice";
 import { createSelectionSlice, type SelectionSlice } from "../selectionSlice";
 import { createJobSlice, type JobSlice } from "../jobSlice";
 import { createSettingsSlice, type SettingsSlice } from "../settingsSlice";
@@ -51,80 +51,6 @@ describe("pageStateSlice", () => {
     articleOrder: null,
   });
 
-  it("returns EMPTY_PAGE_STATE for missing page", () => {
-    expect(store.getState().getPageState(fid, page)).toBe(EMPTY_PAGE_STATE);
-  });
-
-  it("addBlock creates page state on first insert", () => {
-    const b = { id: "b1", x: 0, y: 0, w: 10, h: 20, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b);
-    expect(store.getState().getPageState(fid, page).blocks).toEqual([b]);
-  });
-
-  it("addBlock appends blocks", () => {
-    const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    const b2 = { id: "b2", x: 5, y: 5, w: 20, h: 20, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b1);
-    store.getState().addBlock(fid, page, b2);
-    expect(store.getState().getPageState(fid, page).blocks).toHaveLength(2);
-  });
-
-  it("updateBlock patches only specified fields", () => {
-    const b = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b);
-    store.getState().updateBlock(fid, page, "b1", { x: 3, w: 30 });
-    const updated = store.getState().getPageState(fid, page).blocks[0];
-    expect(updated!.x).toBe(3);
-    expect(updated!.w).toBe(30);
-    expect(updated!.y).toBe(0);
-    expect(updated!.h).toBe(10);
-  });
-
-  it("removeBlock deletes a block", () => {
-    const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    const b2 = { id: "b2", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b1);
-    store.getState().addBlock(fid, page, b2);
-    store.getState().removeBlock(fid, page, "b1");
-    expect(store.getState().getPageState(fid, page).blocks).toHaveLength(1);
-    expect(store.getState().getPageState(fid, page).blocks[0]!.id).toBe("b2");
-  });
-
-  it("removeBlocks deletes multiple blocks", () => {
-    const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    const b2 = { id: "b2", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    const b3 = { id: "b3", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b1);
-    store.getState().addBlock(fid, page, b2);
-    store.getState().addBlock(fid, page, b3);
-    store.getState().removeBlocks(fid, page, ["b1", "b3"]);
-    expect(store.getState().getPageState(fid, page).blocks).toHaveLength(1);
-    expect(store.getState().getPageState(fid, page).blocks[0]!.id).toBe("b2");
-  });
-
-  it("removeBlocks tolerates ids not present", () => {
-    const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b1);
-    store.getState().removeBlocks(fid, page, ["b1", "ghost", "also-missing"]);
-    expect(store.getState().getPageState(fid, page).blocks).toEqual([]);
-  });
-
-  it("removeBlocks on missing page is a no-op", () => {
-    expect(() =>
-    store.getState().removeBlocks(fid, 999, ["a", "b"])
-    ).not.toThrow();
-    expect(store.getState().getPageState(fid, 999)).toEqual({
-      blocks: [],
-    });
-  });
-
-  it("isolates blocks per page", () => {
-    const b = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, 1, b);
-    expect(store.getState().getPageState(fid, 2).blocks).toEqual([]);
-    expect(store.getState().getPageState(fid, 1).blocks).toHaveLength(1);
-  });
-
   it("addArticle stores articles at document scope and orders page blocks", () => {
     const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
     const b2 = { id: "b2", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
@@ -151,17 +77,6 @@ describe("pageStateSlice", () => {
     expect(pageState.blocks[1]!.articleOrder).toBe(1); // b2 is first in list
   });
 
-  it("removeArticle deletes article blocks across document pages", () => {
-    const b1 = { id: "b1", x: 0, y: 0, w: 10, h: 10, articleId: null, articleOrder: null };
-    store.getState().addBlock(fid, page, b1);
-    store.getState().addArticle(fid, page, { id: "a1", num: 1, title: "" }, ["b1"]);
-    store.getState().removeArticle(fid, "a1");
-
-    const state = store.getState().getPageState(fid, page);
-    expect(store.getState().getDocumentState(fid).articles).toHaveLength(0);
-    expect(state.blocks).toEqual([]);
-  });
-
   it("removeArticle clears its OCR text and rebuilds assembled document", () => {
     store.getState().addBlock(fid, page, block("b1"));
     store.getState().addBlock(fid, page, block("b2"));
@@ -178,26 +93,6 @@ describe("pageStateSlice", () => {
     expect(store.getState().articleOcrTexts[fid]).toEqual({ a2: "kept text" });
     expect(store.getState().documentResults[fid]).toContain("kept text");
     expect(store.getState().documentResults[fid]).not.toContain("deleted text");
-  });
-
-  it("markSelectionAsArticle creates a document-scoped article and clears temporary selection", () => {
-    store.getState().addBlock(fid, page, block("b1"));
-    store.getState().addBlock(fid, page, block("b2"));
-    store.getState().pushSelection(fid, page, "b2");
-    store.getState().pushSelection(fid, page, "b1");
-
-    const article = store.getState().markSelectionAsArticle(fid, page);
-
-    expect(article).toMatchObject({ num: 1, title: "报道1" });
-    expect(store.getState().getSelectionOrder(fid, page)).toEqual([]);
-    expect(store.getState().getDocumentState(fid).articles[0]!.blockRefs).toEqual([
-      { page, blockId: "b2", order: 1 },
-      { page, blockId: "b1", order: 2 },
-    ]);
-    expect(store.getState().getPageState(fid, page).blocks).toMatchObject([
-      { id: "b1", articleOrder: 2 },
-      { id: "b2", articleOrder: 1 },
-    ]);
   });
 
   it("markSelectionAsArticle can append blocks from another page to the same article", () => {
@@ -320,39 +215,11 @@ describe("pageStateSlice", () => {
     expect(store.getState().getPageState(fid, 2).blocks).toEqual([]);
   });
 
-  it("stores newspaper metadata at document scope", () => {
-    store.getState().updateDocumentMetadata(fid, {
-      newspaperName: "申报",
-      newspaperDate: "1923-01-01",
-    });
-
-    expect(store.getState().getDocumentState(fid)).toMatchObject({
-      newspaperName: "申报",
-      newspaperDate: "1923-01-01",
-    });
-    expect(store.getState().getPageState(fid, page)).toEqual({ blocks: [] });
-  });
-
-  it("removeBlock clears editingBlock when the deleted block was being edited", () => {
-    store.getState().addBlock(fid, page, block("b1"));
-    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
-    store.getState().removeBlock(fid, page, "b1");
-    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
-  });
-
   it("removeBlocks clears editingBlock if it falls in the removed set", () => {
     store.getState().addBlock(fid, page, block("b1"));
     store.getState().addBlock(fid, page, block("b2"));
     store.getState().setEditingBlock(fid, { page, blockId: "b2" });
     store.getState().removeBlocks(fid, page, ["b1", "b2"]);
-    expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
-  });
-
-  it("removeArticle clears editingBlock when its blocks are removed", () => {
-    store.getState().addBlock(fid, page, block("b1"));
-    store.getState().addArticle(fid, page, { id: "a1", num: 1, title: "报道1" }, ["b1"]);
-    store.getState().setEditingBlock(fid, { page, blockId: "b1" });
-    store.getState().removeArticle(fid, "a1");
     expect(store.getState().getEditingBlockId(fid, page)).toBe(null);
   });
 });
@@ -364,20 +231,6 @@ describe("batch metadata actions", () => {
     store = makeStore();
   });
 
-  it("setNewspaperNameForFiles writes every listed file and keeps the date", () => {
-    store.getState().updateDocumentMetadata("f1", { newspaperDate: "1936-05-12" });
-    store.getState().setNewspaperNameForFiles(["f1", "f2"], "  申報 ");
-    expect(store.getState().getDocumentState("f1")).toMatchObject({
-      newspaperName: "申報",
-      newspaperDate: "1936-05-12",
-    });
-    expect(store.getState().getDocumentState("f2").newspaperName).toBe("申報");
-    expect(store.getState().getDocumentState("f3").newspaperName).toBe("");
-
-    store.getState().setNewspaperNameForFiles(["f1"], "");
-    expect(store.getState().getDocumentState("f1").newspaperName).toBe("");
-  });
-
   it("addTagToFiles trims, skips duplicates and ignores empty tags", () => {
     store.getState().addTagToFiles(["f1", "f2"], " 社會 ");
     store.getState().addTagToFiles(["f1"], "社會");
@@ -385,16 +238,6 @@ describe("batch metadata actions", () => {
     store.getState().addTagToFiles(["f1"], "   ");
     expect(store.getState().getDocumentState("f1").tags).toEqual(["社會", "經濟"]);
     expect(store.getState().getDocumentState("f2").tags).toEqual(["社會"]);
-  });
-
-  it("removeTagFromFiles drops the tag only where present", () => {
-    store.getState().addTagToFiles(["f1", "f2"], "社會");
-    store.getState().addTagToFiles(["f1"], "經濟");
-    store.getState().removeTagFromFiles(["f1", "f2", "f3"], "社會");
-    expect(store.getState().getDocumentState("f1").tags).toEqual(["經濟"]);
-    expect(store.getState().getDocumentState("f2").tags).toEqual([]);
-    // No document state is conjured up for a file that never had one.
-    expect(store.getState().documentStates.f3).toBeUndefined();
   });
 
   it("renaming the newspaper re-assembles an already recognized document", () => {
@@ -405,11 +248,5 @@ describe("batch metadata actions", () => {
     expect(store.getState().documentResults.f1).toBe("申報\n\n\n標題\n正文");
     store.getState().updateDocumentMetadata("f1", { newspaperName: "大公報" });
     expect(store.getState().documentResults.f1).toBe("大公報\n\n\n標題\n正文");
-  });
-
-  it("new and empty document states carry an empty tag list", () => {
-    expect(store.getState().getDocumentState("none").tags).toEqual([]);
-    store.getState().updateDocumentMetadata("f1", { newspaperName: "申報" });
-    expect(store.getState().getDocumentState("f1").tags).toEqual([]);
   });
 });

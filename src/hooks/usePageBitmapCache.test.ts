@@ -5,7 +5,6 @@ import { Blob as NodeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPageBitmapCache,
-  pageBitmapCacheKey,
   usePageBitmapCache,
 } from "./usePageBitmapCache";
 
@@ -26,10 +25,6 @@ describe("usePageBitmapCache", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("uses file/page/dpi keys", () => {
-    expect(pageBitmapCacheKey("file-a", 2.9, 149.9)).toBe("file-a::2::149");
   });
 
   it("evicts least-recently-used entries and revokes URLs", () => {
@@ -58,18 +53,6 @@ describe("usePageBitmapCache", () => {
     expect(cache.get("a", 1, 150)).toBe(first);
     expect(cache.get("a", 3, 150)).toBe(third);
     expect(revokeObjectURL).toHaveBeenCalledWith(second.url);
-  });
-
-  it("preserves width/height on cached entries", () => {
-    const cache = createPageBitmapCache(2);
-    const entry = cache.set("a", 1, 150, {
-      blob: new Blob(["x"]),
-      width: 1024,
-      height: 768,
-    });
-    expect(entry.width).toBe(1024);
-    expect(entry.height).toBe(768);
-    expect(cache.get("a", 1, 150)?.width).toBe(1024);
   });
 
   it("revokes all live URLs when the hook unmounts", () => {

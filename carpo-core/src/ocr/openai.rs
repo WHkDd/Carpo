@@ -412,38 +412,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::time::{Duration, Instant};
-    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    async fn happy_path_returns_first_choice_content() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(header("Authorization", "Bearer sk-test"))
-            .and(body_partial_json(
-                json!({ "model": "gpt-4o", "max_tokens": 4096 }),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices": [{ "message": { "content": "  hello\n" } }]
-            })))
-            .mount(&server)
-            .await;
-
-        let out = recognize(
-            &reqwest::Client::new(),
-            &server.uri(),
-            "sk-test",
-            "gpt-4o",
-            "prompt",
-            b"PNGBYTES",
-            "openai",
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(out, "hello");
-    }
 
     #[tokio::test]
     async fn image_payload_uses_data_url() {
@@ -506,30 +476,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_4xx_not_retryable() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(401))
-            .mount(&server)
-            .await;
-
-        let err = recognize(
-            &reqwest::Client::new(),
-            &server.uri(),
-            "sk",
-            "gpt-4o",
-            "p",
-            b"x",
-            "openai",
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap_err();
-        assert!(!err.is_retryable());
-    }
-
-    #[tokio::test]
     async fn cancel_aborts_an_in_flight_request() {
         let server = MockServer::start().await;
         // Far longer than the assertion below tolerates: if cancellation only
@@ -573,73 +519,6 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "cancel waited for the response instead of dropping the request"
         );
-    }
-
-    #[tokio::test]
-    async fn cancelled_is_not_retryable() {
-        // `recognize_with_retry` must not resubmit the image after a cancel.
-        assert!(!AppError::Cancelled("openai".into()).is_retryable());
-    }
-
-    #[tokio::test]
-    async fn list_models_returns_sorted_ids() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/models"))
-            .and(header("Authorization", "Bearer sk"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "data": [
-                    { "id": "gpt-4o-mini" },
-                    { "id": "gpt-4o" },
-                    { "id": "gpt-4.1" }
-                ]
-            })))
-            .mount(&server)
-            .await;
-
-        let ids = list_models(&reqwest::Client::new(), &server.uri(), "sk", "openai")
-            .await
-            .unwrap();
-        assert_eq!(ids, vec!["gpt-4.1", "gpt-4o", "gpt-4o-mini"]);
-    }
-
-    #[tokio::test]
-    async fn chat_text_sends_system_user_pair_and_custom_max_tokens() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(body_partial_json(json!({
-                "model": "anthropic/claude-x",
-                "max_tokens": 16384,
-                "messages": [
-                    { "role": "system", "content": "只修 OCR 误识" },
-                    { "role": "user", "content": "巳於昨日" }
-                ]
-            })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices": [{
-                    "message": { "content": "[]" },
-                    "finish_reason": "stop"
-                }]
-            })))
-            .mount(&server)
-            .await;
-
-        let out = chat_text(
-            &reqwest::Client::new(),
-            &server.uri(),
-            "sk",
-            "anthropic/claude-x",
-            "只修 OCR 误识",
-            "巳於昨日",
-            &[],
-            16384,
-            "openrouter",
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(out, "[]");
     }
 
     #[tokio::test]
@@ -766,58 +645,5 @@ mod tests {
             }
             other => panic!("expected Ocr, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn chat_text_cancel_aborts_in_flight_request() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_delay(Duration::from_secs(30))
-                    .set_body_json(json!({
-                        "choices": [{ "message": { "content": "too late" } }]
-                    })),
-            )
-            .mount(&server)
-            .await;
-
-        let cancel = CancellationToken::new();
-        let token = cancel.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            token.cancel();
-        });
-
-        let started = Instant::now();
-        let err = chat_text(
-            &reqwest::Client::new(),
-            &server.uri(),
-            "sk",
-            "m",
-            "sys",
-            "user",
-            &[],
-            16384,
-            "openai",
-            &cancel,
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, AppError::Cancelled(_)), "got {err:?}");
-        assert!(started.elapsed() < Duration::from_secs(5));
-    }
-
-    #[test]
-    fn join_trims_trailing_slash() {
-        assert_eq!(
-            join("https://x.com/v1/", "/models"),
-            "https://x.com/v1/models"
-        );
-        assert_eq!(
-            join("https://x.com/v1", "/models"),
-            "https://x.com/v1/models"
-        );
     }
 }

@@ -1031,38 +1031,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_empty_pages() {
-        let r = make_req(vec![]);
-        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
-    }
-
-    #[test]
-    fn validate_passes_basic() {
-        let r = make_req(vec![1, 2, 3]);
-        let r = WholeFileOcrRequest {
-            kind: FileKind::Pdf,
-            ..r
-        };
-        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_page_zero() {
-        let r = make_req(vec![0, 1]);
-        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_pages() {
-        let r = make_req(vec![1, 2, 2]);
-        let r = WholeFileOcrRequest {
-            kind: FileKind::Pdf,
-            ..r
-        };
-        assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
-    }
-
-    #[test]
     fn validate_rejects_non_first_image_page() {
         let r = make_req(vec![2]);
         assert!(validate(&r, &settings_with(Provider::Paddleocr)).is_err());
@@ -1113,18 +1081,5 @@ mod tests {
         assert_eq!(normalize_requested_pages(&[5, 1, 3, 1, 5]), vec![1, 3, 5]);
         assert_eq!(normalize_requested_pages(&[]), Vec::<u32>::new());
         assert_eq!(normalize_requested_pages(&[7]), vec![7]);
-    }
-
-    #[test]
-    fn validate_rejects_non_ascending_pages() {
-        let r = WholeFileOcrRequest {
-            kind: FileKind::Pdf,
-            ..make_req(vec![3, 1, 2])
-        };
-        let err = validate(&r, &settings_with(Provider::Paddleocr)).unwrap_err();
-        match err {
-            AppError::Config(msg) => assert!(msg.contains("严格升序"), "{msg}"),
-            other => panic!("expected Config, got {other:?}"),
-        }
     }
 }

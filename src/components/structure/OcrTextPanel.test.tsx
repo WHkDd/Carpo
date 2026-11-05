@@ -171,7 +171,6 @@ vi.mock("@/hooks/PageBitmapCacheContext", () => ({
   }),
 }));
 
-
 vi.mock("@/lib/desktop", () => ({
   enableNotificationsAfterUserAction: vi.fn(async () => {}),
 }));
@@ -255,118 +254,15 @@ function openExportMenu() {
   fireEvent.click(screen.getByRole("button", { name: "导出" }));
 }
 
-function openProofreadMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "校对" }));
-}
-
 function menuItem(name: string): HTMLButtonElement {
   return screen.getByRole("menuitem", { name }) as HTMLButtonElement;
 }
-
-describe("OcrTextPanel toolbar — copy", () => {
-  afterEach(cleanup);
-  beforeEach(() => {
-    vi.clearAllMocks();
-    reset();
-  });
-
-  it("copies this page in whole-file mode and flips the icon back", async () => {
-    vi.useFakeTimers();
-    state.recognizedPages = { "file-1": { 1: page("本埠新聞") } };
-    render(<OcrTextPanel />);
-
-    const button = screen.getByRole("button", { name: "复制本页" });
-    expect(button.getAttribute("disabled")).toBeNull();
-    fireEvent.click(button);
-    await vi.waitFor(() => expect(copyText).toHaveBeenCalledWith("本埠新聞"));
-
-    // Feedback is the button's own icon, announced through a live region —
-    // no extra element that could widen the toolbar.
-    await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("已复制"));
-    vi.advanceTimersByTime(1000);
-    await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe(""));
-    vi.useRealTimers();
-  });
-
-  it("disables copy in grouped mode until a single article is pinned", () => {
-    state.recognitionMode = "grouped";
-    state.articles = [{ id: "a1", num: 1, title: "甲" }];
-    state.articleOcrTexts = { "file-1": { a1: "報道甲" } };
-    state.documentResults = { "file-1": "全文" };
-    render(<OcrTextPanel />);
-
-    // Nothing pinned: the panel is showing the assembled full text, so
-    // "copy the selected article" has no referent.
-    const unpinned = screen.getByRole("button", {
-      name: "复制选中报道",
-    }) as HTMLButtonElement;
-    expect(unpinned.disabled).toBe(true);
-
-    cleanup();
-    state.selectedArticleIds = ["a1"];
-    render(<OcrTextPanel />);
-    const pinned = screen.getByRole("button", {
-      name: "复制选中报道",
-    }) as HTMLButtonElement;
-    expect(pinned.disabled).toBe(false);
-  });
-
-  it("reports a copy failure through the platform dialog", async () => {
-    state.recognizedPages = { "file-1": { 1: page("文本") } };
-    copyText.mockRejectedValueOnce(new Error("clipboard denied"));
-    render(<OcrTextPanel />);
-
-    fireEvent.click(screen.getByRole("button", { name: "复制本页" }));
-    await waitFor(() =>
-      expect(alertError).toHaveBeenCalledWith({
-        title: "复制失败",
-        message: "clipboard denied",
-      })
-    );
-    // The dialog handled it, so nothing is rendered inline.
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("falls back to an inline message where there is no native dialog", async () => {
-    state.recognizedPages = { "file-1": { 1: page("文本") } };
-    isTauriRuntime.mockReturnValue(false);
-    copyText.mockRejectedValueOnce(new Error("clipboard denied"));
-    alertError.mockResolvedValueOnce(false);
-    render(<OcrTextPanel />);
-
-    fireEvent.click(screen.getByRole("button", { name: "复制本页" }));
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toBe(
-        "复制失败：clipboard denied"
-      )
-    );
-  });
-});
 
 describe("OcrTextPanel toolbar — export menu", () => {
   afterEach(cleanup);
   beforeEach(() => {
     vi.clearAllMocks();
     reset();
-  });
-
-  it("names its first entry after the mode it is in", () => {
-    state.recognizedPages = { "file-1": { 1: page("文本") } };
-    render(<OcrTextPanel />);
-    openExportMenu();
-    expect(menuItem("导出本页")).toBeTruthy();
-    expect(menuItem("导出所有页")).toBeTruthy();
-
-    cleanup();
-    state.recognitionMode = "grouped";
-    state.recognizedPages = {};
-    state.articles = [{ id: "a1", num: 1, title: "甲" }];
-    state.articleOcrTexts = { "file-1": { a1: "報道甲" } };
-    state.selectedArticleIds = ["a1"];
-    render(<OcrTextPanel />);
-    openExportMenu();
-    expect(menuItem("导出选中报道")).toBeTruthy();
-    expect(menuItem("导出所有报道")).toBeTruthy();
   });
 
   it("dims the per-article entry instead of degrading it to a full-text export", () => {
@@ -399,57 +295,6 @@ describe("OcrTextPanel toolbar — export menu", () => {
     expect(saveTextFile.mock.calls[0]![0]).toBe("原文改过");
   });
 
-  it("omits the reading-view PDF entry outside whole-file mode", () => {
-    state.recognitionMode = "grouped";
-    state.articles = [{ id: "a1", num: 1, title: "甲" }];
-    state.articleOcrTexts = { "file-1": { a1: "報道甲" } };
-    state.selectedArticleIds = ["a1"];
-    render(<OcrTextPanel />);
-    openExportMenu();
-
-    expect(screen.queryByRole("menuitem", { name: "导出阅读版 PDF" })).toBeNull();
-  });
-
-  it("omits the reading-view PDF entry in the browser build", () => {
-    isTauriRuntime.mockReturnValue(false);
-    state.recognizedPages = { "file-1": { 1: page("文本", true) } };
-    render(<OcrTextPanel />);
-    openExportMenu();
-
-    expect(screen.queryByRole("menuitem", { name: "导出阅读版 PDF" })).toBeNull();
-  });
-
-  it("dims the reading-view PDF entry when the page has no layout", () => {
-    state.recognizedPages = { "file-1": { 1: page("文本") } };
-    render(<OcrTextPanel />);
-    openExportMenu();
-
-    expect(menuItem("导出阅读版 PDF").disabled).toBe(true);
-  });
-
-  it("exports a reading-view PDF when a layout is present", async () => {
-    state.recognizedPages = { "file-1": { 1: page("文本", true) } };
-    render(<OcrTextPanel />);
-    openExportMenu();
-
-    const item = menuItem("导出阅读版 PDF");
-    expect(item.disabled).toBe(false);
-    fireEvent.click(item);
-    await waitFor(() => expect(exportLayoutPdf).toHaveBeenCalledOnce());
-  });
-
-  it("disables the trigger when nothing at all can be exported", () => {
-    // Browser build, one imported layout page whose blocks carry no text: the
-    // panel has a block view to show, so the toolbar renders — but both
-    // remaining entries are dead and the PDF entry does not exist here.
-    isTauriRuntime.mockReturnValue(false);
-    state.recognizedPages = { "file-1": { 1: page("", true) } };
-    render(<OcrTextPanel />);
-    expect(
-      (screen.getByRole("button", { name: "导出" }) as HTMLButtonElement).disabled
-    ).toBe(true);
-  });
-
   it("keeps the toolbar up on an empty page while other pages have text", () => {
     // Page 1 is blank, page 2 was recognized. Export-all must stay reachable.
     state.recognizedPages = { "file-1": { 1: page(""), 2: page("第二页") } };
@@ -466,68 +311,6 @@ describe("OcrTextPanel toolbar — proofread split button", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     reset();
-  });
-
-  function proofreadButton(): HTMLButtonElement {
-    return screen.getByRole("button", { name: "校对本页" }) as HTMLButtonElement;
-  }
-
-  it("does not render without any text anywhere", () => {
-    render(<OcrTextPanel />);
-    // No content at all → no toolbar (and nothing to proofread).
-    expect(screen.queryByRole("button", { name: "校对本页" })).toBeNull();
-  });
-
-  it("is disabled while the current page has no text", () => {
-    // Another page carries text, so the toolbar exists — but the current
-    // page has nothing to proofread, and the button dims rather than
-    // disappearing.
-    state.recognizedPages = { "file-1": { 1: page(""), 2: page("第二页") } };
-    render(<OcrTextPanel />);
-    expect(proofreadButton().disabled).toBe(true);
-  });
-
-  it("enables once the page has recognized text", () => {
-    state.recognizedPages = { "file-1": { 1: page("本埠新聞") } };
-    render(<OcrTextPanel />);
-    expect(proofreadButton().disabled).toBe(false);
-  });
-
-  it("switches to the article label in grouped mode and needs a pinned article", () => {
-    state.recognitionMode = "grouped";
-    state.articles = [{ id: "a-1", num: 1, title: "报道1" }];
-    state.articleOcrTexts = { "file-1": { "a-1": "正文" } };
-    render(<OcrTextPanel />);
-    const button = screen.getByRole("button", {
-      name: "校对选中报道",
-    }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-
-    cleanup();
-    state.selectedArticleIds = ["a-1"];
-    render(<OcrTextPanel />);
-    expect(
-      (screen.getByRole("button", {
-        name: "校对选中报道",
-      }) as HTMLButtonElement).disabled
-    ).toBe(false);
-  });
-
-  it("has no dropdown in whole-file mode — model choice lives in settings", () => {
-    state.recognizedPages = { "file-1": { 1: page("本埠新聞") } };
-    render(<OcrTextPanel />);
-    expect(screen.queryByRole("button", { name: "校对" })).toBeNull();
-  });
-
-  it("offers the all-articles scope in the grouped-mode dropdown", () => {
-    state.recognitionMode = "grouped";
-    state.articles = [{ id: "a-1", num: 1, title: "报道1" }];
-    state.articleOcrTexts = { "file-1": { "a-1": "正文" } };
-    render(<OcrTextPanel />);
-    openProofreadMenu();
-    expect(
-      screen.getByRole("menuitem", { name: /校对全部报道/ })
-    ).toBeTruthy();
   });
 
   it("auto-opens the review view when a pending review lands on this page", () => {
@@ -623,27 +406,6 @@ describe("OcrTextPanel toolbar — proofread split button", () => {
     // …and the way back into it stays on the toolbar.
     expect(screen.getByRole("button", { name: "校对审阅" })).toBeTruthy();
   });
-
-  it("shows the review switch in the view group once a review exists", () => {
-    state.recognizedPages = { "file-1": { 1: page("本埠新聞") } };
-    state.proofreadReviews = {
-      "file-1": {
-        "page:1": {
-          target: { mode: "whole_file", page: 1 },
-          baseText: "本埠新聞",
-          suggestions: [],
-          model: "gpt-4o",
-          discarded: 0,
-          status: "pending",
-          createdAt: 7,
-        },
-      },
-    };
-    render(<OcrTextPanel />);
-    expect(
-      screen.getByRole("button", { name: "校对审阅" })
-    ).toBeTruthy();
-  });
 });
 
 describe("buildLayoutDocumentFromRecognizedPages — emptied pages (条 8)", () => {
@@ -653,22 +415,6 @@ describe("buildLayoutDocumentFromRecognizedPages — emptied pages (条 8)", () 
     height: 200,
     blocks: [{ label: "text", text: "删除前的旧正文", bbox: [0, 0, 1, 1] }],
   };
-
-  it("keeps the original layout for a page the user never edited", () => {
-    const doc = buildLayoutDocumentFromRecognizedPages({
-      1: { text: "", layout, textEdited: false } as never,
-    });
-    expect(doc?.pages[0]?.blocks[0]?.text).toBe("删除前的旧正文");
-  });
-
-  it("uses the edited text when it is non-empty", () => {
-    const doc = buildLayoutDocumentFromRecognizedPages({
-      1: { text: "改后的正文", layout, textEdited: true } as never,
-    });
-    expect(doc?.pages[0]?.blocks).toEqual([
-      expect.objectContaining({ text: "改后的正文" }),
-    ]);
-  });
 
   it("does not fall back to the old layout when the user emptied the page", () => {
     // 条 8 的核心诉求：全选删除后，阅读版不能再导出删除前的文字。

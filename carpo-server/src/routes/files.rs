@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use carpo_core::{error::AppError, jobs::grouped::FileKind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -94,6 +94,52 @@ pub async fn delete_file(
     } else {
         Ok(Json(false))
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateBody {
+    pub clockwise: bool,
+}
+
+/// Browser-runtime twin of the desktop `rotate_image` command. The server
+/// owns its upload copy, so instead of handing back a new path it swaps the
+/// record over to a rotated PNG under the same id: every later raster / OCR
+/// request for this id reads the rotated pixels, and the client keeps its
+/// queue entry as is.
+pub async fn rotate_file(
+    State(state): State<ServerState>,
+    AxumPath(file_id): AxumPath<Uuid>,
+    Json(body): Json<RotateBody>,
+) -> ServerResult<Json<bool>> {
+    let record = state
+        .file(file_id)
+        .ok_or_else(|| AppError::FileNotFound(file_id.to_string()))?;
+    if record.kind != FileKind::Image {
+        return Err(AppError::Image("file is not a raster image".into()).into());
+    }
+    let source = record.path.clone();
+    let png = tokio::task::spawn_blocking(move || {
+        carpo_core::image::rotate_quarter_png(&source, body.clockwise)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("blocking join: {e}")))??;
+
+    let target = record
+        .dir
+        .join(format!("rotated-{}.png", Uuid::new_v4().simple()));
+    tokio::fs::write(&target, &png).await?;
+    // The previous source is left in the file's dir rather than deleted: an
+    // OCR job started from the old record may still be about to read it.
+    // `delete_file` and the startup `reset_uploads_dir` reclaim the whole dir.
+    state.insert_file(
+        file_id,
+        FileRecord {
+            path: target,
+            ext: "png".to_string(),
+            ..record
+        },
+    );
+    Ok(Json(true))
 }
 
 fn sanitize_filename(name: &str) -> String {

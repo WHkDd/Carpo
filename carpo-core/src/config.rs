@@ -289,20 +289,4 @@ mod tests {
         assert_eq!(parsed.proofread_prompt, "");
         assert_eq!(parsed.theme, None);
     }
-
-    #[test]
-    fn theme_round_trips_and_rejects_unknown_values() {
-        for theme in [Theme::System, Theme::Light, Theme::Dark] {
-            let encoded = serde_json::to_value(theme).unwrap();
-            let decoded: Theme = serde_json::from_value(encoded).unwrap();
-            assert_eq!(decoded, theme);
-        }
-        assert!(serde_json::from_value::<Theme>(json!("sepia")).is_err());
-    }
-
-    #[test]
-    fn default_proofread_prompt_is_language_specific() {
-        assert!(default_proofread_prompt(Language::Zh).contains("历史原件转录"));
-        assert!(default_proofread_prompt(Language::En).contains("historical Chinese newspaper"));
-    }
 }

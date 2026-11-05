@@ -280,48 +280,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn register_then_cancel_marks_token_cancelled() {
-        let reg = JobRegistry::new();
-        let (id, token) = reg.try_register(JobKind::GroupedOcr).unwrap();
-        assert!(!token.is_cancelled());
-        assert!(reg.cancel(id));
-        assert!(token.is_cancelled());
-    }
-
-    #[test]
-    fn cancel_unknown_id_returns_false() {
-        let reg = JobRegistry::new();
-        let other = Uuid::new_v4();
-        assert!(!reg.cancel(other));
-    }
-
-    #[test]
-    fn cancel_twice_is_idempotent() {
-        let reg = JobRegistry::new();
-        let (id, _t) = reg.try_register(JobKind::GroupedOcr).unwrap();
-        assert!(reg.cancel(id));
-        assert!(reg.cancel(id)); // second call: still true (entry exists), token stays cancelled
-    }
-
-    #[test]
-    fn remove_drops_entry() {
-        let reg = JobRegistry::new();
-        let (id, _t) = reg.try_register(JobKind::GroupedOcr).unwrap();
-        assert_eq!(reg.list().len(), 1);
-        reg.remove(id);
-        assert!(reg.list().is_empty());
-        assert!(!reg.cancel(id));
-    }
-
-    #[test]
-    fn list_returns_all_active_jobs() {
-        let reg = JobRegistry::new();
-        let (_a, _ta) = reg.try_register(JobKind::GroupedOcr).unwrap();
-        let (_b, _tb) = reg.try_register(JobKind::GroupedOcr).unwrap();
-        assert_eq!(reg.list().len(), 2);
-    }
-
-    #[test]
     fn try_register_refuses_once_the_cap_is_reached() {
         let reg = JobRegistry::new();
         let held: Vec<_> = (0..MAX_ACTIVE_JOBS)

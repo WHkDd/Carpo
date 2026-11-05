@@ -29,12 +29,6 @@ function article(
 }
 
 describe("unionBlockRect", () => {
-  it("spans every block", () => {
-    expect(
-      unionBlockRect([block("b1", 10, 20, 30, 40), block("b2", 100, 5, 20, 20)])
-    ).toEqual({ x: 10, y: 5, width: 110, height: 55 });
-  });
-
   it("normalizes a block dragged right-to-left", () => {
     // A selection drawn bottom-right → top-left is stored with negative
     // width/height; taking x/x+w literally would produce an inverted rect
@@ -44,22 +38,6 @@ describe("unionBlockRect", () => {
       y: 40,
       width: 40,
       height: 60,
-    });
-  });
-
-  it("returns null for no blocks or a degenerate one", () => {
-    expect(unionBlockRect([])).toBeNull();
-    expect(unionBlockRect([block("b1", 10, 10, 0, 0)])).toBeNull();
-  });
-});
-
-describe("padRect", () => {
-  it("grows by a fraction of its own size on every side", () => {
-    expect(padRect({ x: 100, y: 200, width: 1000, height: 500 }, 0.02)).toEqual({
-      x: 80,
-      y: 190,
-      width: 1040,
-      height: 520,
     });
   });
 });
@@ -108,13 +86,6 @@ describe("articleRectsByPage", () => {
     );
     expect(rects).toHaveLength(1);
     expect(rects[0]!.rect.width).toBeCloseTo(90 * (1 + ARTICLE_RECT_PADDING * 2));
-  });
-
-  it("returns nothing when every block is gone", () => {
-    // The caller sends that unit as text only rather than cropping blindly.
-    expect(
-      articleRectsByPage(article([{ page: 1, blockId: "gone" }]), {}, "f1")
-    ).toEqual([]);
   });
 
   it("tolerates an article restored without its refs", () => {

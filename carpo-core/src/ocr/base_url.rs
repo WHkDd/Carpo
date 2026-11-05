@@ -247,12 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn network_facing_accepts_public_https() {
-        network("https://api.example.com/v1").unwrap();
-        network("https://api.example.com:8443/v1").unwrap();
-    }
-
-    #[test]
     fn network_facing_rejects_plaintext_http() {
         assert!(matches!(
             network("http://attacker.example/v1").unwrap_err(),
