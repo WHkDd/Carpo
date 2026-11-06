@@ -27,7 +27,10 @@ vi.mock("@/lib/desktop", () => ({
 }));
 
 import { useStore } from "@/store";
-import { notifyOcrResult } from "@/lib/desktop";
+import {
+  enableNotificationsAfterUserAction,
+  notifyOcrResult,
+} from "@/lib/desktop";
 import { articleRegionKey } from "@/hooks/useGroupedOcrTrigger";
 import { selectJobStartBlocked } from "@/store/jobSlice";
 import { t } from "@/i18n";
@@ -310,6 +313,32 @@ describe("background runner, by tag", () => {
       expect(text).not.toContain("g2.pdf");
     }
     expect(written[2]![1]).toContain("## g2.pdf");
+  });
+});
+
+describe("recognize-only batch", () => {
+  // 批量识别 writes no file, but it is still a click the user waits on: it
+  // has to ask for notification permission and announce its own completion
+  // in 识别 wording. Only the headless agent bridge stays silent.
+  it("notifies on completion when started from the UI", async () => {
+    addPdf("w", 1);
+    startWholeFileOcr.mockResolvedValueOnce({ job_id: "job-r" });
+
+    await startBatchExport({
+      fileIds: ["w"],
+      layout: "merged",
+      format: "md",
+      recognizeOnly: true,
+      userInitiated: true,
+    });
+    await finishJob("job-r", { results: [{ page: 1, text: "正文" }] });
+    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+
+    expect(enableNotificationsAfterUserAction).toHaveBeenCalled();
+    expect(notifyOcrResult).toHaveBeenCalledWith(
+      expect.objectContaining({ title: t("batch.finishedOcr") })
+    );
+    expect(downloadBlob).not.toHaveBeenCalled();
   });
 });
 

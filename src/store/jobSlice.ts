@@ -255,6 +255,8 @@ export interface BatchExportState {
    *  browser downloads. */
   target: string;
   outputs?: string[];
+  /** OCR only: no file is written, and the UI says 识别 rather than 导出. */
+  recognizeOnly?: boolean;
   /** Batch-level failure, e.g. the merged file could not be written. */
   error?: string;
 }

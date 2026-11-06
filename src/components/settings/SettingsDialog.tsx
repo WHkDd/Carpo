@@ -1440,9 +1440,6 @@ function LanguagePanel({ value, onChange }: LanguagePanelProps) {
             </option>
           ))}
         </select>
-        <span className="text-[11px] text-foreground-subtle">
-          {t("settings.languageNote")}
-        </span>
       </Field>
     </div>
   );
@@ -1479,9 +1476,6 @@ function AppearancePanel({ value, onChange }: AppearancePanelProps) {
             </option>
           ))}
         </select>
-        <span className="text-[11px] text-foreground-subtle">
-          {t("settings.appearanceNote")}
-        </span>
       </Field>
     </div>
   );

@@ -99,13 +99,10 @@ export function useFileImport() {
         return;
       }
 
-      setStatusText(
-        accepted.length === 1
-          ? t("import.loadingOne", { name: basename(accepted[0]!) })
-          : t("import.loadingMany", { count: accepted.length })
-      );
-
       let okCount = 0;
+      // A failure already wrote its reason into the pill; the success line
+      // must not wipe it out when only some of the batch failed.
+      let anyFailed = false;
       for (const path of accepted) {
         const name = basename(path);
         const ext = extensionOf(name);
@@ -120,6 +117,7 @@ export function useFileImport() {
         } catch (err) {
           const message = appErrorMessage(err);
           void logError(`${kind} import failed: ${path}: ${message}`);
+          anyFailed = true;
           setStatusText(t("import.loadFailed", { name }));
           // Queue it anyway, carrying the reason. Dropping the entry here used
           // to make a failed import indistinguishable from one that never
@@ -198,12 +196,10 @@ export function useFileImport() {
       // queue, the rejections are only visible here.
       if (rejected.length > 0) {
         setStatusText(rejectionMessage(rejected, accepted.length));
-      } else if (okCount > 0) {
-        setStatusText(
-          okCount === 1
-            ? t("common.ready")
-            : t("import.loadedMany", { count: okCount })
-        );
+      } else if (okCount > 0 && !anyFailed) {
+        // Success is visible in the queue itself; the status pill stays quiet
+        // so only problems ever appear there.
+        setStatusText(t("common.ready"));
       }
     },
     [addFile, cache, getSupported, setStatusText]
@@ -232,6 +228,7 @@ export function useFileImport() {
       );
 
       let okCount = 0;
+      let anyFailed = false;
       for (const file of accepted) {
         const ext = extensionOf(file.name);
         const kind = classify(ext);
@@ -254,6 +251,7 @@ export function useFileImport() {
         } catch (err) {
           const message = appErrorMessage(err);
           void logError(`${kind} upload failed: ${file.name}: ${message}`);
+          anyFailed = true;
           setStatusText(t("import.uploadFailed", { name: file.name }));
           // Same reasoning as the desktop path: surface the failure in the
           // queue rather than dropping it silently.
@@ -335,12 +333,10 @@ export function useFileImport() {
             accepted.length
           )
         );
-      } else if (okCount > 0) {
-        setStatusText(
-          okCount === 1
-            ? t("common.ready")
-            : t("import.loadedMany", { count: okCount })
-        );
+      } else if (okCount > 0 && !anyFailed) {
+        // Success is visible in the queue itself; the status pill stays quiet
+        // so only problems ever appear there.
+        setStatusText(t("common.ready"));
       }
     },
     [addFile, cache, getSupported, setStatusText]

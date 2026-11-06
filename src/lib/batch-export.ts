@@ -614,6 +614,10 @@ export interface BatchExportOptions {
   target?: string;
   recognizeOnly?: boolean;
   exportOnly?: boolean;
+  /** Started by a click, so asking for notification permission is allowed.
+   *  The agent bridge leaves it false: it runs headless, with no gesture to
+   *  hang an OS permission prompt on. */
+  userInitiated?: boolean;
 }
 
 export type BatchStartResult =
@@ -682,9 +686,7 @@ async function prepareBatchExport(
       target = path;
     }
   }
-  if (opts.target === undefined && !opts.recognizeOnly) {
-    await enableNotificationsAfterUserAction();
-  }
+  if (opts.userInitiated) await enableNotificationsAfterUserAction();
 
   const items: BatchExportItem[] = plans.map((p) => ({
     fileId: p.fileId,
@@ -706,6 +708,7 @@ async function prepareBatchExport(
     currentJobId: null,
     target,
     outputs: [],
+    recognizeOnly: opts.recognizeOnly ?? false,
   };
   useStore.getState().setBatchExport(initial);
   void runBatch(
@@ -935,7 +938,7 @@ async function runBatch(
   if (!final || cancelled) return;
   void notifyOcrResult({
     fileId: final.items[0]?.fileId ?? "",
-    title: t("batch.finished"),
+    title: t(recognizeOnly ? "batch.finishedOcr" : "batch.finished"),
     body: final.error ?? batchSummaryText(final.items),
   });
 }
