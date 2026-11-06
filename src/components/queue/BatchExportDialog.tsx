@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, FileOutput, Loader2, X } from "lucide-react";
+import { ChevronDown, FileOutput, Loader2, ScanText, X } from "lucide-react";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import {
   batchEntry,
@@ -28,6 +28,9 @@ import { useT } from "@/i18n";
 interface BatchExportDialogProps {
   open: boolean;
   fileIds: string[];
+  /** OCR only: no output file, so the layout/format options and the
+   *  destination picker are skipped. */
+  recognizeOnly?: boolean;
   onClose: () => void;
   /** The batch is running in the background; the caller leaves selection
    *  mode. */
@@ -43,6 +46,7 @@ const FORMATS: BatchExportFormat[] = ["docx", "md"];
 export function BatchExportDialog({
   open,
   fileIds,
+  recognizeOnly = false,
   onClose,
   onStarted,
 }: BatchExportDialogProps) {
@@ -79,7 +83,12 @@ export function BatchExportDialog({
       sorted: sortBatchEntries(plans.map((p) => batchEntry(state, p))),
     };
   }, [open, fileIds]);
-  const docs = useMemo(() => planOutputDocs(layout, sorted), [layout, sorted]);
+  // Recognize-only has no output documents; grouping by the export layout
+  // would list a multi-tag file once per tag.
+  const docs = useMemo(
+    () => planOutputDocs(recognizeOnly ? "merged" : layout, sorted),
+    [layout, recognizeOnly, sorted]
+  );
 
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocus(open, dialogRef);
@@ -103,7 +112,13 @@ export function BatchExportDialog({
     setStarting(true);
     setError(null);
     try {
-      const result = await startBatchExport({ fileIds, layout, format });
+      const result = await startBatchExport({
+        fileIds,
+        layout,
+        format,
+        recognizeOnly,
+        userInitiated: true,
+      });
       if (result.status === "started") onStarted();
       else if (result.status === "error") setError(result.error);
     } finally {
@@ -131,12 +146,16 @@ export function BatchExportDialog({
       >
         <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <FileOutput className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
+            {recognizeOnly ? (
+              <ScanText className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
+            ) : (
+              <FileOutput className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
+            )}
             <h2
               id="batch-export-title"
               className="truncate text-[15px] font-medium text-foreground"
             >
-              {t("batch.dialogTitle")}
+              {t(recognizeOnly ? "batch.recognizeTitle" : "batch.dialogTitle")}
             </h2>
           </div>
           <button
@@ -150,6 +169,7 @@ export function BatchExportDialog({
         </header>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 text-[12px] leading-relaxed">
+          {!recognizeOnly && (
           <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 bg-surface-2/40 px-4 py-3">
             <OptionRow label={t("batch.layout")}>
               <Segmented
@@ -174,9 +194,10 @@ export function BatchExportDialog({
               />
             </OptionRow>
           </div>
+          )}
 
           <div className="mt-3 text-[11px] font-medium text-foreground-muted">
-            {t("batch.previewTitle")}
+            {t(recognizeOnly ? "batch.recognizePreviewTitle" : "batch.previewTitle")}
           </div>
           <div className="mt-1.5 flex flex-col gap-2">
             {docs.map((doc, index) => (
@@ -184,7 +205,7 @@ export function BatchExportDialog({
                 key={`${doc.stem}-${index}`}
                 className="overflow-hidden rounded-lg border border-border/60"
               >
-                {layout !== "separate" && (
+                {layout !== "separate" && !recognizeOnly && (
                   <h3 className="truncate border-b border-border/50 bg-surface-2/60 px-3 py-1 text-[12px] font-medium text-foreground">
                     {t("batch.previewDoc", {
                       name: `${safeFileStem(doc.stem)}.${format}`,
@@ -196,7 +217,6 @@ export function BatchExportDialog({
               </section>
             ))}
           </div>
-          <p className="mt-2.5 text-[11px] text-foreground-subtle">{t("batch.note")}</p>
         </div>
 
         <footer className="flex items-center justify-between gap-2 border-t border-border bg-surface-2 px-5 py-3">
@@ -401,14 +421,19 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
   const current =
     batch.currentIndex !== null ? batch.items[batch.currentIndex] : undefined;
 
+  const ocrOnly = batch.recognizeOnly === true;
+  const DoneIcon = ocrOnly ? ScanText : FileOutput;
   const headline =
     batch.status === "cancelling"
       ? t("batch.cancelling")
       : active
-        ? t("batch.progress", { done: finishedCount, total: batch.items.length })
+        ? t(ocrOnly ? "batch.progressOcr" : "batch.progress", {
+            done: finishedCount,
+            total: batch.items.length,
+          })
         : batch.status === "cancelled"
-          ? t("batch.cancelledTitle")
-          : t("batch.finished");
+          ? t(ocrOnly ? "batch.cancelledOcr" : "batch.cancelledTitle")
+          : t(ocrOnly ? "batch.finishedOcr" : "batch.finished");
   const detail = active
     ? current?.name ?? ""
     : batch.error ?? batchSummaryText(batch.items);
@@ -426,7 +451,7 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
         {active ? (
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
         ) : (
-          <FileOutput
+          <DoneIcon
             className={cn("h-4 w-4", hasProblem && "text-destructive")}
             strokeWidth={1.75}
           />
@@ -439,7 +464,7 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
     <div className="mb-1.5 rounded-md border border-border/60 bg-surface-2/60">
       {expanded && (
         <ul
-          aria-label={t("batch.details")}
+          aria-label={t(ocrOnly ? "batch.detailsOcr" : "batch.details")}
           className="max-h-[40vh] overflow-y-auto border-b border-border/50 py-1"
         >
           {batch.items.map((item, index) => (
@@ -475,7 +500,7 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
           {active ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-foreground-muted" strokeWidth={1.75} />
           ) : (
-            <FileOutput
+            <DoneIcon
               className={cn(
                 "h-3.5 w-3.5 shrink-0",
                 hasProblem ? "text-destructive" : "text-foreground-muted"
@@ -503,8 +528,12 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
           type="button"
           onClick={() => (active ? cancelBatchExport() : setBatchExport(null))}
           disabled={batch.status === "cancelling"}
-          aria-label={active ? t("batch.cancel") : t("common.close")}
-          title={active ? t("batch.cancel") : t("common.close")}
+          aria-label={
+            active ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel") : t("common.close")
+          }
+          title={
+            active ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel") : t("common.close")
+          }
           className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-foreground-subtle hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
         >
           <X className="h-3.5 w-3.5" strokeWidth={1.75} />

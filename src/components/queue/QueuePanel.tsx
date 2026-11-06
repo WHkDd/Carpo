@@ -5,6 +5,7 @@ import {
   FileJson,
   FileOutput,
   Plus,
+  ScanText,
   Settings as SettingsIcon,
   Tags,
 } from "lucide-react";
@@ -46,7 +47,8 @@ export function QueuePanel({
   // needs to know which rows are ticked until the batch actually starts.
   const [selecting, setSelecting] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
-  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  // null = closed; otherwise which of the two batch actions the dialog runs.
+  const [batchDialogMode, setBatchDialogMode] = useState<BatchAction | null>(null);
   const selectableIds = useMemo(
     () => files.filter((f) => !f.loadError).map((f) => f.id),
     [files]
@@ -70,10 +72,10 @@ export function QueuePanel({
   const exitSelecting = useCallback(() => {
     setSelecting(false);
     setCheckedIds([]);
-    setBatchDialogOpen(false);
+    setBatchDialogMode(null);
     setMetaEditor(null);
   }, []);
-  const closeBatchDialog = useCallback(() => setBatchDialogOpen(false), []);
+  const closeBatchDialog = useCallback(() => setBatchDialogMode(null), []);
   const [metaEditor, setMetaEditor] = useState<MetaAction | null>(null);
 
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -270,49 +272,64 @@ export function QueuePanel({
           </div>
 
           {selecting && files.length > 0 && (
-            <div className="mb-1.5 flex shrink-0 items-center gap-1.5 rounded-md bg-surface-2/60 px-1.5 py-1 text-[11px]">
-              <label className="flex min-w-0 flex-1 cursor-default items-center gap-1.5 text-foreground-muted">
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={() => setCheckedIds(allChecked ? [] : selectableIds)}
-                  aria-label={t("batch.selectAll")}
-                  className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+            // Two rows: three action buttons plus the count do not fit the
+            // 244px queue column on one line.
+            <div className="mb-1.5 flex shrink-0 flex-col gap-1 rounded-md bg-surface-2/60 px-1.5 py-1 text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <label className="flex min-w-0 flex-1 cursor-default items-center gap-1.5 text-foreground-muted">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={() => setCheckedIds(allChecked ? [] : selectableIds)}
+                    aria-label={t("batch.selectAll")}
+                    className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+                  />
+                  <span className="truncate">
+                    {batchFileIds.length > 0
+                      ? t("batch.selectedCount", { count: batchFileIds.length })
+                      : t("batch.selectAll")}
+                  </span>
+                </label>
+                <DropMenu<MetaAction>
+                  ariaLabel={t("batch.metaMenu")}
+                  triggerIcon={<Tags className="h-3.5 w-3.5" strokeWidth={1.75} />}
+                  triggerClassName="text-foreground-muted hover:text-foreground"
+                  placement="bottom"
+                  disabled={batchFileIds.length === 0}
+                  items={[
+                    { key: "newspaper", label: t("batch.setNewspaper"), variant: "action" },
+                    { key: "addTag", label: t("batch.addTag"), variant: "action" },
+                    { key: "removeTag", label: t("batch.removeTag"), variant: "action" },
+                  ]}
+                  onSelect={setMetaEditor}
                 />
-                <span className="truncate">
-                  {batchFileIds.length > 0
-                    ? t("batch.selectedCount", { count: batchFileIds.length })
-                    : t("batch.selectAll")}
-                </span>
-              </label>
-              <DropMenu<MetaAction>
-                ariaLabel={t("batch.metaMenu")}
-                triggerIcon={<Tags className="h-3.5 w-3.5" strokeWidth={1.75} />}
-                triggerClassName="text-foreground-muted hover:text-foreground"
-                placement="bottom"
-                disabled={batchFileIds.length === 0}
-                items={[
-                  { key: "newspaper", label: t("batch.setNewspaper"), variant: "action" },
-                  { key: "addTag", label: t("batch.addTag"), variant: "action" },
-                  { key: "removeTag", label: t("batch.removeTag"), variant: "action" },
-                ]}
-                onSelect={setMetaEditor}
-              />
-              <button
-                type="button"
-                onClick={exitSelecting}
-                className="h-6 shrink-0 rounded px-2 text-foreground-muted hover:bg-surface hover:text-foreground"
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBatchDialogOpen(true)}
-                disabled={batchFileIds.length === 0}
-                className="h-6 shrink-0 rounded bg-primary px-2 font-medium text-primary-foreground hover:bg-primary/90 active:bg-primary/80 disabled:cursor-default disabled:opacity-50"
-              >
-                {t("batch.exportSelected")}
-              </button>
+              </div>
+              <div className="flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={exitSelecting}
+                  className="h-6 shrink-0 rounded px-2 text-foreground-muted hover:bg-surface hover:text-foreground"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchDialogMode("recognize")}
+                  disabled={batchFileIds.length === 0}
+                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-border/60 px-1.5 text-foreground-muted hover:bg-surface hover:text-foreground disabled:cursor-default disabled:opacity-50"
+                >
+                  <ScanText className="h-3 w-3" strokeWidth={1.75} />
+                  {t("batch.recognizeSelected")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchDialogMode("export")}
+                  disabled={batchFileIds.length === 0}
+                  className="h-6 shrink-0 rounded bg-primary px-2 font-medium text-primary-foreground hover:bg-primary/90 active:bg-primary/80 disabled:cursor-default disabled:opacity-50"
+                >
+                  {t("batch.exportSelected")}
+                </button>
+              </div>
             </div>
           )}
 
@@ -372,14 +389,18 @@ export function QueuePanel({
           </button>
       </div>
       <BatchExportDialog
-        open={batchDialogOpen}
+        open={batchDialogMode !== null}
         fileIds={batchFileIds}
+        recognizeOnly={batchDialogMode === "recognize"}
         onClose={closeBatchDialog}
         onStarted={exitSelecting}
       />
     </aside>
   );
 }
+
+/** 批量识别 runs OCR only; 批量识别导出 also writes the output files. */
+type BatchAction = "recognize" | "export";
 
 type MetaAction = "newspaper" | "addTag" | "removeTag";
 
