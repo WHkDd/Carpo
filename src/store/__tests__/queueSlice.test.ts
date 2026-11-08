@@ -163,3 +163,66 @@ describe("queueSlice", () => {
     expect(s.fileViews[fid]).toBeUndefined();
   });
 });
+
+describe("restoreSnapshot", () => {
+  it("round-trips a file's work through JSON and leaves already-queued files alone", async () => {
+    const { buildSnapshot, parseSnapshot } = await import("@/lib/session-snapshot");
+    const source = makeStore();
+    const s = source.getState();
+    s.addFile({
+      id: "file-1",
+      path: "/scans/a.pdf",
+      name: "a.pdf",
+      ext: "pdf",
+      kind: "pdf",
+      pdfTotal: 12,
+      currentPage: 7,
+      payload: { width: 10, height: 10, objectUrl: "blob:a" },
+      payloadPage: 7,
+    });
+    s.addFile({ id: "file-2", path: "/scans/b.jpg", name: "b.jpg", ext: "jpg", kind: "image" });
+    s.addBlock("file-1", 7, { id: "b1", x: 1, y: 2, w: 3, h: 4, articleId: null, articleOrder: null });
+    s.updateDocumentMetadata("file-1", { newspaperName: "申报", newspaperDate: "1932-01-01" });
+    s.setWholeFileRange("file-1", "3-9");
+    s.setRecognizedPages("file-1", {
+      7: { text: "第七页", status: "done", sourceMode: "page_image" },
+    });
+    s.setProofreadReviews("file-1", {
+      "page:7": {
+        target: { mode: "whole_file", page: 7 },
+        baseText: "第七页",
+        suggestions: [],
+        model: "m",
+        discarded: 0,
+        status: "pending",
+        createdAt: 1,
+      } as never,
+    });
+    s.setCurrent("file-1");
+
+    const snapshot = parseSnapshot(JSON.stringify(buildSnapshot(source.getState() as never)));
+    expect(snapshot.files[0]).not.toHaveProperty("payload");
+
+    const target = makeStore();
+    target.getState().addFile({ id: "file-2", path: "/live/b.jpg", name: "b.jpg", ext: "jpg", kind: "image" });
+    target.getState().updateDocumentMetadata("file-2", { newspaperName: "live" });
+
+    expect(target.getState().restoreSnapshot(snapshot)).toEqual({ added: 1, skipped: 1 });
+
+    const restored = target.getState();
+    const before = source.getState();
+    expect(restored.files.map((f) => f.id)).toEqual(["file-2", "file-1"]);
+    expect(restored.currentFileId).toBe("file-1");
+    expect(restored.currentPage).toBe(7);
+    expect(restored.pdfTotal).toBe(12);
+    expect(restored.pageStates["file-1::7"]).toEqual(before.pageStates["file-1::7"]);
+    expect(restored.documentStates["file-1"]).toEqual(before.documentStates["file-1"]);
+    expect(restored.wholeFileRange["file-1"]).toBe("3-9");
+    expect(restored.recognizedPages["file-1"]).toEqual(before.recognizedPages["file-1"]);
+    expect(restored.pageOcrTexts["file-1"]).toEqual(before.pageOcrTexts["file-1"]);
+    expect(restored.proofreadReviews["file-1"]).toEqual(before.proofreadReviews["file-1"]);
+    // The queued copy of file-2 keeps its live state and path.
+    expect(restored.files[0]!.path).toBe("/live/b.jpg");
+    expect(restored.documentStates["file-2"]!.newspaperName).toBe("live");
+  });
+});

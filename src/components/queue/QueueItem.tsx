@@ -48,6 +48,15 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
     const failed = !!entry.loadError;
     const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
     const meta = failed ? t("queue.loadFailed") : entry.ext.toUpperCase();
+    // The extension already shows on the meta line below, so the title drops
+    // it. A failed row shows 无法读取 there instead and keeps the full name.
+    const suffix = `.${entry.ext}`;
+    const displayName =
+      !failed &&
+      entry.name.length > suffix.length &&
+      entry.name.toLowerCase().endsWith(suffix.toLowerCase())
+        ? entry.name.slice(0, -suffix.length)
+        : entry.name;
     const pageBadge =
       entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
         ? `${entry.currentPage ?? 1} / ${entry.pdfTotal}`
@@ -101,9 +110,19 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
               />
             )}
           </span>
-          <span className="min-w-0">
+          <span
+            className={cn(
+              "min-w-0",
+              // With a page badge the button lands on the badge (which fades
+              // out) and the name never reaches it; without one it would sit
+              // on the name's last characters.
+              !pageBadge &&
+                onRemove &&
+                "group-hover:queue-name-fade group-focus-within:queue-name-fade"
+            )}
+          >
             <span className="block truncate text-sm font-semibold">
-              {entry.name}
+              {displayName}
             </span>
             <span className="mt-0.5 flex min-w-0 items-center gap-1">
               <span

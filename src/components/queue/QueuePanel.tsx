@@ -4,15 +4,20 @@ import {
   ChevronRight,
   FileJson,
   FileOutput,
+  FolderClock,
+  MoreHorizontal,
   Plus,
   ScanText,
   Settings as SettingsIcon,
   Tags,
 } from "lucide-react";
-import { DropMenu } from "@/components/ui/DropMenu";
+import { DropMenu, type DropMenuEntry } from "@/components/ui/DropMenu";
 import { useListKeyboard } from "@/hooks/useListKeyboard";
+import { alertError } from "@/lib/confirm";
 import { isImeCommit } from "@/lib/ime";
-import { isTauriRuntime } from "@/lib/runtime";
+import { appErrorMessage } from "@/lib/ipc-types";
+import { isTauriRuntime, logError } from "@/lib/runtime";
+import { openProgressSnapshot, saveProgressSnapshot } from "@/lib/session-snapshot";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
 import { QueueItem, QueueItemCompact } from "./QueueItem";
@@ -41,6 +46,7 @@ export function QueuePanel({
   const removeFile = useStore((s) => s.removeFile);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
   const toggleQueueCollapsed = useStore((s) => s.toggleQueueCollapsed);
+  const setQueueCollapsed = useStore((s) => s.setQueueCollapsed);
   const desktopRuntime = isTauriRuntime();
 
   // Batch-export selection mode. Local state: nothing outside this panel
@@ -49,6 +55,9 @@ export function QueuePanel({
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   // null = closed; otherwise which of the two batch actions the dialog runs.
   const [batchDialogMode, setBatchDialogMode] = useState<BatchAction | null>(null);
+  // Set when the dialog exports a finished recognize batch rather than the
+  // ticked rows; null = use the selection.
+  const [exportFileIds, setExportFileIds] = useState<string[] | null>(null);
   const selectableIds = useMemo(
     () => files.filter((f) => !f.loadError).map((f) => f.id),
     [files]
@@ -73,9 +82,17 @@ export function QueuePanel({
     setSelecting(false);
     setCheckedIds([]);
     setBatchDialogMode(null);
+    setExportFileIds(null);
     setMetaEditor(null);
   }, []);
-  const closeBatchDialog = useCallback(() => setBatchDialogMode(null), []);
+  const closeBatchDialog = useCallback(() => {
+    setBatchDialogMode(null);
+    setExportFileIds(null);
+  }, []);
+  const exportRecognized = useCallback((ids: string[]) => {
+    setExportFileIds(ids);
+    setBatchDialogMode("export");
+  }, []);
   const [metaEditor, setMetaEditor] = useState<MetaAction | null>(null);
 
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -150,17 +167,18 @@ export function QueuePanel({
               >
                 <Plus className="h-3 w-3" strokeWidth={1.8} />
               </button>
-              {desktopRuntime && (
-                <button
-                  type="button"
-                  onClick={() => void onImportPaddleJson()}
-                  aria-label={t("queue.importPaddleJson")}
-                  title={t("queue.importPaddleJson")}
-                  className={`h-5 w-5 ${ICON_BUTTON}`}
-                >
-                  <FileJson className="h-3 w-3" strokeWidth={1.8} />
-                </button>
-              )}
+              {/* 60px fits three icons; the less frequent actions share a
+                  "⋯ more" menu. */}
+              <QueueActionsMenu
+                more
+                onImportPaddleJson={onImportPaddleJson}
+                onBatch={() => {
+                  // Ticking files needs the full rows: expand, then enter
+                  // the same selection mode as the expanded batch button.
+                  setQueueCollapsed(false);
+                  setSelecting(true);
+                }}
+              />
               <button
                 type="button"
                 onClick={toggleQueueCollapsed}
@@ -246,6 +264,7 @@ export function QueuePanel({
                   <FileJson className="h-3.5 w-3.5" strokeWidth={1.8} />
                 </button>
               )}
+              {desktopRuntime && <QueueActionsMenu />}
               <button
                 type="button"
                 onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
@@ -377,7 +396,7 @@ export function QueuePanel({
       </div>
 
       <div className="border-t border-border/50 px-1.5 pt-1.5">
-          <BatchExportStatus />
+          <BatchExportStatus onExport={exportRecognized} />
           <button
             type="button"
             onClick={onOpenSettings}
@@ -390,7 +409,7 @@ export function QueuePanel({
       </div>
       <BatchExportDialog
         open={batchDialogMode !== null}
-        fileIds={batchFileIds}
+        fileIds={exportFileIds ?? batchFileIds}
         recognizeOnly={batchDialogMode === "recognize"}
         onClose={closeBatchDialog}
         onStarted={exitSelecting}
@@ -514,5 +533,96 @@ function BatchMetaEditor({
         </button>
       )}
     </div>
+  );
+}
+
+type SnapshotAction = "save" | "open";
+type QueueMenuAction = SnapshotAction | "paddleJson" | "batch";
+
+/** Expanded header: one icon for the progress snapshot (进度快照) — save the
+ *  queue and its work to a JSON file, or restore one; desktop only, see
+ *  `session-snapshot.ts`. Collapsed rail (`more`): a "⋯" menu that also
+ *  carries Paddle JSON import and batch OCR / export, which have no room
+ *  for their own icons there. */
+function QueueActionsMenu({
+  more = false,
+  onImportPaddleJson,
+  onBatch,
+}: {
+  more?: boolean;
+  onImportPaddleJson?: () => void | Promise<void>;
+  onBatch?: () => void;
+}) {
+  const t = useT();
+  const desktop = isTauriRuntime();
+  const hasFiles = useStore((s) => s.files.length > 0);
+  const setStatusText = useStore((s) => s.setStatusText);
+
+  const run = async (action: SnapshotAction) => {
+    try {
+      if (action === "save") {
+        const count = await saveProgressSnapshot();
+        if (count !== null) setStatusText(t("snapshot.saved", { count }));
+        return;
+      }
+      const summary = await openProgressSnapshot();
+      if (!summary) return;
+      // The restored files are visible in the queue; like a file import, the
+      // status pill only speaks up about what did not come back cleanly.
+      const problems = [
+        summary.missing > 0 ? t("snapshot.missing", { count: summary.missing }) : null,
+        summary.skipped > 0 ? t("snapshot.skipped", { count: summary.skipped }) : null,
+      ].filter((line): line is string => line !== null);
+      if (problems.length > 0) setStatusText(problems.join(" · "));
+    } catch (err) {
+      const message = appErrorMessage(err);
+      void logError(`progress snapshot ${action} failed: ${message}`);
+      await alertError({
+        title: t(action === "save" ? "snapshot.saveFailed" : "snapshot.openFailed"),
+        message,
+      });
+    }
+  };
+
+  const items: DropMenuEntry<QueueMenuAction>[] = [];
+  if (more) {
+    if (desktop && onImportPaddleJson) {
+      items.push({ key: "paddleJson", label: t("queue.importPaddleJson"), variant: "action" });
+    }
+    if (onBatch) {
+      items.push({ key: "batch", label: t("batch.button"), variant: "action", disabled: !hasFiles });
+    }
+    if (desktop && items.length > 0) items.push({ separator: true });
+  }
+  if (desktop) {
+    items.push(
+      { key: "save", label: t("snapshot.save"), variant: "action", disabled: !hasFiles },
+      { key: "open", label: t("snapshot.open"), variant: "action" }
+    );
+  }
+
+  return (
+    <DropMenu<QueueMenuAction>
+      ariaLabel={t(more ? "queue.more" : "snapshot.menu")}
+      triggerIcon={
+        more ? (
+          <MoreHorizontal className="h-3 w-3" strokeWidth={1.8} />
+        ) : (
+          <FolderClock className="h-3.5 w-3.5" strokeWidth={1.8} />
+        )
+      }
+      showChevron={false}
+      menuClassName="min-w-0"
+      triggerClassName={`justify-center rounded-md px-0 text-foreground-muted hover:text-foreground ${
+        more ? "h-5 w-5" : "h-6 w-6"
+      }`}
+      placement="bottom"
+      items={items}
+      onSelect={(action) => {
+        if (action === "paddleJson") void onImportPaddleJson?.();
+        else if (action === "batch") onBatch?.();
+        else void run(action);
+      }}
+    />
   );
 }

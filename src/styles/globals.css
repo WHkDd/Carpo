@@ -250,6 +250,16 @@
   .text-foreground-subtle  { color: hsl(var(--foreground-subtle)); }
   .border-strong { border-color: hsl(var(--border-strong)); }
 
+  /* Queue row: the hover-revealed remove button sits over the end of the
+     name column. Fading the text itself to transparent (rather than
+     painting a gradient in the row colour) works on the white selected row
+     and the gray hover row alike. Fully clear from 12px before the edge —
+     the button's left edge — so the icon never sits on a glyph. */
+  .queue-name-fade {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent calc(100% - 12px));
+    mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent calc(100% - 12px));
+  }
+
   /* Article hue helpers — used by Konva via getComputedStyle */
   .article-1  { color: hsl(var(--article-1)); }
   .article-2  { color: hsl(var(--article-2)); }

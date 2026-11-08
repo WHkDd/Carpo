@@ -104,6 +104,11 @@ export async function importClipboardImage(): Promise<ClipboardImageImport | nul
   return invoke<ClipboardImageImport | null>("import_clipboard_image");
 }
 
+/** Desktop only: which of `paths` still exist as files, in order. */
+export async function pathsExist(paths: string[]): Promise<boolean[]> {
+  return invoke<boolean[]>("paths_exist", { paths });
+}
+
 export async function getPdfInfo(path: string): Promise<PdfInfo> {
   if (!isTauriRuntime()) {
     return httpJson<PdfInfo>(`/api/files/${path}/pdf-info`);

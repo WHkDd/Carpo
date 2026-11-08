@@ -74,6 +74,12 @@ export interface DropMenuProps<T extends string> {
   triggerClassName?: string;
   /** Rendered before the label — lets the panel toolbar use an icon trigger. */
   triggerIcon?: ReactNode;
+  /** Extra classes for the menu panel, e.g. `min-w-0` for a menu of two
+   *  short actions that should not stretch to the default 160px. */
+  menuClassName?: string;
+  /** Defaults to true. Off for an icon trigger sitting in a row of plain
+   *  icon buttons, where the chevron would be the only one of its kind. */
+  showChevron?: boolean;
   /** Whole menu unavailable, e.g. when every entry would be disabled. */
   disabled?: boolean;
   /**
@@ -201,6 +207,8 @@ export function DropMenu<T extends string>({
   triggerHint,
   triggerClassName = "",
   triggerIcon,
+  showChevron = true,
+  menuClassName,
   disabled = false,
   placement = "top",
   align = "start",
@@ -318,18 +326,24 @@ export function DropMenu<T extends string>({
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const target = e.target as Node;
       // The menu is portaled to <body>, so it is no longer a descendant of
       // `wrapRef` — excluding only the wrapper would close the menu on its
-      // own items' mousedown, and every click inside the menu would die
+      // own items' pointerdown, and every click inside the menu would die
       // before `onSelect` ever fires.
       if (wrapRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
       setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    // Window + capture phase, so nothing below can swallow it. A bubbling
+    // `document` mousedown missed clicks on the window's drag strips —
+    // Tauri's drag script registers its own document mousedown first and
+    // calls `stopImmediatePropagation` there — and on any element whose
+    // React handler stops propagation; the menu then only closed from its
+    // own trigger.
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
   }, [open]);
 
   // A menu whose entries all became unavailable while it was open would trap
@@ -406,10 +420,12 @@ export function DropMenu<T extends string>({
             {triggerHint}
           </span>
         )}
-        <ChevronDown
-          className="h-3 w-3 text-foreground-subtle"
-          strokeWidth={1.8}
-        />
+        {showChevron && (
+          <ChevronDown
+            className="h-3 w-3 text-foreground-subtle"
+            strokeWidth={1.8}
+          />
+        )}
       </button>
       {open &&
         createPortal(
@@ -439,7 +455,10 @@ export function DropMenu<T extends string>({
                     visibility: "hidden",
                   }
             }
-            className="z-50 min-w-[160px] overflow-y-auto rounded-md border border-border/70 bg-background p-1 shadow-md"
+            className={cn(
+              "z-50 min-w-[160px] overflow-y-auto rounded-md border border-border/70 bg-background p-1 shadow-md",
+              menuClassName
+            )}
           >
             {items.map((entry, index) => {
               if (isSeparator(entry)) {

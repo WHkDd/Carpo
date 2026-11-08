@@ -51,6 +51,15 @@ pub async fn load_raster_image(path: String) -> AppResult<Response> {
     Ok(Response::new(out))
 }
 
+/// Which of `paths` still exist as regular files, in order. Used when a
+/// progress snapshot is restored: the snapshot only records paths, and a file
+/// that moved since must show up as unreadable instead of failing silently
+/// the first time it is opened. A plain `is_file` per path — no decode.
+#[tauri::command]
+pub fn paths_exist(paths: Vec<String>) -> Vec<bool> {
+    paths.iter().map(|p| Path::new(p).is_file()).collect()
+}
+
 /// Writes `path` turned a quarter turn to a new PNG in the scratch dir and
 /// returns the new path. The caller swaps the queue entry over to it, so the
 /// preview and every OCR path read the rotated pixels from one file — no

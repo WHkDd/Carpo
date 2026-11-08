@@ -144,6 +144,12 @@ export function pageKey(fileId: string, page: number): string {
   return `${fileId}::${page}`;
 }
 
+/** Inverse of `pageKey`: the file id a `pageStates` key belongs to. */
+export function pageKeyFileId(key: string): string {
+  const at = key.lastIndexOf("::");
+  return at === -1 ? key : key.slice(0, at);
+}
+
 function newArticleId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();

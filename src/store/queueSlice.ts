@@ -2,10 +2,11 @@ import type { StateCreator } from "zustand";
 import type { FileEntry, RenderedPagePayload } from "@/lib/ipc-types";
 import type { FileViewSlice } from "./fileViewSlice";
 import type { UiSlice } from "./uiSlice";
-import type { PageStateSlice } from "./pageStateSlice";
+import { pageKeyFileId, type PageStateSlice } from "./pageStateSlice";
 import type { SelectionSlice } from "./selectionSlice";
 import type { SettingsSlice } from "./settingsSlice";
 import type { JobSlice } from "./jobSlice";
+import type { RestorableSnapshot } from "@/lib/session-snapshot";
 
 export interface QueueSlice {
   files: FileEntry[];
@@ -32,6 +33,13 @@ export interface QueueSlice {
    *  survive — they describe the document, not its pixels. The payload is
    *  cleared too; `usePdfPageSync` reloads it from the new path. */
   replaceRotatedImage: (id: string, path: string) => void;
+  /** Appends a progress snapshot's files and their per-file work in one
+   *  update. Files whose id is already queued are skipped whole — their live
+   *  state wins. Selects the snapshot's current file when it was restored. */
+  restoreSnapshot: (snapshot: RestorableSnapshot) => {
+    added: number;
+    skipped: number;
+  };
 }
 
 type CombinedState = QueueSlice &
@@ -152,7 +160,57 @@ export const createQueueSlice: StateCreator<
       // fresh fit, square images included.
       delete state.fileViews[id];
     }),
+  restoreSnapshot: (snapshot) => {
+    const restored = new Set<string>();
+    let skipped = 0;
+    set((state) => {
+      const queued = new Set(state.files.map((file) => file.id));
+      for (const file of snapshot.files) {
+        if (queued.has(file.id) || restored.has(file.id)) {
+          skipped += 1;
+          continue;
+        }
+        state.files.push(normalizeFileEntry(file));
+        restored.add(file.id);
+      }
+      for (const key of SNAPSHOT_FILE_MAPS) {
+        const source = (snapshot[key] ?? {}) as Record<string, unknown>;
+        const target = state[key] as Record<string, unknown>;
+        for (const id of restored) {
+          if (id in source) target[id] = source[id];
+        }
+      }
+      for (const [key, page] of Object.entries(snapshot.pageStates ?? {})) {
+        if (restored.has(pageKeyFileId(key))) state.pageStates[key] = page;
+      }
+      const currentId =
+        snapshot.currentFileId !== null && restored.has(snapshot.currentFileId)
+          ? snapshot.currentFileId
+          : restored.values().next().value;
+      const current = state.files.find((file) => file.id === currentId);
+      if (current) {
+        state.currentFileId = current.id;
+        state.selectedArticleIds = [];
+        syncCurrentPageFields(state, current);
+      }
+    });
+    return { added: restored.size, skipped };
+  },
 });
+
+/** Per-file maps keyed directly by file id that a progress snapshot carries
+ *  (`pageStates`, keyed `${fileId}::${page}`, is handled beside them). Zoom,
+ *  selection and editing refs are left out: they are view state, not work. */
+export const SNAPSHOT_FILE_MAPS = [
+  "documentStates",
+  "wholeFileRange",
+  "documentResults",
+  "articleOcrTexts",
+  "articleOcrRegions",
+  "pageOcrTexts",
+  "recognizedPages",
+  "proofreadReviews",
+] as const;
 
 /** Drops everything derived from a file's pixels: blocks, selection and
  *  editing refs, and every OCR / proofread result. Shared by removal and

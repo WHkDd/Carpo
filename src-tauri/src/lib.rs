@@ -72,6 +72,7 @@ pub fn run() {
             commands::files::list_supported_extensions,
             commands::files::import_clipboard_image,
             commands::files::rotate_image,
+            commands::files::paths_exist,
             commands::render::get_pdf_info,
             commands::render::render_page,
             commands::settings::get_secret,

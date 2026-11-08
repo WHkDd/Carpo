@@ -519,7 +519,10 @@ function AppShellInner() {
           onImportPaddleJson={paddleJson.open}
           onOpenSettings={openSettings}
         />
-        <section className="min-h-0 min-w-0 overflow-hidden px-2 pt-2 pb-2">
+        {/* No left padding: the queue column already ends in its own 12px
+            (panel + list padding), and adding the section's 8px on top left
+            a visibly wider gutter than the 8px above the canvas. */}
+        <section className="min-h-0 min-w-0 overflow-hidden pl-0 pr-2 pt-2 pb-2">
           <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
             <ImageCanvas ref={canvasRef} />
             {dropTargetActive && (

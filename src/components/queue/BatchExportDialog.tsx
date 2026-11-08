@@ -403,8 +403,19 @@ function itemStatusLabel(
 
 /** Footer row of the queue panel while a batch exists: a one-line summary
  *  that expands into the per-file list. Stays after the batch ends until
- *  dismissed, so a failure is never only a transient notification. */
-export function BatchExportStatus({ compact }: { compact?: boolean }) {
+ *  dismissed, so a failure is never only a transient notification.
+ *
+ *  A recognize-only batch that ran to the end offers 导出 for the files it
+ *  recognized: `onExport` receives their ids (still in the queue, failed and
+ *  skipped ones left out) and opens the export dialog. An export batch never
+ *  shows it — the export was already chosen when that batch started. */
+export function BatchExportStatus({
+  compact,
+  onExport,
+}: {
+  compact?: boolean;
+  onExport?: (fileIds: string[]) => void;
+}) {
   const t = useT();
   const batch = useStore((s) => s.batchExport);
   const setBatchExport = useStore((s) => s.setBatchExport);
@@ -422,6 +433,10 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
     batch.currentIndex !== null ? batch.items[batch.currentIndex] : undefined;
 
   const ocrOnly = batch.recognizeOnly === true;
+  const exportableIds =
+    onExport && ocrOnly && batch.status === "done"
+      ? batch.items.filter((i) => i.status === "done").map((i) => i.fileId)
+      : [];
   const DoneIcon = ocrOnly ? ScanText : FileOutput;
   const headline =
     batch.status === "cancelling"
@@ -524,6 +539,19 @@ export function BatchExportStatus({ compact }: { compact?: boolean }) {
             strokeWidth={1.75}
           />
         </button>
+        {exportableIds.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const queued = new Set(useStore.getState().files.map((f) => f.id));
+              onExport?.(exportableIds.filter((id) => queued.has(id)));
+            }}
+            title={t("batch.exportRecognizedTitle", { count: exportableIds.length })}
+            className="h-6 shrink-0 rounded-md border border-border/60 bg-background px-2 text-[11px] text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+          >
+            {t("batch.exportRecognized")}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => (active ? cancelBatchExport() : setBatchExport(null))}

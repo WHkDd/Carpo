@@ -94,11 +94,24 @@ describe("DropMenu — status bar baseline behaviour", () => {
   it("stays open when the pointer goes down inside the portal menu", () => {
     // The menu lives at <body> now, not inside the wrapper: an outside-click
     // check that only excludes the wrapper would close the menu on its own
-    // items' mousedown and every selection would die.
+    // items' pointerdown and every selection would die.
     const { trigger } = setup(RADIO_ITEMS);
     fireEvent.click(trigger);
-    fireEvent.mouseDown(screen.getByRole("menuitemradio", { name: "丙" }));
+    fireEvent.pointerDown(screen.getByRole("menuitemradio", { name: "丙" }));
     expect(screen.getByRole("menu")).not.toBeNull();
+  });
+
+  it("closes on an outside press even when that element stops propagation", () => {
+    // Tauri's drag strips and React handlers that call stopPropagation both
+    // kept a bubbling document listener from ever seeing the press.
+    const { trigger } = setup(RADIO_ITEMS);
+    const outside = document.createElement("div");
+    outside.addEventListener("pointerdown", (e) => e.stopImmediatePropagation());
+    document.body.appendChild(outside);
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(outside);
+    expect(screen.queryByRole("menu")).toBeNull();
+    outside.remove();
   });
 });
 
