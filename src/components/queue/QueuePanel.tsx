@@ -235,15 +235,18 @@ export function QueuePanel({
     <aside className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-surface pb-2">
       <div className="flex min-h-0 flex-col overflow-hidden px-2 pb-2">
           <div className="mb-2 flex h-7 shrink-0 items-center justify-between gap-2 px-1.5 text-[11px] font-semibold text-foreground-subtle">
-            <div className="flex min-w-0 items-center gap-2">
-              <span>{t("queue.title")}</span>
-              <span className="font-mono text-foreground-subtle">
-                {files.length === 0
-                  ? t("queue.empty")
-                  : t("queue.count", { count: files.length })}
+            {/* Five icons leave ~80px for this block: the count drops its
+                unit (kept in the tooltip) and nothing wraps. */}
+            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+              <span className="truncate">{t("queue.title")}</span>
+              <span
+                className="shrink-0 font-mono tabular-nums text-foreground-subtle"
+                title={files.length === 0 ? undefined : t("queue.count", { count: files.length })}
+              >
+                {files.length === 0 ? t("queue.empty") : files.length}
               </span>
             </div>
-            <div className="flex items-center gap-0.5">
+            <div className="flex shrink-0 items-center">
               <button
                 type="button"
                 onClick={() => void onOpenFiles()}
