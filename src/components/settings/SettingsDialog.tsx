@@ -23,6 +23,7 @@ import {
   setThemePreference,
   THEME_PREFERENCES,
 } from "@/lib/theme";
+import { ACTIVE_ROW } from "@/lib/utils";
 import type {
   NonSecretSettings,
   PaddleDocumentOptions,
@@ -624,18 +625,12 @@ function TabButton({ id, active, label, onClick, badge, dot }: TabButtonProps) {
       aria-controls={settingsTabPanelId(id)}
       tabIndex={active ? 0 : -1}
       onClick={onClick}
-      className={`relative flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${
+      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition-colors focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${
         active
-          ? "bg-surface-2 font-medium text-foreground"
+          ? `${ACTIVE_ROW} font-medium`
           : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
       }`}
     >
-      {active && (
-        <span
-          aria-hidden
-          className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-primary"
-        />
-      )}
       {dot && (
         <span
           aria-hidden

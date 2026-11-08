@@ -540,12 +540,14 @@ function AppShellInner() {
             <StatusBar canvasRef={canvasRef} />
             {statusText !== t("common.ready") && !dropTargetActive && (
               <div
-                className="pointer-events-none absolute bottom-[2.5px] right-2 z-20 max-w-[55%] truncate rounded-lg border border-border/60 bg-background/85 px-2.5 py-1.5 text-[11px] text-foreground-muted"
+                // Same h-7 box as the StatusBar pill on the left, so the two
+                // sit on one line at one height.
+                className="pointer-events-none absolute bottom-[2.5px] right-2 z-20 flex h-7 max-w-[55%] items-center rounded-lg border border-border/60 bg-background/85 px-2.5 text-[11px] text-foreground-muted"
                 role="status"
                 aria-live="polite"
                 title={statusText}
               >
-                {statusText}
+                <span className="truncate">{statusText}</span>
               </div>
             )}
           </div>

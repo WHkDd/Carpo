@@ -1,7 +1,7 @@
 import { forwardRef } from "react";
 import { Check, FileText, FileImage, FileWarning, Trash2, X } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
-import { cn } from "@/lib/utils";
+import { ACTIVE_ROW, cn } from "@/lib/utils";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
 
@@ -32,11 +32,6 @@ interface QueueItemProps {
  *  keyboard navigation is never invisible. */
 const CELL_FOCUS =
   "focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
-
-/** Selected row lifts off the gray rail as a white card, so it never reads
- *  as the gray hover state. */
-const ACTIVE_ROW =
-  "bg-white text-foreground shadow-[0_0_0_1px_hsl(var(--border)/0.75),0_1px_3px_rgb(0_0_0/0.07)]";
 
 export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
   function QueueItem(

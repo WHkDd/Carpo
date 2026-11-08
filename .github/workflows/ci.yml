@@ -63,7 +63,7 @@ jobs:
   # job covers it on the primary release target (macOS arm64).
   rust-macos:
     name: Rust (pdfium tests · macOS)
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
