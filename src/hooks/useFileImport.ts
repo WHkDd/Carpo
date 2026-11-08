@@ -199,7 +199,7 @@ export function useFileImport() {
       } else if (okCount > 0 && !anyFailed) {
         // Success is visible in the queue itself; the status pill stays quiet
         // so only problems ever appear there.
-        setStatusText(t("common.ready"));
+        setStatusText("");
       }
     },
     [addFile, cache, getSupported, setStatusText]
@@ -336,7 +336,7 @@ export function useFileImport() {
       } else if (okCount > 0 && !anyFailed) {
         // Success is visible in the queue itself; the status pill stays quiet
         // so only problems ever appear there.
-        setStatusText(t("common.ready"));
+        setStatusText("");
       }
     },
     [addFile, cache, getSupported, setStatusText]

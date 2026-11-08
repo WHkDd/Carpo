@@ -538,7 +538,7 @@ function AppShellInner() {
             )}
             <ProgressPill />
             <StatusBar canvasRef={canvasRef} />
-            {statusText !== t("common.ready") && !dropTargetActive && (
+            {statusText !== "" && !dropTargetActive && (
               <div
                 // Same h-7 box as the StatusBar pill on the left, so the two
                 // sit on one line at one height.

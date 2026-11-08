@@ -187,7 +187,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       // keeps reading old-orientation pixels. `usePdfPageSync` reloads.
       cache.delete(fileId, 1, ACTIVE_PREVIEW_DPI);
       useStore.getState().replaceRotatedImage(fileId, nextPath);
-      setStatusText(t("common.ready"));
+      setStatusText("");
     } catch (err) {
       const message = appErrorMessage(err);
       void logError(`rotate failed: ${path}: ${message}`);
