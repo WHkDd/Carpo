@@ -197,6 +197,22 @@ describe("agent review safety", () => {
     expect(useStore.getState().undoProofreadReview("f", "page:1")).toBe(true);
     expect(useStore.getState().pageOcrTexts.f?.[1]).toBe("新聞");
   });
+  it("overwrites unit text only against the current baseText", async () => {
+    seed();
+    await expect(
+      request("PUT", "/v1/files/f/units/page:1/text", {
+        baseText: "old",
+        text: "x",
+      }),
+    ).rejects.toThrow("stale");
+    expect(
+      await request("PUT", "/v1/files/f/units/page:1/text", {
+        baseText: "新聞",
+        text: "新闻报",
+      }),
+    ).toEqual({ key: "page:1", text: "新闻报", previousText: "新聞" });
+    expect(useStore.getState().recognizedPages.f?.[1]?.textEdited).toBe(true);
+  });
   it("rejects stale and invalid anchors without modifying reviews", async () => {
     seed();
     await expect(

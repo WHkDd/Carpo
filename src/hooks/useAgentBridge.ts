@@ -58,6 +58,19 @@ function files() {
   }));
 }
 
+function assertIdle(id: string) {
+  const state = useStore.getState();
+  if (
+    (state.activeJob?.fileId === id &&
+      ["running", "cancelling"].includes(state.activeJob.status)) ||
+    state.jobStartClaimFileId === id ||
+    (state.batchExport &&
+      ["running", "cancelling"].includes(state.batchExport.status) &&
+      state.batchExport.items.some((item) => item.fileId === id))
+  )
+    throw new Error("file has a running task");
+}
+
 /** Every dispatch uses the live store; only native I/O goes through IPC. */
 export async function dispatchAgentRequest(
   request: Omit<AgentRequest, "id">,
@@ -170,9 +183,8 @@ export async function dispatchAgentRequest(
     if (result.status === "error") throw new Error(result.error);
     return result;
   }
-  const unitMatch = /^\/v1\/files\/([^/]+)\/units(?:\/([^/]+)\/review)?$/.exec(
-    path,
-  );
+  const unitMatch =
+    /^\/v1\/files\/([^/]+)\/units(?:\/([^/]+)\/(review|text))?$/.exec(path);
   if (unitMatch) {
     const id = decodeURIComponent(unitMatch[1]!);
     const file = state.files.find((f) => f.id === id);
@@ -209,11 +221,29 @@ export async function dispatchAgentRequest(
         })),
       };
     }
-    if (method === "POST" && unitMatch[2]) {
-      const key = decodeURIComponent(unitMatch[2]);
-      const target = parseProofreadTargetKey(key);
-      if (!target || !targets.some((t) => proofreadKeyFor(t) === key))
-        throw new Error("unit not found");
+    const key = unitMatch[2] ? decodeURIComponent(unitMatch[2]) : "";
+    const target = parseProofreadTargetKey(key);
+    if (unitMatch[2] && (!target || !targets.some((t) => proofreadKeyFor(t) === key)))
+      throw new Error("unit not found");
+    if (method === "PUT" && target && unitMatch[3] === "text") {
+      // Direct overwrite bypasses the review panel, so there is no GUI undo;
+      // the caller gets previousText to restore it.
+      const previousText = proofreadTargetText(state, id, target);
+      if (body.baseText !== previousText)
+        throw new Error("stale or missing baseText: read units again");
+      if (typeof body.text !== "string")
+        throw new Error("text must be a string");
+      assertIdle(id);
+      if (target.mode === "whole_file")
+        state.updateRecognizedPageText(id, target.page, body.text);
+      else state.updateArticleOcrText(id, target.articleId, body.text);
+      return {
+        key,
+        text: proofreadTargetText(useStore.getState(), id, target),
+        previousText,
+      };
+    }
+    if (method === "POST" && target && unitMatch[3] === "review") {
       const text = proofreadTargetText(state, id, target);
       if (typeof body.baseText !== "string" || body.baseText !== text)
         throw new Error("stale or missing baseText: read units again");
@@ -221,15 +251,7 @@ export async function dispatchAgentRequest(
         throw new Error("apply must be a boolean");
       if (state.proofreadReviews[id]?.[key]?.status === "applied")
         throw new Error("undo or discard the applied review in Carpo first");
-      if (
-        (state.activeJob?.fileId === id &&
-          ["running", "cancelling"].includes(state.activeJob.status)) ||
-        state.jobStartClaimFileId === id ||
-        (state.batchExport &&
-          ["running", "cancelling"].includes(state.batchExport.status) &&
-          state.batchExport.items.some((item) => item.fileId === id))
-      )
-        throw new Error("file has a running task");
+      assertIdle(id);
       if (!Array.isArray(body.suggestions))
         throw new Error("suggestions must be an array");
       const suggestions = body.suggestions.map((value) => {

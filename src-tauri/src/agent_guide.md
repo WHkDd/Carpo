@@ -83,6 +83,23 @@ through the same engine; response includes `review.appliedConflictSkipped` for
 overlapping suggestions. GUI Undo remains available and refuses stale text.
 Undo or discard an existing applied review in Carpo before replacing it.
 
+## Overwrite unit text
+
+`PUT /files/:id/units/:key/text` replaces a unit's OCR text directly:
+
+```json
+{"baseText":"新聞","text":"新闻"}
+```
+
+`baseText` is REQUIRED and must equal the snapshot text you read (`null` for a
+page that has no text yet, which lets you write your own recognition result).
+`text` may be empty. Rejected while the file has an active OCR/proofread task.
+The write is identical to a user edit in Carpo's text panel: the page is marked
+edited, so all exports use the new text. It bypasses the review panel and has
+NO Undo in Carpo; the response `{key,text,previousText}` is your only way back
+(PUT `previousText` again with the new text as `baseText`). Existing reviews for
+that unit become stale. Prefer the review endpoint for selective corrections.
+
 ## Export current text
 
 `POST /export`:

@@ -524,7 +524,7 @@ function AppShellInner() {
             <ImageCanvas ref={canvasRef} />
             {dropTargetActive && (
               <div
-                className="pointer-events-none absolute inset-0 z-40 grid place-items-center border-2 border-primary/70 bg-background/75"
+                className="pointer-events-none absolute inset-0 z-40 grid place-items-center rounded-[inherit] border-2 border-primary/70 bg-background/75"
                 role="status"
                 aria-live="polite"
               >

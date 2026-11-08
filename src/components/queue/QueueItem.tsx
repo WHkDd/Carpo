@@ -33,6 +33,11 @@ interface QueueItemProps {
 const CELL_FOCUS =
   "focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
 
+/** Selected row lifts off the gray rail as a white card, so it never reads
+ *  as the gray hover state. */
+const ACTIVE_ROW =
+  "bg-white text-foreground shadow-[0_0_0_1px_hsl(var(--border)/0.75),0_1px_3px_rgb(0_0_0/0.07)]";
+
 export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
   function QueueItem(
     { entry, active, tabbable, onSelect, onRemove, checked, onToggleCheck },
@@ -61,16 +66,10 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
             "grid w-full grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors duration-100",
             CELL_FOCUS,
             active
-              ? "bg-surface-2 text-foreground"
+              ? ACTIVE_ROW
               : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
           )}
         >
-          {active && (
-            <span
-              aria-hidden
-              className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
-            />
-          )}
           <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-surface-2">
             {checked !== undefined ? (
               <span
@@ -193,16 +192,10 @@ export const QueueItemCompact = forwardRef<HTMLDivElement, QueueItemProps>(
             "relative grid h-10 w-14 place-items-center rounded-lg transition-colors duration-100",
             CELL_FOCUS,
             active
-              ? "bg-surface-2 text-foreground"
+              ? ACTIVE_ROW
               : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
           )}
         >
-          {active && (
-            <span
-              aria-hidden
-              className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-primary"
-            />
-          )}
           <Icon
             className={cn("h-4 w-4", failed && "text-destructive")}
             strokeWidth={1.5}

@@ -173,7 +173,7 @@ export function QueuePanel({
             </div>
 
             {files.length > 0 && (
-              <div className="min-h-0 overflow-y-auto overscroll-contain pb-3">
+              <div className="min-h-0 overflow-y-auto overscroll-contain pb-3 pt-0.5">
                 <div
                   role="grid"
                   aria-label={t("queue.title")}
@@ -355,7 +355,7 @@ export function QueuePanel({
               role="grid"
               aria-label={t("queue.title")}
               onKeyDown={onListKeyDown}
-              className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-3 pr-1"
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-3 pl-0.5 pr-1 pt-0.5"
             >
               {files.map((entry, index) => (
                 <QueueItem
