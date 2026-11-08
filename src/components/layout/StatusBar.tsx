@@ -209,7 +209,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         triggerHint={
           isMissing(provider) ? t("statusBar.notConfigured") : undefined
         }
-        triggerClassName="font-semibold text-foreground"
+        triggerClassName="font-semibold text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
         items={PROVIDER_ORDER.map((p) => ({
           key: p,
           label: providerLabel(p, t),
@@ -225,7 +225,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       <DropMenu
         ariaLabel={t("statusBar.profile")}
         triggerLabel={profileLabel(ocrProfile, t)}
-        triggerClassName="text-foreground"
+        triggerClassName="text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
         items={PROFILE_ORDER.map((p) => ({
           key: p,
           label: profileLabel(p, t),
@@ -238,11 +238,11 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         type="button"
         aria-label={t("statusBar.zoomOut")}
         onClick={() => canvasRef.current?.zoomOut()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
+        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
       >
         <Minus className="h-3 w-3" strokeWidth={1.8} />
       </button>
-      <div className="flex h-6 items-center rounded-md px-1 transition-colors focus-within:bg-surface-2">
+      <div className="flex h-6 items-center rounded-md px-1 transition-colors focus-within:bg-foreground/[0.07]">
         <input
           value={draftZoom}
           onChange={(e) => setDraftZoom(e.target.value.replace(/[^\d]/g, ""))}
@@ -269,14 +269,14 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
         type="button"
         aria-label={t("statusBar.zoomIn")}
         onClick={() => canvasRef.current?.zoomIn()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
+        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
       >
         <Plus className="h-3 w-3" strokeWidth={1.8} />
       </button>
       <button
         type="button"
         onClick={() => canvasRef.current?.fit()}
-        className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay"
+        className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
       >
         {t("statusBar.fit")}
       </button>
@@ -289,7 +289,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
             title={t("statusBar.rotateLeft")}
             disabled={rotating || jobBlocked || batchHoldsCurrent}
             onClick={() => void rotate(false)}
-            className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay disabled:pointer-events-none disabled:opacity-40"
+            className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12] disabled:pointer-events-none disabled:opacity-40"
           >
             <RotateCcw className="h-3 w-3" strokeWidth={1.8} />
           </button>
@@ -299,7 +299,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
             title={t("statusBar.rotateRight")}
             disabled={rotating || jobBlocked || batchHoldsCurrent}
             onClick={() => void rotate(true)}
-            className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay disabled:pointer-events-none disabled:opacity-40"
+            className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12] disabled:pointer-events-none disabled:opacity-40"
           >
             <RotateCw className="h-3 w-3" strokeWidth={1.8} />
           </button>
