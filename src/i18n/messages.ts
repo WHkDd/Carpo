@@ -167,7 +167,7 @@ export const zh = {
   "pageRange.error.reversed": "页码范围不能倒序：{from}-{to}",
   "pageRange.error.exceeds": "页码不能超过总页数 {total}",
 
-  "queue.title": "扫描队列",
+  "queue.title": "队列",
   "queue.empty": "空",
   "queue.count": "{count} 项",
   "queue.addFile": "添加文件",
@@ -633,7 +633,7 @@ export const en: Record<MessageKey, string> = {
   "pageRange.error.reversed": "A page range cannot run backwards: {from}-{to}",
   "pageRange.error.exceeds": "Page numbers cannot exceed the total of {total}",
 
-  "queue.title": "Scan queue",
+  "queue.title": "Queue",
   "queue.empty": "empty",
   "queue.count": "{count} items",
   "queue.addFile": "Add files",
