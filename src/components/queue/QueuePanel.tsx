@@ -565,7 +565,15 @@ function QueueActionsMenu({
     try {
       if (action === "save") {
         const count = await saveProgressSnapshot();
-        if (count !== null) setStatusText(t("snapshot.saved", { count }));
+        if (count !== null) {
+          const saved = t("snapshot.saved", { count });
+          setStatusText(saved);
+          // Only clear our own message: a problem reported in the meantime
+          // has to stay on screen.
+          window.setTimeout(() => {
+            if (useStore.getState().statusText === saved) setStatusText("");
+          }, 3000);
+        }
         return;
       }
       const summary = await openProgressSnapshot();

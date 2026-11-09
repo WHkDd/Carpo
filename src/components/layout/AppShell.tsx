@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
 import {
@@ -75,6 +76,7 @@ function AppShellInner() {
   const queueCollapsed = useStore((s) => s.queueCollapsed);
   const dropTargetActive = useStore((s) => s.dropTargetActive);
   const statusText = useStore((s) => s.statusText);
+  const setStatusText = useStore((s) => s.setStatusText);
   const recognitionMode = useStore((s) => s.recognitionMode);
   const markSelectionAsArticle = useStore((s) => s.markSelectionAsArticle);
   const toggleDrawMode = useStore((s) => s.toggleDrawMode);
@@ -542,12 +544,20 @@ function AppShellInner() {
               <div
                 // Same h-7 box as the StatusBar pill on the left, so the two
                 // sit on one line at one height.
-                className="pointer-events-none absolute bottom-[2.5px] right-2 z-20 flex h-7 max-w-[55%] items-center rounded-lg border border-border/60 bg-background/85 px-2.5 text-[11px] text-foreground-muted"
+                className="pointer-events-none absolute bottom-[2.5px] right-2 z-20 flex h-7 max-w-[55%] items-center gap-1 rounded-lg border border-border/60 bg-background/85 pl-2.5 pr-1 text-[11px] text-foreground-muted"
                 role="status"
                 aria-live="polite"
                 title={statusText}
               >
                 <span className="truncate">{statusText}</span>
+                <button
+                  type="button"
+                  aria-label={t("common.close")}
+                  onClick={() => setStatusText("")}
+                  className="pointer-events-auto grid h-5 w-5 shrink-0 place-items-center rounded-md transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
+                >
+                  <X className="h-3 w-3" strokeWidth={1.8} />
+                </button>
               </div>
             )}
           </div>

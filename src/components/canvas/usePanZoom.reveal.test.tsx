@@ -43,6 +43,33 @@ afterEach(() => {
   cleanup();
 });
 
+describe("trackpad zoom", () => {
+  it("accumulates deltas too small to change a whole percent on their own", () => {
+    useStore.setState({
+      fileViews: { f1: { zoomPercent: 14, panX: 0, panY: 0, isFit: false } },
+    });
+    const { result } = renderHook(() => usePanZoom(args()));
+    const wheel = {
+      evt: {
+        preventDefault: () => {},
+        deltaX: 0,
+        deltaY: -2,
+        deltaMode: 0,
+        ctrlKey: true,
+      },
+      target: {
+        getStage: () => ({ getPointerPosition: () => ({ x: 0, y: 0 }) }),
+      },
+    } as unknown as Parameters<typeof result.current.onWheel>[0];
+
+    for (let i = 0; i < 20; i += 1) {
+      act(() => result.current.onWheel(wheel));
+    }
+
+    expect(view()!.zoomPercent).toBeCloseTo(14 * Math.exp(0.08), 5);
+  });
+});
+
 describe("revealRect", () => {
   it("is idempotent — a centred block is not re-centred", () => {
     useStore.setState({

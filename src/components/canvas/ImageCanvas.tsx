@@ -182,7 +182,16 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
     const imageSrc = payload?.objectUrl ?? "";
     const [image, status] = useImage(imageSrc);
 
-    const { pan, scale, onWheel, onDragEnd, controller } = usePanZoom({
+    const {
+      pan,
+      scale,
+      onWheel,
+      onDragEnd,
+      pinchStart,
+      pinchChange,
+      pinchEnd,
+      controller,
+    } = usePanZoom({
       fileId: file?.id ?? null,
       currentPage: file?.currentPage ?? null,
       containerWidth: cw,
@@ -368,13 +377,42 @@ export const ImageCanvas = forwardRef<CanvasController, object>(
 
       const onClick = () => setCtxMenu(null);
 
+      const onGestureStart = (e: Event) => {
+        e.preventDefault();
+        pinchStart();
+      };
+      const onGestureChange = (e: Event) => {
+        e.preventDefault();
+        // WebKit-only event, absent from TypeScript's DOM lib.
+        const gesture = e as Event & {
+          scale: number;
+          clientX: number;
+          clientY: number;
+        };
+        const rect = container.getBoundingClientRect();
+        pinchChange(gesture.scale, {
+          x: gesture.clientX - rect.left,
+          y: gesture.clientY - rect.top,
+        });
+      };
+
       container.addEventListener("contextmenu", onContextMenu);
       window.addEventListener("click", onClick);
+      // Only the start is scoped to the canvas. Change and end are on window so
+      // a pinch that drifts off the canvas still finishes — a lost end would
+      // leave the wheel guard in usePanZoom stuck on.
+      container.addEventListener("gesturestart", onGestureStart);
+      window.addEventListener("gesturechange", onGestureChange);
+      window.addEventListener("gestureend", pinchEnd);
       return () => {
         container.removeEventListener("contextmenu", onContextMenu);
         window.removeEventListener("click", onClick);
+        container.removeEventListener("gesturestart", onGestureStart);
+        window.removeEventListener("gesturechange", onGestureChange);
+        window.removeEventListener("gestureend", pinchEnd);
+        pinchEnd();
       };
-    }, [stageMounted]);
+    }, [stageMounted, pinchStart, pinchChange, pinchEnd]);
 
     const handleCtxDelete = useCallback(() => {
       requestDelete(contextTargetIds);

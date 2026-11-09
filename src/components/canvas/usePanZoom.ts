@@ -214,7 +214,10 @@ export function usePanZoom(args: UsePanZoomArgs) {
     (nextScale: number, anchor: { x: number; y: number }) => {
       const { scale: curScale, pan: curPan, fileId: fid } = stateRef.current;
       if (!fid || curScale === 0) return;
-      const percent = clampZoomPercent(Math.round(nextScale * 100));
+      // Deliberately not rounded: a trackpad delivers many small deltas, and at
+      // the 10–20% a fitted newspaper scan sits at, rounding to whole percents
+      // discards each one before it can accumulate.
+      const percent = clampZoomPercent(nextScale * 100);
       const finalScale = percent / 100;
       const ratio = finalScale / curScale;
       const nextPan = {
@@ -263,9 +266,33 @@ export function usePanZoom(args: UsePanZoomArgs) {
     [applyZoom, cw, ch, fileId, setFileZoomAndPan]
   );
 
+  // WebKit reports a trackpad pinch as GestureEvents whose `scale` is cumulative
+  // from gesturestart, so the zoom at the start is the reference for each change.
+  const pinchStartScaleRef = useRef<number | null>(null);
+
+  const pinchStart = useCallback(() => {
+    pinchStartScaleRef.current = stateRef.current.scale;
+  }, []);
+
+  const pinchChange = useCallback(
+    (gestureScale: number, anchor: { x: number; y: number }) => {
+      const startScale = pinchStartScaleRef.current;
+      if (startScale === null) return;
+      applyZoom(startScale * gestureScale, anchor);
+    },
+    [applyZoom]
+  );
+
+  const pinchEnd = useCallback(() => {
+    pinchStartScaleRef.current = null;
+  }, []);
+
   const onWheel = useCallback(
     (e: KonvaEventObject<WheelEvent>) => {
       e.evt.preventDefault();
+      // The pinch owns the transform until it ends; a wheel event here would
+      // either zoom twice or pan the page out from under the fingers.
+      if (pinchStartScaleRef.current !== null) return;
       const stage = e.target.getStage();
       if (!stage) return;
       const event = e.evt;
@@ -376,5 +403,14 @@ export function usePanZoom(args: UsePanZoomArgs) {
     [fit, zoomBy, setPercent, revealRect]
   );
 
-  return { pan, scale, onWheel, onDragEnd, controller };
+  return {
+    pan,
+    scale,
+    onWheel,
+    onDragEnd,
+    pinchStart,
+    pinchChange,
+    pinchEnd,
+    controller,
+  };
 }

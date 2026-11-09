@@ -110,11 +110,12 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
   // dialog, and a second click while it is open must not start a second
   // rotation from the same, soon-stale path.
   const rotateBusyRef = useRef(false);
+  // The stored zoom is fractional; this field only ever shows whole percents.
   const zoomPercent = useStore((s) => {
     if (!s.currentFileId) return DEFAULT_FILE_VIEW.zoomPercent;
-    return (
+    return Math.round(
       s.fileViews[s.currentFileId]?.zoomPercent ??
-      DEFAULT_FILE_VIEW.zoomPercent
+        DEFAULT_FILE_VIEW.zoomPercent
     );
   });
 
@@ -142,6 +143,11 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
       return;
     }
     const next = clampZoomPercent(parseInt(cleaned, 10));
+    // Blurring an untouched field must not snap 14.3% to the 14 it displays.
+    if (next === zoomPercent) {
+      setDraftZoom(String(zoomPercent));
+      return;
+    }
     canvasRef.current?.setPercent(next);
   };
 
