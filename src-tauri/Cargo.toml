@@ -1,6 +1,6 @@
 [package]
 name = "carpo"
-version = "0.4.2"
+version = "0.4.3"
 description = "Newspaper Layout OCR Tool"
 authors = ["Kai"]
 license = "MIT"
