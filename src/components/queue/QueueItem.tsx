@@ -1,9 +1,10 @@
 import { forwardRef } from "react";
-import { Check, FileText, FileImage, FileWarning, Trash2, X } from "lucide-react";
+import { Check, FileText, FileImage, FileWarning, Star } from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { ACTIVE_ROW, cn } from "@/lib/utils";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
+import type { SearchRange } from "@/lib/queue-search";
 
 /** Stable fallback: a fresh `[]` per call would re-render (zustand v5
  *  compares selector results by reference). */
@@ -17,8 +18,9 @@ interface QueueItemProps {
    *  the whole queue costs one Tab press to reach and is then traversed with
    *  the arrow keys — the platform's list model, not a form's. */
   tabbable: boolean;
-  onSelect: (id: string) => void;
-  onRemove?: (id: string) => void;
+  onSelect: (id: string, event: React.MouseEvent<HTMLDivElement>) => void;
+  nameRanges?: SearchRange[];
+  newspaperRanges?: SearchRange[];
   /** Batch-export selection mode: defined → the icon slot shows a checkbox
    *  in this state. The checkbox toggles via `onToggleCheck`; the rest of
    *  the row still opens the file, so dates can be filled in one by one
@@ -35,13 +37,29 @@ const CELL_FOCUS =
 
 export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
   function QueueItem(
-    { entry, active, tabbable, onSelect, onRemove, checked, onToggleCheck },
-    ref
+    {
+      entry,
+      active,
+      tabbable,
+      onSelect,
+      checked,
+      onToggleCheck,
+      nameRanges,
+      newspaperRanges,
+    },
+    ref,
   ) {
     const t = useT();
     const tags = useStore((s) => s.documentStates[entry.id]?.tags ?? NO_TAGS);
+    const newspaper = useStore(
+      (s) => s.documentStates[entry.id]?.newspaperName ?? "",
+    );
     const failed = !!entry.loadError;
-    const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
+    const Icon = failed
+      ? FileWarning
+      : entry.kind === "pdf"
+        ? FileText
+        : FileImage;
     const meta = failed ? t("queue.loadFailed") : entry.ext.toUpperCase();
     // The extension already shows on the meta line below, so the title drops
     // it. A failed row shows 无法读取 there instead and keeps the full name.
@@ -63,15 +81,13 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
           ref={ref}
           role="gridcell"
           tabIndex={tabbable ? 0 : -1}
-          onClick={() => onSelect(entry.id)}
+          onClick={(event) => onSelect(entry.id, event)}
           // Full reason on hover; the canvas shows it in full once selected.
           title={entry.loadError ?? undefined}
           className={cn(
             "grid w-full grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors duration-100",
             CELL_FOCUS,
-            active
-              ? ACTIVE_ROW
-              : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+            active ? ACTIVE_ROW : "text-foreground-muted",
           )}
         >
           <span className="grid h-11 w-[34px] place-items-center rounded-lg border border-border bg-surface-2">
@@ -93,37 +109,36 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
                   checked
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border-strong bg-background",
-                  failed && "opacity-40"
+                  failed && "opacity-40",
                 )}
               >
                 {checked && <Check className="h-3 w-3" strokeWidth={2.5} />}
               </span>
             ) : (
               <Icon
-                className={cn("h-4 w-4", failed ? "text-destructive" : "text-foreground-subtle")}
+                className={cn(
+                  "h-4 w-4",
+                  failed ? "text-destructive" : "text-foreground-subtle",
+                )}
                 strokeWidth={1.5}
               />
             )}
           </span>
-          <span
-            className={cn(
-              "min-w-0",
-              // With a page badge the button lands on the badge (which fades
-              // out) and the name never reaches it; without one it would sit
-              // on the name's last characters.
-              !pageBadge &&
-                onRemove &&
-                "group-hover:queue-name-fade group-focus-within:queue-name-fade"
-            )}
-          >
+          <span className="min-w-0">
             <span className="block truncate text-sm font-semibold">
-              {displayName}
+              {entry.isStarred && (
+                <Star
+                  aria-label={t("queue.starred")}
+                  className="mr-1 inline h-3 w-3 fill-current text-amber-600 dark:text-amber-400"
+                />
+              )}
+              <QueueHighlight text={displayName} ranges={nameRanges} />
             </span>
             <span className="mt-0.5 flex min-w-0 items-center gap-1">
               <span
                 className={cn(
                   "shrink-0 truncate font-mono text-[11px]",
-                  failed ? "text-destructive" : "text-foreground-subtle"
+                  failed ? "text-destructive" : "text-foreground-subtle",
                 )}
               >
                 {meta}
@@ -149,44 +164,32 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
                 </span>
               )}
             </span>
+            {newspaper && (
+              <span className="mt-0.5 block truncate text-[11px] text-foreground-subtle">
+                <QueueHighlight text={newspaper} ranges={newspaperRanges} />
+              </span>
+            )}
           </span>
           {pageBadge && (
-            // Fades to make room for the hover-revealed remove button.
-            <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle">
               {pageBadge}
             </span>
           )}
         </div>
-        {onRemove && (
-          // Its own cell, outside the selection cell, so the row keeps a
-          // single accessible name. Skipped by Tab and reached with → from
-          // the row; Delete on the row is the shortcut for the same command.
-          <div role="gridcell">
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(entry.id);
-              }}
-              aria-label={t("queue.removeNamed", { name: entry.name })}
-              title={t("queue.remove")}
-              className={`absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-foreground-subtle opacity-0 transition-colors hover:bg-background hover:text-destructive active:bg-surface-overlay group-hover:opacity-100 group-focus-within:opacity-100 ${CELL_FOCUS}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.7} />
-            </button>
-          </div>
-        )}
       </div>
     );
-  }
+  },
 );
 
 export const QueueItemCompact = forwardRef<HTMLDivElement, QueueItemProps>(
-  function QueueItemCompact({ entry, active, tabbable, onSelect, onRemove }, ref) {
+  function QueueItemCompact({ entry, active, tabbable, onSelect }, ref) {
     const t = useT();
     const failed = !!entry.loadError;
-    const Icon = failed ? FileWarning : entry.kind === "pdf" ? FileText : FileImage;
+    const Icon = failed
+      ? FileWarning
+      : entry.kind === "pdf"
+        ? FileText
+        : FileImage;
     const tooltip = failed
       ? `${entry.name} · ${entry.loadError}`
       : entry.kind === "pdf" && (entry.pdfTotal ?? 1) > 1
@@ -199,39 +202,55 @@ export const QueueItemCompact = forwardRef<HTMLDivElement, QueueItemProps>(
           ref={ref}
           role="gridcell"
           tabIndex={tabbable ? 0 : -1}
-          onClick={() => onSelect(entry.id)}
+          onClick={(event) => onSelect(entry.id, event)}
           title={tooltip}
           aria-label={tooltip}
           className={cn(
-            "relative grid h-10 w-14 place-items-center rounded-lg transition-colors duration-100",
+            "relative grid h-10 w-full place-items-center rounded-lg transition-colors duration-100",
             CELL_FOCUS,
-            active
-              ? ACTIVE_ROW
-              : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+            active ? ACTIVE_ROW : "text-foreground-muted",
           )}
         >
           <Icon
             className={cn("h-4 w-4", failed && "text-destructive")}
             strokeWidth={1.5}
           />
+          {entry.isStarred && (
+            <Star
+              aria-label={t("queue.starred")}
+              className="absolute bottom-1 right-2 h-2.5 w-2.5 fill-current text-amber-600 dark:text-amber-400"
+            />
+          )}
         </div>
-        {onRemove && (
-          <div role="gridcell">
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(entry.id);
-              }}
-              aria-label={t("queue.removeNamed", { name: entry.name })}
-              className={`absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full border border-border bg-background text-foreground-subtle opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 ${CELL_FOCUS}`}
-            >
-              <X className="h-2.5 w-2.5" strokeWidth={2} />
-            </button>
-          </div>
-        )}
       </div>
     );
-  }
+  },
 );
+
+/** Ranges refer to the original text, never the folded spelling. */
+export function QueueHighlight({
+  text,
+  ranges = [],
+}: {
+  text: string;
+  ranges?: SearchRange[];
+}) {
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const [start, rawEnd] of ranges) {
+    const end = Math.min(text.length, rawEnd);
+    if (start >= text.length || end <= cursor) continue;
+    if (start > cursor) parts.push(text.slice(cursor, start));
+    parts.push(
+      <mark
+        key={`${start}:${end}`}
+        className="rounded-sm bg-amber-200/80 text-inherit dark:bg-amber-500/35"
+      >
+        {text.slice(Math.max(cursor, start), end)}
+      </mark>,
+    );
+    cursor = end;
+  }
+  parts.push(text.slice(cursor));
+  return <>{parts}</>;
+}

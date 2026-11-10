@@ -34,6 +34,8 @@ export type SessionSnapshot = {
   savedAt: string;
   currentFileId: string | null;
   files: SnapshotFile[];
+  /** Optional for snapshots saved before manual queue ordering existed. */
+  manualQueueFileIds?: string[];
   pageStates: AppStore["pageStates"];
 } & Pick<AppStore, FileMapKey>;
 
@@ -55,6 +57,7 @@ export function buildSnapshot(state: AppStore): SessionSnapshot {
     version: VERSION,
     savedAt: new Date().toISOString(),
     currentFileId: state.currentFileId,
+    manualQueueFileIds: state.manualQueueFileIds.filter((id) => ids.has(id)),
     files: state.files.map(
       ({ payload: _payload, payloadPage: _page, loadError: _error, ...rest }) => rest
     ),

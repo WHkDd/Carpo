@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,11 +10,12 @@ import {
   within,
 } from "@testing-library/react";
 
-const { startWholeFileOcr, cancelJob, save, open } = vi.hoisted(() => ({
+const { startWholeFileOcr, cancelJob, save, open, ask } = vi.hoisted(() => ({
   startWholeFileOcr: vi.fn(async () => ({ job_id: "job-w" })),
   cancelJob: vi.fn(async () => true),
   save: vi.fn(async () => "/tmp/out.docx"),
   open: vi.fn(async () => "/tmp"),
+  ask: vi.fn(async () => true),
 }));
 vi.mock("@/lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tauri")>()),
@@ -27,7 +29,7 @@ vi.mock("@/lib/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/runtime")>()),
   isTauriRuntime: () => true,
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save, open }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save, open, ask }));
 vi.mock("@/lib/desktop", () => ({
   enableNotificationsAfterUserAction: vi.fn(async () => {}),
   notifyOcrResult: vi.fn(async () => {}),
@@ -54,7 +56,7 @@ function renderPanel() {
       onOpenFiles={vi.fn()}
       onImportPaddleJson={vi.fn()}
       onOpenSettings={vi.fn()}
-    />
+    />,
   );
   fireEvent.click(screen.getByRole("button", { name: t("batch.button") }));
 }
@@ -92,12 +94,12 @@ describe("QueuePanel selection mode", () => {
     renderPanel();
     fireEvent.click(checkbox("a.png"));
     fireEvent.click(
-      screen.getByRole("button", { name: t("batch.recognizeSelected") })
+      screen.getByRole("button", { name: t("batch.recognizeSelected") }),
     );
     fireEvent.click(screen.getByRole("button", { name: t("batch.start") }));
 
     await waitFor(() =>
-      expect(useStore.getState().batchExport?.recognizeOnly).toBe(true)
+      expect(useStore.getState().batchExport?.recognizeOnly).toBe(true),
     );
     expect(save).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
@@ -113,20 +115,159 @@ describe("QueuePanel selection mode", () => {
     fireEvent.click(checkbox("a.png"));
 
     fireEvent.click(
-      screen.getByRole("button", { name: t("batch.exportSelected") })
+      screen.getByRole("button", { name: t("batch.exportSelected") }),
     );
-    fireEvent.click(screen.getByRole("button", { name: t("batch.layout.by_tag") }));
+    fireEvent.click(
+      screen.getByRole("button", { name: t("batch.layout.by_tag") }),
+    );
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: t("common.cancel"),
-      })
+      }),
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: t("batch.recognizeSelected") })
+      screen.getByRole("button", { name: t("batch.recognizeSelected") }),
     );
     expect(
-      within(screen.getByRole("dialog")).getAllByText("a.png")
+      within(screen.getByRole("dialog")).getAllByText("a.png"),
+    ).toHaveLength(1);
+  });
+});
+
+describe("QueuePanel queue tools", () => {
+  const panel = () =>
+    render(
+      <QueuePanel
+        onOpenFiles={vi.fn()}
+        onImportPaddleJson={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+  const cell = (id: string) =>
+    document.querySelector<HTMLDivElement>(
+      `[data-queue-id="${id}"] [role="gridcell"]`,
+    )!;
+
+  it("seeds batch mode from a multiple selection, and applies right-click actions only to their target", () => {
+    panel();
+    fireEvent.click(cell("b"), { metaKey: true });
+    expect(useStore.getState().selectedQueueFileIds).toEqual(["a", "b"]);
+    fireEvent.click(screen.getByRole("button", { name: t("batch.button") }));
+    expect(checkbox("a.png").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("b.png").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
+    fireEvent.click(cell("a"));
+    fireEvent.contextMenu(cell("b"));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("queue.setDate") }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: t("queue.setDate") }),
+      { target: { value: "1936-05-12" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("batch.apply") }));
+    expect(useStore.getState().documentStates.b?.newspaperDate).toBe(
+      "1936-05-12",
+    );
+    expect(useStore.getState().documentStates.a?.newspaperDate).toBeUndefined();
+  });
+
+  it("confirms and removes a selected group, without touching an unselected file", async () => {
+    addImage("c");
+    useStore.getState().setCurrent("a");
+    panel();
+    fireEvent.click(cell("b"), { metaKey: true });
+    fireEvent.contextMenu(cell("a"));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("queue.remove") }));
+    await waitFor(() =>
+      expect(useStore.getState().files.map((file) => file.id)).toEqual(["c"]),
+    );
+    expect(ask).toHaveBeenCalledOnce();
+  });
+
+  it("filters batch select-all, renders only 20 hits initially, and preserves expanded hits after navigation", async () => {
+    useStore
+      .getState()
+      .setRecognizedPages("a", {
+        1: {
+          text: "上海新聞".repeat(25),
+          status: "done",
+          sourceMode: "page_image",
+        },
+      });
+    panel();
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "上海新闻" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: t("queue.moreHits", { count: 5 }) }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("batch.button") }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: t("batch.selectAll") }),
+    );
+    expect(checkbox("a.png").getAttribute("aria-checked")).toBe("true");
+    expect(
+      screen.queryByRole("checkbox", {
+        name: t("batch.selectFile", { name: "b.png" }),
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: t("queue.moreHits", { count: 5 }) }),
+    );
+    const hit = screen
+      .getAllByRole("button")
+      .find((button) =>
+        button.textContent?.startsWith(t("queue.searchPage", { page: 1 })),
+      )!;
+    fireEvent.click(hit);
+    expect(useStore.getState().recognitionMode).toBe("whole_file");
+    expect(
+      screen.getByRole("button", { name: t("queue.fewerHits") }),
+    ).toBeTruthy();
+    // A page change is view state, not a new search input.
+    act(() =>
+      useStore
+        .getState()
+        .setFilePayload("a", {
+          width: 100,
+          height: 100,
+          objectUrl: "blob:preview",
+        }),
+    );
+    expect(
+      screen.getByRole("button", { name: t("queue.fewerHits") }),
+    ).toBeTruthy();
+  });
+
+  it("deduplicates tag groups for batch actions", async () => {
+    useStore.getState().addTagToFiles(["a"], "甲");
+    useStore.getState().addTagToFiles(["a", "b"], "乙");
+    panel();
+    fireEvent.click(screen.getByRole("button", { name: t("queue.group") }));
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: t("queue.group.tag") }),
+    );
+    fireEvent.click(cell("b"), { metaKey: true });
+    fireEvent.contextMenu(cell("a"));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("queue.star") }));
+    expect(useStore.getState().files.every((file) => file.isStarred)).toBe(
+      true,
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("batch.button") }));
+    expect(
+      screen
+        .getAllByRole("checkbox", {
+          name: t("batch.selectFile", { name: "a.png" }),
+        })
+        .every((box) => box.getAttribute("aria-checked") === "true"),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: t("batch.recognizeSelected") }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getAllByText("a.png"),
     ).toHaveLength(1);
   });
 });

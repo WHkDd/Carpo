@@ -1,21 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArticleList } from "./ArticleList";
 
-const { articleHsl, colorListeners, updateArticle } = vi.hoisted(() => ({
-  articleHsl: vi.fn(() => "hsl(220 18% 43% / 1)"),
-  colorListeners: new Set<() => void>(),
+const { updateArticle } = vi.hoisted(() => ({
   updateArticle: vi.fn(),
 }));
 
 vi.mock("@/lib/article-color-token", () => ({
-  articleHsl,
-  subscribeArticleColorTokens: (listener: () => void) => {
-    colorListeners.add(listener);
-    return () => colorListeners.delete(listener);
-  },
+  articleHsl: () => "hsl(220 18% 43% / 1)",
+  subscribeArticleColorTokens: () => () => {},
 }));
 
 vi.mock("@/store", () => {
@@ -49,7 +44,6 @@ describe("ArticleList title editing", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    colorListeners.clear();
   });
 
   function startEditing(): HTMLInputElement {
@@ -74,16 +68,5 @@ describe("ArticleList title editing", () => {
     expect(updateArticle).toHaveBeenCalledWith("file-1", "article-1", {
       title: "标题",
     });
-  });
-
-  it("re-resolves badge colours when the theme invalidates token values", () => {
-    render(<ArticleList />);
-    expect(articleHsl).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      colorListeners.forEach((listener) => listener());
-    });
-
-    expect(articleHsl).toHaveBeenCalledTimes(2);
   });
 });

@@ -128,6 +128,7 @@ export interface PageStateSlice {
   /** Batch metadata from the queue's selection mode. Each writes every
    *  listed file in one update. An empty name clears it. */
   setNewspaperNameForFiles: (fileIds: string[], name: string) => void;
+  setNewspaperDateForFiles: (fileIds: string[], date: string) => void;
   /** No-op for a tag that normalizes to empty or a file that already has
    *  it. */
   addTagToFiles: (fileIds: string[], tag: string) => void;
@@ -535,6 +536,17 @@ export const createPageStateSlice: StateCreator<
       for (const fileId of fileIds) {
         const doc = state.documentStates[fileId] ?? makeDocumentState();
         doc.newspaperName = value;
+        state.documentStates[fileId] = doc;
+        if (state.articleOcrTexts[fileId]) rebuildDocumentResult(state, fileId, doc);
+      }
+    }),
+
+  setNewspaperDateForFiles: (fileIds, date) =>
+    set((state) => {
+      for (const fileId of new Set(fileIds)) {
+        if (!state.files.some((file) => file.id === fileId)) continue;
+        const doc = state.documentStates[fileId] ?? makeDocumentState();
+        doc.newspaperDate = date.trim();
         state.documentStates[fileId] = doc;
         if (state.articleOcrTexts[fileId]) rebuildDocumentResult(state, fileId, doc);
       }

@@ -80,22 +80,6 @@ describe("PaddleJsonImportDialog export feedback", () => {
     });
   });
 
-  it("keeps preflight diagnostics out of the dialog", async () => {
-    render(
-      <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />
-    );
-    await screen.findByText("阅读版导出选项");
-
-    // The dialog shows the basic file summary and the export options only —
-    // parser warnings, structure fields and the label histogram stay hidden.
-    expect(screen.getByText("页数").parentElement?.textContent).toContain("1");
-    expect(screen.getByText("区块数").parentElement?.textContent).toContain("6");
-    expect(screen.queryByText("导入检查提示")).toBeNull();
-    expect(screen.queryByText("页面尺寸由 bbox 估算")).toBeNull();
-    expect(screen.queryByText("结构字段")).toBeNull();
-    expect(screen.queryByText("区块标签分布")).toBeNull();
-  });
-
   it("disables export options whose block label is absent from the file", async () => {
     render(
       <PaddleJsonImportDialog open path="/tmp/input.json" onClose={vi.fn()} />

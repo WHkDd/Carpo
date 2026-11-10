@@ -115,6 +115,7 @@ export type FileKind = "image" | "pdf";
 
 export interface FileEntry {
   id: string;
+  isStarred?: boolean;
   path: string;
   name: string;
   ext: string;

@@ -27,7 +27,7 @@ function makeStore() {
       ...createSelectionSlice(...args),
       ...createSettingsSlice(...args),
       ...createJobSlice(...args),
-    }))
+    })),
   );
 }
 
@@ -118,7 +118,9 @@ describe("queueSlice", () => {
       articleId: null,
       articleOrder: null,
     });
-    store.getState().addArticle(fid, 1, { id: "a1", num: 1, title: "" }, ["b1"]);
+    store
+      .getState()
+      .addArticle(fid, 1, { id: "a1", num: 1, title: "" }, ["b1"]);
     store.getState().updateDocumentMetadata(fid, {
       newspaperName: "申报",
       newspaperDate: "1932-01-01",
@@ -166,7 +168,9 @@ describe("queueSlice", () => {
 
 describe("restoreSnapshot", () => {
   it("round-trips a file's work through JSON and leaves already-queued files alone", async () => {
-    const { buildSnapshot, parseSnapshot } = await import("@/lib/session-snapshot");
+    const { buildSnapshot, parseSnapshot } = await import(
+      "@/lib/session-snapshot"
+    );
     const source = makeStore();
     const s = source.getState();
     s.addFile({
@@ -180,9 +184,26 @@ describe("restoreSnapshot", () => {
       payload: { width: 10, height: 10, objectUrl: "blob:a" },
       payloadPage: 7,
     });
-    s.addFile({ id: "file-2", path: "/scans/b.jpg", name: "b.jpg", ext: "jpg", kind: "image" });
-    s.addBlock("file-1", 7, { id: "b1", x: 1, y: 2, w: 3, h: 4, articleId: null, articleOrder: null });
-    s.updateDocumentMetadata("file-1", { newspaperName: "申报", newspaperDate: "1932-01-01" });
+    s.addFile({
+      id: "file-2",
+      path: "/scans/b.jpg",
+      name: "b.jpg",
+      ext: "jpg",
+      kind: "image",
+    });
+    s.addBlock("file-1", 7, {
+      id: "b1",
+      x: 1,
+      y: 2,
+      w: 3,
+      h: 4,
+      articleId: null,
+      articleOrder: null,
+    });
+    s.updateDocumentMetadata("file-1", {
+      newspaperName: "申报",
+      newspaperDate: "1932-01-01",
+    });
     s.setWholeFileRange("file-1", "3-9");
     s.setRecognizedPages("file-1", {
       7: { text: "第七页", status: "done", sourceMode: "page_image" },
@@ -200,14 +221,29 @@ describe("restoreSnapshot", () => {
     });
     s.setCurrent("file-1");
 
-    const snapshot = parseSnapshot(JSON.stringify(buildSnapshot(source.getState() as never)));
+    const snapshot = parseSnapshot(
+      JSON.stringify(buildSnapshot(source.getState() as never)),
+    );
     expect(snapshot.files[0]).not.toHaveProperty("payload");
 
     const target = makeStore();
-    target.getState().addFile({ id: "file-2", path: "/live/b.jpg", name: "b.jpg", ext: "jpg", kind: "image" });
-    target.getState().updateDocumentMetadata("file-2", { newspaperName: "live" });
+    target
+      .getState()
+      .addFile({
+        id: "file-2",
+        path: "/live/b.jpg",
+        name: "b.jpg",
+        ext: "jpg",
+        kind: "image",
+      });
+    target
+      .getState()
+      .updateDocumentMetadata("file-2", { newspaperName: "live" });
 
-    expect(target.getState().restoreSnapshot(snapshot)).toEqual({ added: 1, skipped: 1 });
+    expect(target.getState().restoreSnapshot(snapshot)).toEqual({
+      added: 1,
+      skipped: 1,
+    });
 
     const restored = target.getState();
     const before = source.getState();
@@ -215,14 +251,121 @@ describe("restoreSnapshot", () => {
     expect(restored.currentFileId).toBe("file-1");
     expect(restored.currentPage).toBe(7);
     expect(restored.pdfTotal).toBe(12);
-    expect(restored.pageStates["file-1::7"]).toEqual(before.pageStates["file-1::7"]);
-    expect(restored.documentStates["file-1"]).toEqual(before.documentStates["file-1"]);
+    expect(restored.pageStates["file-1::7"]).toEqual(
+      before.pageStates["file-1::7"],
+    );
+    expect(restored.documentStates["file-1"]).toEqual(
+      before.documentStates["file-1"],
+    );
     expect(restored.wholeFileRange["file-1"]).toBe("3-9");
-    expect(restored.recognizedPages["file-1"]).toEqual(before.recognizedPages["file-1"]);
-    expect(restored.pageOcrTexts["file-1"]).toEqual(before.pageOcrTexts["file-1"]);
-    expect(restored.proofreadReviews["file-1"]).toEqual(before.proofreadReviews["file-1"]);
+    expect(restored.recognizedPages["file-1"]).toEqual(
+      before.recognizedPages["file-1"],
+    );
+    expect(restored.pageOcrTexts["file-1"]).toEqual(
+      before.pageOcrTexts["file-1"],
+    );
+    expect(restored.proofreadReviews["file-1"]).toEqual(
+      before.proofreadReviews["file-1"],
+    );
     // The queued copy of file-2 keeps its live state and path.
     expect(restored.files[0]!.path).toBe("/live/b.jpg");
     expect(restored.documentStates["file-2"]!.newspaperName).toBe("live");
+  });
+});
+
+describe("queue selection and manual order", () => {
+  function queued() {
+    const store = makeStore();
+    for (const id of ["a", "b", "c", "d"])
+      store
+        .getState()
+        .addFile({
+          id,
+          path: `/tmp/${id}.pdf`,
+          name: `${id}.pdf`,
+          ext: "pdf",
+          kind: "pdf",
+        });
+    return store;
+  }
+  it("uses visible order for Shift and command selection, deduplicating grouped files", () => {
+    const store = queued();
+    const visible = ["d", "b", "d", "a", "c"];
+    store.getState().selectQueueFile("b", visible);
+    store.getState().selectQueueFile("c", visible, false, true);
+    expect(store.getState().selectedQueueFileIds).toEqual(["b", "a", "c"]);
+    store.getState().selectQueueFile("a", visible, true);
+    expect(store.getState().selectedQueueFileIds).toEqual(["b", "c"]);
+    expect(store.getState().currentFileId).toBe("b");
+    store.getState().selectQueueFile("d", visible, true);
+    expect(store.getState().selectedQueueFileIds).toEqual(["b", "c", "d"]);
+    expect(store.getState().currentFileId).toBe("d");
+  });
+  it("moves a whole selection in order and refuses cross-star, sorted, grouped and filtered drags", () => {
+    const store = queued();
+    store.getState().moveQueueFiles(["c", "b"], "d", true);
+    expect(store.getState().manualQueueFileIds).toEqual(["a", "d", "b", "c"]);
+    store.getState().setQueueStarred(["a"], true);
+    store.getState().moveQueueFiles(["b"], "a");
+    expect(store.getState().manualQueueFileIds).toEqual(["a", "d", "b", "c"]);
+    for (const patch of [
+      { queueSortField: "name" as const },
+      { queueGroupMode: "tag" as const },
+      { queueSearchText: "b" },
+    ]) {
+      store
+        .getState()
+        .setQueueView({
+          queueSortField: "manual",
+          queueGroupMode: "none",
+          queueSearchText: "",
+          ...patch,
+        });
+      store.getState().moveQueueFiles(["c"], "d");
+      expect(store.getState().manualQueueFileIds).toEqual(["a", "d", "b", "c"]);
+    }
+  });
+  it("round-trips stars and manual order, appends restored files in snapshot order, and reads old snapshots", async () => {
+    const { buildSnapshot } = await import("@/lib/session-snapshot");
+    const source = queued();
+    source.getState().moveQueueFiles(["d"], "a");
+    source.getState().setQueueStarred(["b"], true);
+    const snapshot = JSON.parse(
+      JSON.stringify(buildSnapshot(source.getState())),
+    );
+    const target = makeStore();
+    target
+      .getState()
+      .addFile({
+        id: "a",
+        path: "/live/a.pdf",
+        name: "a.pdf",
+        ext: "pdf",
+        kind: "pdf",
+      });
+    target.getState().restoreSnapshot(snapshot);
+    expect(target.getState().manualQueueFileIds).toEqual(["a", "d", "b", "c"]);
+    expect(
+      target.getState().files.find((file) => file.id === "b")?.isStarred,
+    ).toBe(true);
+    expect(target.getState().files.find((file) => file.id === "a")?.path).toBe(
+      "/live/a.pdf",
+    );
+    delete snapshot.manualQueueFileIds;
+    const legacy = makeStore();
+    legacy.getState().restoreSnapshot(snapshot);
+    expect(legacy.getState().manualQueueFileIds).toEqual(["a", "b", "c", "d"]);
+  });
+  it("bulk removal clears work once per file and retains unrelated article selection", () => {
+    const store = queued();
+    store.getState().setSelectedArticleIds(["story"]);
+    store.getState().removeFiles(["a", "a", "b"]);
+    expect(store.getState().files.map((file) => file.id)).toEqual(["c", "d"]);
+    expect(store.getState().selectedArticleIds).toEqual(["story"]);
+    store.getState().removeFiles(["d"]);
+    expect(store.getState().currentFileId).toBe("c");
+    expect(store.getState().selectedArticleIds).toEqual([]);
+    expect(store.getState().manualQueueFileIds).toEqual(["c"]);
+    expect(store.getState().selectedQueueFileIds).toEqual(["c"]);
   });
 });

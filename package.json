@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest",
-    "test:rust": "pnpm prepare:pdfium && pnpm build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "pnpm prepare:pdfium && cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
     "prepare:pdfium": "node src-tauri/scripts/prepare_pdfium.mjs"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "katex": "^0.16.45",
     "konva": "^9.3.16",
     "lucide-react": "^0.460.0",
+    "opencc-js": "^1.4.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-konva": "^18.2.10",

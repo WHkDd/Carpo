@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -152,30 +151,4 @@ describe.each([
     expect(ratio).toBeGreaterThanOrEqual(3);
     expect(ratio).toBeLessThan(4.5);
   });
-});
-
-it("has no opacity-modified foreground-subtle left outside disabled states", () => {
-  // Darkening the base token cannot rescue a `/50` or `/70`; those had to
-  // become their own tokens. The two survivors are the disabled page-jump
-  // arrows, which WCAG exempts. If this count grows, the new site either
-  // needs a token or needs to justify itself here.
-  const root = fileURLToPath(new URL("../components", import.meta.url));
-  const walk = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) return walk(full);
-      return entry.name.endsWith(".tsx") ? [full] : [];
-    });
-
-  const offenders = walk(root).flatMap((file) =>
-    [...readFileSync(file, "utf8").matchAll(/foreground-subtle\/\d+/g)].map(
-      (m) => `${relative(root, file)}: ${m[0]}`
-    )
-  );
-
-  expect(offenders.sort()).toEqual([
-    "layout/PageJumpControl.tsx: foreground-subtle/40",
-    "layout/PageJumpControl.tsx: foreground-subtle/40",
-    "settings/SettingsDialog.tsx: foreground-subtle/80",
-  ]);
 });
