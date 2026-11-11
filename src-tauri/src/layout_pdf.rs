@@ -868,29 +868,21 @@ fn table_height(font: &ParsedFont, rows: &[Vec<String>], width: f32, size: f32) 
         .sum()
 }
 
-fn draw_cell(
-    ops: &mut Vec<Op>,
-    font_id: &FontId,
-    lines: &[String],
-    x: f32,
-    top: f32,
-    width: f32,
-    height: f32,
-    size: f32,
-) {
+fn draw_cell(ops: &mut Vec<Op>, font_id: &FontId, lines: &[String], rect: &Rect, size: f32) {
+    let top = rect.y.0 + rect.height.0;
     ops.push(Op::SetOutlineColor {
         col: Color::Rgb(Rgb::new(0.65, 0.65, 0.65, None)),
     });
     ops.push(Op::SetOutlineThickness { pt: Pt(0.4) });
     ops.push(Op::DrawLine {
-        line: Rect::from_xywh(Pt(x), Pt(top - height), Pt(width), Pt(height)).to_line(),
+        line: rect.to_line(),
     });
     for (i, line) in lines.iter().enumerate() {
         draw_line(
             ops,
             font_id,
             line,
-            x + 4.0,
+            rect.x.0 + 4.0,
             top - 4.0 - size - i as f32 * size * 1.35,
             size,
             Color::Rgb(Rgb::new(0.1, 0.1, 0.1, None)),
@@ -926,10 +918,12 @@ fn draw_table(
                 ops,
                 font_id,
                 lines,
-                rect.x.0 + i as f32 * width,
-                top,
-                width,
-                height,
+                &Rect::from_xywh(
+                    Pt(rect.x.0 + i as f32 * width),
+                    Pt(top - height),
+                    Pt(width),
+                    Pt(height),
+                ),
                 size,
             );
         }
@@ -1269,10 +1263,7 @@ fn render_pdf_part(
                             &mut ops,
                             font_id,
                             &["图片原图缺失".into()],
-                            rect.x.0,
-                            rect.y.0 + rect.height.0,
-                            rect.width.0,
-                            rect.height.0,
+                            &rect,
                             font_size.min(8.0),
                         );
                         warnings.push(format!("{label}：图片原图缺失"));
@@ -1658,10 +1649,12 @@ impl<'a> Flow<'a> {
                         &mut self.cur,
                         self.font_id,
                         fragment,
-                        self.margin_x + i as f32 * width,
-                        self.y,
-                        width,
-                        h,
+                        &Rect::from_xywh(
+                            Pt(self.margin_x + i as f32 * width),
+                            Pt(self.y - h),
+                            Pt(width),
+                            Pt(h),
+                        ),
                         size,
                     );
                 }
