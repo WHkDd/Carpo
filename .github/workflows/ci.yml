@@ -38,6 +38,10 @@ jobs:
         timeout-minutes: 5
         shell: bash
         run: |
+          # The default Ubuntu mirror domains fail DNS resolution on the runners.
+          # Keep Ubuntu's archive signing keys and use an independent mirror host.
+          printf '%s\n' 'https://mirrors.edge.kernel.org/ubuntu/' \
+            | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
           apt_options=(
             -o Acquire::Retries=2
             -o Acquire::http::Timeout=20
