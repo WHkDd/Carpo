@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ScanText, Square } from "lucide-react";
+import { PanelLeft, ScanText, Square } from "lucide-react";
 import { useStore } from "@/store";
 import { useT } from "@/i18n";
 import { isImeCommit } from "@/lib/ime";
@@ -10,7 +10,9 @@ import type { PageRangePlan } from "@/lib/page-range";
 export function Toolbar() {
   const t = useT();
   const currentFile = useStore((s) =>
-    s.currentFileId ? s.files.find((f) => f.id === s.currentFileId) ?? null : null
+    s.currentFileId
+      ? (s.files.find((f) => f.id === s.currentFileId) ?? null)
+      : null,
   );
   const recognitionMode = useStore((s) => s.recognitionMode);
   const setRecognitionMode = useStore((s) => s.setRecognitionMode);
@@ -20,85 +22,112 @@ export function Toolbar() {
 
   const { state: triggerState } = useWholeFileOcrTrigger();
 
-  if (!currentFile) return null;
-
   const groupedActive = recognitionMode === "grouped";
 
   return (
     <div className="flex min-w-0 items-center gap-2" data-tauri-drag-region>
-      <h1
-        className="max-w-[360px] truncate py-0.5 text-[13px] font-semibold leading-tight text-foreground"
-        data-tauri-drag-region
-      >
-        {currentFile.name}
-      </h1>
-
-      <div className="h-3 w-px bg-border" aria-hidden />
-
-      {groupedActive && (
-        <button
-          type="button"
-          onClick={toggleDrawMode}
-          className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
-            manualDrawMode
-              ? "bg-primary-muted text-foreground"
-              : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
-          }`}
-          title={t("toolbar.toggleDraw")}
-        >
-          <Square className="h-3 w-3" />
-          <span>{manualDrawMode ? t("toolbar.exitDraw") : t("toolbar.draw")}</span>
-        </button>
-      )}
-
-      <button
-        type="button"
-        onClick={() => {
-          if (groupedActive) {
-            setRecognitionMode("whole_file");
-          } else {
-            setRecognitionMode("grouped");
-            setDrawMode(false);
-          }
-        }}
-        title={
-          groupedActive
-            ? t("toolbar.enterWholeFile")
-            : t("toolbar.backToGrouped")
-        }
-        className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
-          groupedActive
-            ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
-            : "bg-primary-muted text-foreground"
-        }`}
-      >
-        <ScanText className="h-3 w-3" />
-        <span>{groupedActive ? t("toolbar.wholeFile") : t("toolbar.backToDraw")}</span>
-      </button>
-
-      {recognitionMode === "whole_file" && triggerState.showRange && (
+      {currentFile && (
         <>
+          <h1
+            className="max-w-[360px] truncate py-0.5 text-[13px] font-semibold leading-tight text-foreground"
+            data-tauri-drag-region
+          >
+            {currentFile.name}
+          </h1>
+
           <div className="h-3 w-px bg-border" aria-hidden />
-          <PageRangeChip
-            totalPages={triggerState.totalPages}
-            rangeInput={triggerState.rangeInput}
-            rangePlan={triggerState.rangePlan}
-            rangeError={triggerState.rangeError}
-          />
+
+          {groupedActive && (
+            <button
+              type="button"
+              onClick={toggleDrawMode}
+              className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
+                manualDrawMode
+                  ? "bg-primary-muted text-foreground"
+                  : "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+              }`}
+              title={t("toolbar.toggleDraw")}
+            >
+              <Square className="h-3 w-3" />
+              <span>
+                {manualDrawMode ? t("toolbar.exitDraw") : t("toolbar.draw")}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (groupedActive) {
+                setRecognitionMode("whole_file");
+              } else {
+                setRecognitionMode("grouped");
+                setDrawMode(false);
+              }
+            }}
+            title={
+              groupedActive
+                ? t("toolbar.enterWholeFile")
+                : t("toolbar.backToGrouped")
+            }
+            className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-none transition-colors ${
+              groupedActive
+                ? "text-foreground-muted hover:bg-surface-2 hover:text-foreground"
+                : "bg-primary-muted text-foreground"
+            }`}
+          >
+            <ScanText className="h-3 w-3" />
+            <span>
+              {groupedActive ? t("toolbar.wholeFile") : t("toolbar.backToDraw")}
+            </span>
+          </button>
+
+          {recognitionMode === "whole_file" && triggerState.showRange && (
+            <>
+              <div className="h-3 w-px bg-border" aria-hidden />
+              <PageRangeChip
+                totalPages={triggerState.totalPages}
+                rangeInput={triggerState.rangeInput}
+                rangePlan={triggerState.rangePlan}
+                rangeError={triggerState.rangeError}
+              />
+            </>
+          )}
+
+          {recognitionMode === "whole_file" &&
+            (triggerState.error || triggerState.rangeError) && (
+              <span
+                className="ml-1 max-w-[260px] truncate text-[11px] text-destructive"
+                role="alert"
+                title={
+                  triggerState.error ?? triggerState.rangeError ?? undefined
+                }
+              >
+                {triggerState.error ?? triggerState.rangeError}
+              </span>
+            )}
         </>
       )}
-
-      {recognitionMode === "whole_file" &&
-        (triggerState.error || triggerState.rangeError) && (
-        <span
-          className="ml-1 max-w-[260px] truncate text-[11px] text-destructive"
-          role="alert"
-          title={triggerState.error ?? triggerState.rangeError ?? undefined}
-        >
-          {triggerState.error ?? triggerState.rangeError}
-        </span>
-        )}
     </div>
+  );
+}
+
+/** The sole manual sidebar control, next to the native window buttons. */
+export function SidebarToggle() {
+  const t = useT();
+  const collapsed = useStore((s) => s.queueCollapsed);
+  const toggle = useStore((s) => s.toggleQueueCollapsed);
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={t(collapsed ? "queue.expand" : "queue.collapse")}
+      aria-pressed={!collapsed}
+      title={t(collapsed ? "queue.expand" : "queue.collapse")}
+      className="absolute left-[84px] top-3 z-30 grid h-7 w-7 place-items-center rounded-md text-foreground-muted hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      <PanelLeft className="h-4 w-4" />
+    </button>
   );
 }
 
@@ -207,7 +236,9 @@ function PageRangeChip({
                 }
               }}
               className={`h-7 w-full rounded border bg-surface px-2 font-mono text-[12px] tabular-nums outline-none placeholder:text-foreground-placeholder focus:border-border-strong ${
-                draftValidation.error ? "border-destructive" : "border-border/60"
+                draftValidation.error
+                  ? "border-destructive"
+                  : "border-border/60"
               }`}
             />
             <div className="mt-1 min-h-4 text-[10px] text-foreground-subtle">

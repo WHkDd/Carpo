@@ -7,6 +7,26 @@
  */
 
 export const zh = {
+  "queue.result.wholeFile": "有全文识别结果",
+  "queue.result.grouped": "有框选识别结果",
+  "queue.status.processing": "正在处理",
+  "queue.status.failed": "处理失败",
+  "queue.status.reviewPending": "待审阅",
+  "queue.status.reviewed": "已校对",
+  "queue.status.partial": "部分已识别",
+  "ocr.previewImage": "识别结果中的图片",
+  "ocr.previewImageMissing": "图片暂不可用",
+
+  "export.title": "导出",
+  "export.scope": "内容",
+  "export.scope.whole_file": "所有页",
+  "export.scope.grouped": "所有报道",
+  "export.scope.current": "本页",
+  "export.scope.selected": "选中报道",
+  "export.withSource": "附原图对照",
+  "export.sourceMissing": "原图或框选区域缺失，无法生成对照",
+  "export.pdfExistingOnly": "仅导出已有识别结果，不会自动识别。",
+
   "queue.search": "搜索队列",
   "queue.clearSearch": "清空搜索",
   "queue.noResults": "没有搜索结果",
@@ -206,7 +226,7 @@ export const zh = {
   "queue.count": "{count} 项",
   "queue.addFile": "添加文件",
   "queue.importPaddleJson": "导入 Paddle JSON",
-  "queue.collapse": "收起队列",
+  "queue.collapse": "隐藏队列",
   "queue.expand": "展开队列",
   "queue.more": "更多",
   "queue.dropHintLine1": "添加文件",
@@ -506,6 +526,26 @@ export const zh = {
 export type MessageKey = keyof typeof zh;
 
 export const en: Record<MessageKey, string> = {
+  "queue.result.wholeFile": "Whole-page OCR results available",
+  "queue.result.grouped": "Article OCR results available",
+  "queue.status.processing": "Processing",
+  "queue.status.failed": "Processing failed",
+  "queue.status.reviewPending": "Review pending",
+  "queue.status.reviewed": "Proofread",
+  "queue.status.partial": "Partially recognized",
+  "ocr.previewImage": "Image in recognition results",
+  "ocr.previewImageMissing": "Image unavailable",
+
+  "export.title": "Export",
+  "export.scope": "Content",
+  "export.scope.whole_file": "All pages",
+  "export.scope.grouped": "All articles",
+  "export.scope.current": "Current page",
+  "export.scope.selected": "Selected articles",
+  "export.withSource": "Include source comparison",
+  "export.sourceMissing": "Source image or marked region is missing; comparison cannot be generated",
+  "export.pdfExistingOnly": "Exports existing results only; no OCR is started.",
+
   "queue.search": "Search queue",
   "queue.clearSearch": "Clear search",
   "queue.noResults": "No search results",
@@ -706,7 +746,7 @@ export const en: Record<MessageKey, string> = {
   "queue.count": "{count} items",
   "queue.addFile": "Add files",
   "queue.importPaddleJson": "Import Paddle JSON",
-  "queue.collapse": "Collapse queue",
+  "queue.collapse": "Hide queue",
   "queue.expand": "Expand queue",
   "queue.more": "More",
   "queue.dropHintLine1": "Add files",

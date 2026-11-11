@@ -5,7 +5,9 @@ import { buildDocx, crc32, documentXml, markdownToDocBlocks } from "../docx";
 /** Walks the local file headers of a stored ZIP. Deliberately independent of
  *  the writer: it trusts only the format, so a wrong offset or size in the
  *  writer shows up as a garbled entry here. */
-function readStoredZip(bytes: Uint8Array): Map<string, { data: Uint8Array; crc: number }> {
+function readStoredZip(
+  bytes: Uint8Array,
+): Map<string, { data: Uint8Array; crc: number }> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const out = new Map<string, { data: Uint8Array; crc: number }>();
   let pos = 0;
@@ -15,7 +17,9 @@ function readStoredZip(bytes: Uint8Array): Map<string, { data: Uint8Array; crc: 
     const size = view.getUint32(pos + 18, true);
     const nameLen = view.getUint16(pos + 26, true);
     const extraLen = view.getUint16(pos + 28, true);
-    const name = new TextDecoder().decode(bytes.subarray(pos + 30, pos + 30 + nameLen));
+    const name = new TextDecoder().decode(
+      bytes.subarray(pos + 30, pos + 30 + nameLen),
+    );
     const start = pos + 30 + nameLen + extraLen;
     out.set(name, { data: bytes.subarray(start, start + size), crc });
     pos = start + size;
@@ -58,7 +62,10 @@ describe("buildDocx", () => {
     const decode = (name: string) =>
       new TextDecoder().decode(entries.get(name)!.data);
     for (const name of entries.keys()) {
-      const doc = new DOMParser().parseFromString(decode(name), "application/xml");
+      const doc = new DOMParser().parseFromString(
+        decode(name),
+        "application/xml",
+      );
       expect(doc.getElementsByTagName("parsererror")).toHaveLength(0);
     }
     const xml = decode("word/document.xml");
@@ -79,7 +86,58 @@ describe("line endings", () => {
       { kind: "paragraph", text: "三" },
     ]);
     expect(documentXml([{ kind: "paragraph", text: "甲\r乙" }])).toContain(
-      '<w:t xml:space="preserve">甲 乙</w:t>'
+      '<w:t xml:space="preserve">甲 乙</w:t>',
     );
   });
+});
+
+it("embeds comparison images with valid relationships and preserves the complete long body", async () => {
+  const jpeg = [255, 216, 255, 217];
+  const body = "跨页报道正文。".repeat(500) + "完整正文结束";
+  const output = buildDocx([
+    {
+      kind: "comparison",
+      images: [{ jpeg, width: 300, height: 440 }],
+      blocks: [
+        { kind: "heading", level: 1, text: "报道标题" },
+        { kind: "paragraph", text: body },
+      ],
+    },
+  ]);
+  const archive = readStoredZip(output);
+  const text = (name: string) =>
+    new TextDecoder().decode(archive.get(name)!.data);
+  expect(Array.from(archive.get("word/media/source1.jpg")!.data)).toEqual(jpeg);
+  expect(text("word/_rels/document.xml.rels")).toContain(
+    'Target="media/source1.jpg"',
+  );
+  expect(text("[Content_Types].xml")).toContain('ContentType="image/jpeg"');
+  const xml = new DOMParser().parseFromString(
+    text("word/document.xml"),
+    "application/xml",
+  );
+  expect(xml.querySelector("parsererror")).toBeNull();
+  expect(xml.documentElement.textContent).toContain(body);
+  expect(text("word/document.xml")).toContain('r:embed="image1"');
+  for (const entry of archive.values())
+    expect(crc32(entry.data)).toBe(entry.crc);
+  if (process.env.CARPO_DOCX_QA_DIR) {
+    const fs = await import("node:fs");
+    const dir = process.env.CARPO_DOCX_QA_DIR;
+    const source = Array.from(fs.readFileSync(`${dir}/source.jpg`));
+    fs.writeFileSync(
+      `${dir}/comparison.docx`,
+      buildDocx([
+        { kind: "heading", level: 1, text: "申报 · 跨页报道" },
+        {
+          kind: "comparison",
+          images: [
+            { jpeg: source, width: 300, height: 440 },
+            { jpeg: source, width: 300, height: 440 },
+          ],
+          blocks: [{ kind: "paragraph", text: body }],
+        },
+      ]),
+    );
+  }
 });

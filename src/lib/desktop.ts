@@ -57,6 +57,9 @@ export async function takePendingOpenPaths(): Promise<string[]> {
 
 export async function setDesktopWindowTitle(title: string): Promise<void> {
   if (!isTauriRuntime()) return;
+  // AppKit relays out the traffic lights on setTitle, losing the custom inset.
+  // Keep the configured native title on macOS; the toolbar shows the file name.
+  if (/Macintosh|Mac OS X/.test(navigator.userAgent)) return;
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   await getCurrentWindow().setTitle(title);
 }

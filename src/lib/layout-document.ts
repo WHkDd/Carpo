@@ -98,7 +98,7 @@ export interface LayoutDimensions extends Dimensions {
  */
 export function layoutCanvasMapping(
   layout: LayoutDimensions | null | undefined,
-  image: Dimensions | null | undefined
+  image: Dimensions | null | undefined,
 ): LayoutCanvasMapping | null {
   if (!layout || !image) return null;
   if (
@@ -127,7 +127,7 @@ export function layoutCanvasMapping(
       Math.max(image.width, image.height) /
         Math.max(layout.width, layout.height),
       Math.min(image.width, image.height) /
-        Math.min(layout.width, layout.height)
+        Math.min(layout.width, layout.height),
     );
     if (!Number.isFinite(scale) || scale <= 0) return null;
     return { sx: scale, sy: scale };
@@ -149,7 +149,7 @@ export interface LayoutRect {
 /** Converts a `[x0, y0, x1, y1]` layout bbox into canvas-space x/y/w/h. */
 export function scaleLayoutBBox(
   bbox: LayoutBBox,
-  mapping: LayoutCanvasMapping
+  mapping: LayoutCanvasMapping,
 ): LayoutRect {
   const [x0, y0, x1, y1] = bbox;
   // Paddle is not guaranteed to emit its corners in top-left/bottom-right
@@ -171,7 +171,7 @@ export function scaleLayoutBBox(
  */
 export function scaleLayoutPolygon(
   polygon: LayoutPoint[] | undefined,
-  mapping: LayoutCanvasMapping
+  mapping: LayoutCanvasMapping,
 ): number[] | null {
   if (!polygon || polygon.length < 3) return null;
   const points: number[] = [];
@@ -222,6 +222,21 @@ export interface LayoutPdfExportOptions {
   includeTables: boolean;
   fontScale: number;
   marginScale: number;
+  withSource?: boolean;
+  parts?: PdfExportPart[];
+}
+
+export interface ExportImage {
+  jpeg: number[];
+  width: number;
+  height: number;
+}
+
+export interface PdfExportPart {
+  name: string;
+  document: LayoutDocument;
+  sourceImages: Record<number, ExportImage>;
+  articles: Array<{ title: string; body: string; images: ExportImage[] }>;
 }
 
 export interface LayoutPdfExportRequest {
@@ -232,7 +247,7 @@ export interface LayoutPdfExportRequest {
 
 export interface LayoutPdfExportResult {
   targetPath: string;
-  /** Output pages in the reflowed PDF (not source pages). */
+  /** Output pages, including any automatically continued pages. */
   pageCount: number;
   warningCount: number;
   warnings: string[];
@@ -246,18 +261,15 @@ export interface ReadingMarkdownExportResult {
   warnings: string[];
 }
 
-/** Reading-version defaults: running headers/footers and side notes are page
- *  furniture and dropped; the source-file page index is kept as a citeable
- *  anchor. `mode` is retained for wire compatibility and ignored by the
- *  backend (the exporter always reflows). */
+/** One adaptive PDF export: retain usable layouts, reflow dense source pages. */
 export const DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS: LayoutPdfExportOptions = {
   mode: "reading",
-  includeHeader: false,
-  includeFooter: false,
+  includeHeader: true,
+  includeFooter: true,
   includePageNumber: true,
-  includeAsideText: false,
+  includeAsideText: true,
   includeFootnote: true,
-  includeImages: false,
+  includeImages: true,
   includeTables: true,
   fontScale: 1,
   marginScale: 1,

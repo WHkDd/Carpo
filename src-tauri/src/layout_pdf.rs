@@ -1,25 +1,6 @@
-//! Reading-version exporter for the normalized `LayoutDocument`.
-//!
-//! Earlier versions tried to *reconstruct the original page* by drawing every
-//! Paddle block at its bbox position. For research use that was the wrong
-//! target: the pruned web-export JSON only carries block-level boxes and a
-//! concatenated `block_content`, so a faithful facsimile is impossible and
-//! vertical books came out unreadable.
-//!
-//! Instead this module produces a **clean, reflowed reading version**:
-//! - Blocks are emitted in reading order (`block_order`), flowing across as
-//!   many A4 pages as the text needs.
-//! - Page furniture (running headers/footers, bare page numbers, side notes)
-//!   is filtered out; the source page index is kept as a stable anchor so
-//!   passages stay citeable even when OCR page-number blocks are wrong.
-//! - Vertical text needs no special handling: Paddle's `block_content` is
-//!   already a horizontal reading-order string.
-//! - Headings are re-styled from the block *label*, so stray Markdown markers
-//!   (`#`, `####`) never leak into the output.
-//!
-//! Two outputs share the same block processing: a reflowed PDF
-//! ([`export_layout_pdf_to_path`]) and a Markdown file
-//! ([`export_reading_markdown_to_path`]).
+//! One adaptive PDF: retain readable block positions; reflow dense/edited pages.
+//! Articles flow independently. Optional source comparisons share the same PDF
+//! context and font mapping, including mixed whole-page/article batches.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -28,8 +9,9 @@ use std::{
 };
 
 use printpdf::{
-    Color, FontId, FontMetrics, Mm, Op, ParsedFont, PdfDocument, PdfFontHandle, PdfPage,
-    PdfSaveOptions, Point, Pt, Rgb, TextItem,
+    Color, DictItem, ExternalStream, ExternalXObject, FontId, FontMetrics, Mm, Op, ParsedFont,
+    PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt, Px, Rect, Rgb, TextItem,
+    XObjectId, XObjectTransform,
 };
 use serde::{Deserialize, Serialize};
 use ttf_parser::Face;
@@ -75,8 +57,7 @@ pub struct ReadingMarkdownExportResult {
     pub warnings: Vec<String>,
 }
 
-/// Retained for wire compatibility with the frontend request type. The reading
-/// exporter no longer has a bbox mode; the field is accepted and ignored.
+/// Retained for wire compatibility. Both values use adaptive PDF layout.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutPdfExportMode {
@@ -100,8 +81,6 @@ pub struct LayoutPdfExportOptions {
     pub include_aside_text: bool,
     #[serde(default = "default_true")]
     pub include_footnote: bool,
-    /// Image embedding is not implemented yet: image blocks always render as a
-    /// visible placeholder so the reader knows a figure sat there.
     #[serde(default)]
     pub include_images: bool,
     #[serde(default = "default_true")]
@@ -110,6 +89,38 @@ pub struct LayoutPdfExportOptions {
     pub font_scale: f32,
     #[serde(default = "default_scale")]
     pub margin_scale: f32,
+    #[serde(default)]
+    pub with_source: bool,
+    #[serde(default)]
+    pub parts: Vec<PdfExportPart>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportImage {
+    pub jpeg: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfArticle {
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub images: Vec<ExportImage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfExportPart {
+    pub name: String,
+    pub document: LayoutDocument,
+    #[serde(default)]
+    pub source_images: BTreeMap<u32, ExportImage>,
+    #[serde(default)]
+    pub articles: Vec<PdfArticle>,
 }
 
 impl Default for LayoutPdfExportOptions {
@@ -125,6 +136,8 @@ impl Default for LayoutPdfExportOptions {
             include_tables: true,
             font_scale: 1.0,
             margin_scale: 1.0,
+            with_source: false,
+            parts: Vec::new(),
         }
     }
 }
@@ -592,42 +605,81 @@ fn repair_short_vertical_lines(text: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<LayoutPdfExportResult> {
-    let target_path = validate_target(&req.target_path, &req.document)?;
+    let options = &req.options;
+    let fallback;
+    let parts = if options.parts.is_empty() {
+        fallback = vec![PdfExportPart {
+            name: String::new(),
+            document: req.document.clone(),
+            source_images: BTreeMap::new(),
+            articles: Vec::new(),
+        }];
+        &fallback
+    } else {
+        &options.parts
+    };
+    let all_pages = LayoutDocument {
+        source: "paddle".into(),
+        pages: parts
+            .iter()
+            .flat_map(|p| p.document.pages.clone())
+            .collect(),
+    };
+    // Article-only PDFs have no page layout to validate.
+    let target_path = if all_pages.pages.is_empty() && parts.iter().any(|p| !p.articles.is_empty())
+    {
+        if req.target_path.trim().is_empty() {
+            return Err(AppError::Config("缺少导出路径 / No export path".into()));
+        }
+        PathBuf::from(&req.target_path)
+    } else {
+        validate_target(&req.target_path, &all_pages)?
+    };
     let mut warnings = Vec::new();
-    if req.options.mode == LayoutPdfExportMode::Bbox {
-        warnings.push(
-            carpo_core::tr!(
-                "bbox 版式重建已改为阅读版导出",
-                "bbox layout reconstruction now exports the reading view instead"
-            )
-            .to_string(),
-        );
+    let mut chars = BTreeSet::new();
+    // Include original block text as well as flattened table text: cell layout
+    // and source labels must use exactly the same Unicode mapping as the body.
+    chars.extend("第页续未命名文件图片原图缺失正文0123456789 ·：〔〕（）".chars());
+    for part in parts {
+        chars.extend(part.name.chars());
+        for page in &part.document.pages {
+            for block in &page.blocks {
+                chars.extend(clean_block_text(&strip_html(&block.text)).chars());
+            }
+        }
+        for article in &part.articles {
+            chars.extend(article.title.chars());
+            chars.extend(clean_block_text(&strip_html(&article.body)).chars());
+        }
+        chars.extend(collect_item_chars(&build_reading_items(
+            &part.document,
+            options,
+            &mut Vec::new(),
+        )));
     }
-    let items = build_reading_items(&req.document, &req.options, &mut warnings);
-
-    let chars = collect_item_chars(&items);
+    chars.retain(|ch| !ch.is_control());
     let loaded_font = load_cjk_font(&chars)?;
     push_missing_char_warning(&loaded_font, &mut warnings);
-
     let mut doc = PdfDocument::new("Carpo reading export");
     let font_id = doc.add_font(&loaded_font.font);
-    let font_scale = req.options.font_scale.clamp(0.5, 2.0);
-    let margin_scale = req.options.margin_scale.clamp(0.5, 2.0);
-
-    let mut flow = Flow::new(&font_id, margin_scale);
-    for item in &items {
-        match (&item.text, &item.anchor) {
-            (None, Some(label)) => flow.emit_anchor(label, font_scale),
-            (Some(text), _) => flow.emit_block(item.role, text, font_scale),
-            _ => {}
-        }
+    let mut pages = Vec::new();
+    for part in parts {
+        render_pdf_part(
+            &mut doc,
+            &font_id,
+            &loaded_font.font,
+            part,
+            options,
+            &mut pages,
+            &mut warnings,
+        )?;
     }
-    let pages_ops = flow.finish();
-    let page_count = pages_ops.len() as u32;
-    let pages: Vec<PdfPage> = pages_ops
-        .into_iter()
-        .map(|ops| PdfPage::new(pt_to_mm(A4_W_PT), pt_to_mm(A4_H_PT), ops))
-        .collect();
+    if pages.is_empty() {
+        return Err(AppError::Config(
+            "没有可导出的 PDF 内容 / No PDF content".into(),
+        ));
+    }
+    let page_count = pages.len() as u32;
     doc.with_pages(pages);
 
     let mut pdf_warnings = Vec::new();
@@ -645,6 +697,721 @@ pub fn export_layout_pdf_to_path(req: LayoutPdfExportRequest) -> AppResult<Layou
         warning_count,
         warnings: warnings.into_iter().take(MAX_RETURNED_WARNINGS).collect(),
     })
+}
+
+// A source page uses one physical-page-sized canvas; 8pt is the readable floor.
+const MIN_LAYOUT_FONT: f32 = 8.0;
+
+fn measured_width(font: &ParsedFont, text: &str, size: f32) -> f32 {
+    text.chars()
+        .map(|ch| {
+            font.lookup_glyph_index(ch as u32)
+                .and_then(|id| font.get_glyph_width(id))
+                .map(|width| width as f32 / font.units_per_em.max(1) as f32)
+                .unwrap_or_else(|| estimated_char_width(ch))
+                * size
+        })
+        .sum()
+}
+
+fn wrap_measured(font: &ParsedFont, text: &str, width: f32, size: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for source in text.lines() {
+        if source.trim().is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut line = String::new();
+        let mut used = 0.0;
+        for ch in source.chars() {
+            let advance = measured_width(font, &ch.to_string(), size);
+            if !line.is_empty() && used + advance > width {
+                let word_break = if ch.is_ascii_alphanumeric() {
+                    line.rfind(' ').filter(|at| *at > 0)
+                } else {
+                    None
+                };
+                // Avoid a closing punctuation mark at the beginning of a line.
+                if let Some(at) = word_break {
+                    let tail = line.split_off(at + 1);
+                    line.pop();
+                    lines.push(mem::take(&mut line));
+                    line = tail;
+                    used = measured_width(font, &line, size);
+                } else if "，。；：！？、）》」』】,.!?;:".contains(ch) {
+                    if let Some(last) = line.pop() {
+                        lines.push(mem::take(&mut line));
+                        line.push(last);
+                        used = measured_width(font, &line, size);
+                    }
+                } else {
+                    lines.push(mem::take(&mut line));
+                    used = 0.0;
+                }
+            }
+            line.push(ch);
+            used += advance;
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn table_rows(text: &str) -> Vec<Vec<String>> {
+    if !looks_like_html_table(text) {
+        return text
+            .lines()
+            .filter(|line| line.contains('|'))
+            .filter(|line| !line.chars().all(|c| "|-: \t".contains(c)))
+            .map(|line| {
+                line.trim()
+                    .trim_matches('|')
+                    .split('|')
+                    .map(|cell| cell.trim().to_string())
+                    .collect()
+            })
+            .collect();
+    }
+    // Parse cells without discarding empty columns. Spans reserve grid positions,
+    // so following rows retain their column alignment even when reflowed.
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row = Vec::new();
+    let mut cell = String::new();
+    let mut in_cell = false;
+    let mut colspan = 1;
+    let mut rowspan = 1;
+    let mut occupied: Vec<usize> = Vec::new();
+    let mut col = 0;
+    let mut rest = text;
+    while let Some(start) = rest.find('<') {
+        if in_cell {
+            cell.push_str(&rest[..start]);
+        }
+        rest = &rest[start + 1..];
+        let Some(end) = rest.find('>') else {
+            break;
+        };
+        let raw = &rest[..end];
+        let tag = raw.trim().to_ascii_lowercase();
+        rest = &rest[end + 1..];
+        if tag.starts_with("td") || tag.starts_with("th") && !tag.starts_with("thead") {
+            while occupied.get(col).copied().unwrap_or(0) > rows.len() {
+                row.push(String::new());
+                col += 1;
+            }
+            in_cell = true;
+            cell.clear();
+            colspan = html_span(&tag, "colspan");
+            rowspan = html_span(&tag, "rowspan");
+        } else if tag == "/td" || tag == "/th" {
+            if in_cell {
+                row.push(decode_basic_html_entities(cell.trim()));
+                for _ in 1..colspan {
+                    row.push(String::new());
+                }
+                occupied.resize(occupied.len().max(col + colspan), 0);
+                for slot in &mut occupied[col..col + colspan] {
+                    *slot = rows.len() + rowspan;
+                }
+                col += colspan;
+                in_cell = false;
+            }
+        } else if tag == "/tr" {
+            if !row.is_empty() {
+                rows.push(mem::take(&mut row));
+            }
+            col = 0;
+        } else if in_cell && (tag == "br" || tag == "br/" || tag == "/p") {
+            cell.push('\n');
+        }
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+fn html_span(tag: &str, attribute: &str) -> usize {
+    tag.find(attribute)
+        .and_then(|at| {
+            let value = tag[at + attribute.len()..]
+                .trim_start()
+                .strip_prefix('=')?
+                .trim_start()
+                .trim_start_matches(['\'', '"']);
+            let number: String = value.chars().take_while(char::is_ascii_digit).collect();
+            number.parse::<usize>().ok()
+        })
+        .unwrap_or(1)
+        .clamp(1, 100)
+}
+
+fn table_height(font: &ParsedFont, rows: &[Vec<String>], width: f32, size: f32) -> f32 {
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| {
+                    wrap_measured(font, cell, (width / cols as f32 - 8.0).max(size), size).len()
+                })
+                .max()
+                .unwrap_or(1) as f32
+                * size
+                * 1.35
+                + 8.0
+        })
+        .sum()
+}
+
+fn draw_cell(
+    ops: &mut Vec<Op>,
+    font_id: &FontId,
+    lines: &[String],
+    x: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+    size: f32,
+) {
+    ops.push(Op::SetOutlineColor {
+        col: Color::Rgb(Rgb::new(0.65, 0.65, 0.65, None)),
+    });
+    ops.push(Op::SetOutlineThickness { pt: Pt(0.4) });
+    ops.push(Op::DrawLine {
+        line: Rect::from_xywh(Pt(x), Pt(top - height), Pt(width), Pt(height)).to_line(),
+    });
+    for (i, line) in lines.iter().enumerate() {
+        draw_line(
+            ops,
+            font_id,
+            line,
+            x + 4.0,
+            top - 4.0 - size - i as f32 * size * 1.35,
+            size,
+            Color::Rgb(Rgb::new(0.1, 0.1, 0.1, None)),
+        );
+    }
+}
+
+fn draw_table(
+    ops: &mut Vec<Op>,
+    font_id: &FontId,
+    font: &ParsedFont,
+    rows: &[Vec<String>],
+    rect: &Rect,
+    size: f32,
+) {
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    let width = rect.width.0 / cols as f32;
+    let mut top = rect.y.0 + rect.height.0;
+    for row in rows {
+        let cells: Vec<_> = (0..cols)
+            .map(|i| {
+                wrap_measured(
+                    font,
+                    row.get(i).map(String::as_str).unwrap_or(""),
+                    (width - 8.0).max(size),
+                    size,
+                )
+            })
+            .collect();
+        let height = cells.iter().map(Vec::len).max().unwrap_or(1) as f32 * size * 1.35 + 8.0;
+        for (i, lines) in cells.iter().enumerate() {
+            draw_cell(
+                ops,
+                font_id,
+                lines,
+                rect.x.0 + i as f32 * width,
+                top,
+                width,
+                height,
+                size,
+            );
+        }
+        top -= height;
+    }
+}
+
+fn decode_source(source: &ExportImage) -> AppResult<image::RgbImage> {
+    if source.width == 0 || source.height == 0 || source.jpeg.is_empty() {
+        return Err(AppError::Config("原图无效 / Invalid source image".into()));
+    }
+    let decoded = image::load_from_memory(&source.jpeg)
+        .map_err(|error| AppError::Internal(format!("decode source image: {error}")))?
+        .to_rgb8();
+    Ok(decoded)
+}
+
+fn add_image(doc: &mut PdfDocument, image: image::RgbImage) -> AppResult<(XObjectId, u32, u32)> {
+    let (width, height) = image.dimensions();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
+        .encode_image(&image)
+        .map_err(|error| AppError::Internal(format!("encode PDF image: {error}")))?;
+    // JPEG streams embed directly, avoiding both lossless RGB bloat and the
+    // optional image conversion feature in printpdf.
+    let id = doc.add_xobject(&ExternalXObject {
+        stream: ExternalStream {
+            content: jpeg,
+            compress: false,
+            dict: BTreeMap::from([
+                ("Type".into(), DictItem::Name(b"XObject".to_vec())),
+                ("Subtype".into(), DictItem::Name(b"Image".to_vec())),
+                ("Filter".into(), DictItem::Name(b"DCTDecode".to_vec())),
+                ("Width".into(), DictItem::Int(width as i64)),
+                ("Height".into(), DictItem::Int(height as i64)),
+                ("BitsPerComponent".into(), DictItem::Int(8)),
+                ("ColorSpace".into(), DictItem::Name(b"DeviceRGB".to_vec())),
+            ]),
+        },
+        width: Some(Px(width as usize)),
+        height: Some(Px(height as usize)),
+        dpi: Some(72.0),
+    });
+    Ok((id, width, height))
+}
+
+fn place_image(ops: &mut Vec<Op>, id: &XObjectId, native: (u32, u32), rect: &Rect) {
+    let scale = (rect.width.0 / native.0.max(1) as f32).min(rect.height.0 / native.1.max(1) as f32);
+    let width = native.0 as f32 * scale;
+    let height = native.1 as f32 * scale;
+    ops.push(Op::UseXobject {
+        id: id.clone(),
+        transform: XObjectTransform {
+            translate_x: Some(Pt(rect.x.0 + (rect.width.0 - width) / 2.0)),
+            translate_y: Some(Pt(rect.y.0 + rect.height.0 - height)),
+            scale_x: Some(scale),
+            scale_y: Some(scale),
+            dpi: Some(72.0),
+            ..Default::default()
+        },
+    });
+}
+
+fn block_rect(page: &LayoutPage, block: &LayoutBlock, size: (f32, f32)) -> Option<Rect> {
+    if !page.width.is_finite()
+        || !page.height.is_finite()
+        || page.width <= 0.0
+        || page.height <= 0.0
+        || block.bbox.iter().any(|n| !n.is_finite())
+    {
+        return None;
+    }
+    let (x, y, right, bottom, w, h) = bbox_parts(block.bbox);
+    if w <= 0.0
+        || h <= 0.0
+        || x < 0.0
+        || y < 0.0
+        || right > page.width * 1.005
+        || bottom > page.height * 1.005
+    {
+        return None;
+    }
+    Some(Rect::from_xywh(
+        Pt(x as f32 / page.width as f32 * size.0),
+        Pt((1.0 - bottom as f32 / page.height as f32) * size.1),
+        Pt(w as f32 / page.width as f32 * size.0),
+        Pt(h as f32 / page.height as f32 * size.1),
+    ))
+}
+
+fn block_text(block: &LayoutBlock) -> String {
+    let role = classify(&block.label);
+    let text = if matches!(
+        role,
+        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption | BlockRole::Image
+    ) {
+        strip_html(&block.text)
+    } else {
+        block.text.clone()
+    };
+    let text = clean_block_text(&text);
+    if matches!(
+        role,
+        BlockRole::DocTitle | BlockRole::Heading | BlockRole::FigureCaption
+    ) {
+        repair_short_vertical_lines(&text)
+    } else {
+        text
+    }
+}
+
+fn layout_font(
+    font: &ParsedFont,
+    block: &LayoutBlock,
+    rect: &Rect,
+    font_scale: f32,
+) -> Option<f32> {
+    let role = classify(&block.label);
+    if role == BlockRole::Image {
+        return Some(MIN_LAYOUT_FONT);
+    }
+    let rows = if role == BlockRole::Table {
+        table_rows(&block.text)
+    } else {
+        Vec::new()
+    };
+    let text = block_text(block);
+    let height = |size| {
+        if rows.is_empty() {
+            wrap_measured(font, &text, rect.width.0, size).len() as f32 * size * 1.35
+        } else {
+            table_height(font, &rows, rect.width.0, size)
+        }
+    };
+    let minimum = MIN_LAYOUT_FONT * font_scale.clamp(0.5, 2.0);
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if rect.width.0 < minimum
+        || height(minimum) > rect.height.0
+        || cols as f32 * (minimum + 8.0) > rect.width.0
+    {
+        return None;
+    }
+    let mut low = minimum;
+    let mut high = role_style(role, font_scale).size.max(minimum);
+    for _ in 0..12 {
+        let size = (low + high) / 2.0;
+        if height(size) <= rect.height.0 {
+            low = size;
+        } else {
+            high = size;
+        }
+    }
+    Some(low)
+}
+
+fn image_crop(
+    image: &image::RgbImage,
+    page: &LayoutPage,
+    block: &LayoutBlock,
+) -> Option<image::RgbImage> {
+    let (x, y, right, bottom, _, _) = bbox_parts(block.bbox);
+    let (sx, sy) = if page.dimensions_approximate {
+        let scale = ((image.width().max(image.height()) as f64) / page.width.max(page.height))
+            .min((image.width().min(image.height()) as f64) / page.width.min(page.height));
+        (scale, scale)
+    } else {
+        (
+            image.width() as f64 / page.width,
+            image.height() as f64 / page.height,
+        )
+    };
+    let left = (x * sx).floor().clamp(0.0, image.width() as f64) as u32;
+    let top = (y * sy).floor().clamp(0.0, image.height() as f64) as u32;
+    let right = (right * sx).ceil().clamp(0.0, image.width() as f64) as u32;
+    let bottom = (bottom * sy).ceil().clamp(0.0, image.height() as f64) as u32;
+    if right <= left || bottom <= top {
+        return None;
+    }
+    Some(image::imageops::crop_imm(image, left, top, right - left, bottom - top).to_image())
+}
+
+fn render_pdf_part(
+    doc: &mut PdfDocument,
+    font_id: &FontId,
+    font: &ParsedFont,
+    part: &PdfExportPart,
+    options: &LayoutPdfExportOptions,
+    pages: &mut Vec<PdfPage>,
+    warnings: &mut Vec<String>,
+) -> AppResult<()> {
+    for article in &part.articles {
+        let compared = options.with_source;
+        if compared && article.images.is_empty() {
+            return Err(AppError::Config(
+                "报道原图缺失，无法生成对照 / Missing article source".into(),
+            ));
+        }
+        let mut flow = Flow::new(font_id, font, options.margin_scale);
+        if compared {
+            flow.configure(841.89, 595.28, 440.945, 372.945, 28.0);
+        }
+        flow.emit_block(
+            BlockRole::Heading,
+            &format!("{} · {}", part.name, article.title),
+            1.0,
+        );
+        flow.emit_rich_text(&article.body, 1.0);
+        let mut ops = flow.finish();
+        if compared {
+            let mut index = 0;
+            let mut top = 567.28;
+            for source in &article.images {
+                let (id, w, h) = add_image(doc, decode_source(source)?)?;
+                let width = 372.945;
+                let scale = (width / w as f32).min(539.28 / h as f32);
+                let height = h as f32 * scale;
+                if top - height < 28.0 {
+                    index += 1;
+                    top = 567.28;
+                }
+                while ops.len() <= index {
+                    ops.push(Vec::new());
+                }
+                place_image(
+                    &mut ops[index],
+                    &id,
+                    (w, h),
+                    &Rect::from_xywh(Pt(28.0), Pt(top - height), Pt(width), Pt(height)),
+                );
+                top -= height + 16.0;
+            }
+        }
+        for (index, mut operations) in ops.into_iter().enumerate() {
+            let footer = format!("{} · {} · {}", part.name, article.title, index + 1);
+            let footer = wrap_measured(font, &footer, if compared { 372.945 } else { 480.0 }, 7.0)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            draw_line(
+                &mut operations,
+                font_id,
+                &footer,
+                if compared { 440.945 } else { MARGIN_X_PT },
+                12.0,
+                7.0,
+                role_style(BlockRole::PageNumber, 1.0).color,
+            );
+            pages.push(PdfPage::new(
+                pt_to_mm(if compared { 841.89 } else { A4_W_PT }),
+                pt_to_mm(if compared { 595.28 } else { A4_H_PT }),
+                operations,
+            ));
+        }
+    }
+    let repeated = infer_repeated_furniture_texts(&part.document);
+    for page in &part.document.pages {
+        let compared = options.with_source;
+        let source = part
+            .source_images
+            .get(&page.index)
+            .map(decode_source)
+            .transpose()?;
+        if compared && source.is_none() {
+            return Err(AppError::Config(format!(
+                "{} · 第 {} 页原图缺失，无法生成对照",
+                part.name, page.index
+            )));
+        }
+        let size = if page.width > 0.0
+            && page.height > 0.0
+            && page.width.is_finite()
+            && page.height.is_finite()
+        {
+            let scale = A4_H_PT / page.width.max(page.height) as f32;
+            (page.width as f32 * scale, page.height as f32 * scale)
+        } else {
+            (A4_W_PT, A4_H_PT)
+        };
+        let blocks: Vec<_> = ordered_blocks(page)
+            .into_iter()
+            .filter(|block| {
+                include_in_reading(classify(&block.label), options)
+                    && !should_skip_inferred_furniture(page, block, &repeated, options)
+                    && !is_known_scanner_artifact(&clean_block_text(&block.text))
+            })
+            .collect();
+        let positioned: Option<Vec<_>> = if page.dimensions_approximate {
+            None
+        } else {
+            blocks
+                .iter()
+                .map(|block| {
+                    let rect = block_rect(page, block, size)?;
+                    let size = layout_font(font, block, &rect, options.font_scale)?;
+                    Some((*block, rect, size))
+                })
+                .collect()
+        };
+        // Overlapping OCR boxes cannot be trusted as separate text regions.
+        let overlaps = positioned.as_ref().is_some_and(|items| {
+            items.iter().enumerate().any(|(i, (_, a, _))| {
+                items[i + 1..].iter().any(|(_, b, _)| {
+                    let area = (a.x.0 + a.width.0).min(b.x.0 + b.width.0) - a.x.0.max(b.x.0);
+                    let height = (a.y.0 + a.height.0).min(b.y.0 + b.height.0) - a.y.0.max(b.y.0);
+                    area > 0.0
+                        && height > 0.0
+                        && area * height
+                            > 0.08 * (a.width.0 * a.height.0).min(b.width.0 * b.height.0)
+                })
+            })
+        });
+        let label = format!("{} · 第 {} 页", part.name, page.index);
+        if let Some(items) = positioned.filter(|_| !overlaps) {
+            let offset = if compared { size.0 } else { 0.0 };
+            let mut ops = Vec::new();
+            if compared {
+                let (id, w, h) = add_image(doc, source.as_ref().unwrap().clone())?;
+                place_image(
+                    &mut ops,
+                    &id,
+                    (w, h),
+                    &Rect::from_wh(Pt(size.0), Pt(size.1)),
+                );
+            }
+            for (block, mut rect, font_size) in items {
+                rect.x.0 += offset;
+                let role = classify(&block.label);
+                if role == BlockRole::Image {
+                    if let Some(crop) = source
+                        .as_ref()
+                        .and_then(|image| image_crop(image, page, block))
+                    {
+                        let (id, w, h) = add_image(doc, crop)?;
+                        place_image(&mut ops, &id, (w, h), &rect);
+                    } else {
+                        draw_cell(
+                            &mut ops,
+                            font_id,
+                            &["图片原图缺失".into()],
+                            rect.x.0,
+                            rect.y.0 + rect.height.0,
+                            rect.width.0,
+                            rect.height.0,
+                            font_size.min(8.0),
+                        );
+                        warnings.push(format!("{label}：图片原图缺失"));
+                    }
+                } else if role == BlockRole::Table && !table_rows(&block.text).is_empty() {
+                    draw_table(
+                        &mut ops,
+                        font_id,
+                        font,
+                        &table_rows(&block.text),
+                        &rect,
+                        font_size,
+                    );
+                } else {
+                    let text = block_text(block);
+                    for (i, line) in wrap_measured(font, &text, rect.width.0, font_size)
+                        .iter()
+                        .enumerate()
+                    {
+                        draw_line(
+                            &mut ops,
+                            font_id,
+                            line,
+                            rect.x.0,
+                            rect.y.0 + rect.height.0 - font_size - i as f32 * font_size * 1.35,
+                            font_size,
+                            role_style(role, 1.0).color,
+                        );
+                    }
+                }
+            }
+            // A footer outside source content preserves file/page identity in merged PDFs.
+            draw_line(
+                &mut ops,
+                font_id,
+                &label,
+                offset + 8.0,
+                -12.0,
+                8.0,
+                role_style(BlockRole::PageNumber, 1.0).color,
+            );
+            // Leave 22pt beneath the source canvas, shifting the page content up.
+            // The source-sized page itself remains unscaled.
+            for op in &mut ops {
+                if let Op::SetTextCursor { pos } = op {
+                    pos.y.0 += 22.0;
+                }
+                if let Op::UseXobject { transform, .. } = op {
+                    transform.translate_y =
+                        Some(Pt(transform.translate_y.unwrap_or(Pt(0.0)).0 + 22.0));
+                }
+                if let Op::DrawLine { line } = op {
+                    for point in &mut line.points {
+                        point.p.y.0 += 22.0;
+                    }
+                }
+            }
+            pages.push(PdfPage::new(
+                pt_to_mm(size.0 + offset),
+                pt_to_mm(size.1 + 22.0),
+                ops,
+            ));
+        } else {
+            let mut flow = Flow::new(font_id, font, options.margin_scale);
+            if compared {
+                flow.configure(
+                    A4_W_PT * 2.0,
+                    A4_H_PT,
+                    A4_W_PT + MARGIN_X_PT,
+                    A4_W_PT - MARGIN_X_PT * 2.0,
+                    MARGIN_TOP_PT,
+                );
+            }
+            flow.emit_anchor(&label, 1.0);
+            for block in blocks {
+                let role = classify(&block.label);
+                if role == BlockRole::Image {
+                    if let Some(crop) = source
+                        .as_ref()
+                        .and_then(|image| image_crop(image, page, block))
+                    {
+                        let (id, w, h) = add_image(doc, crop)?;
+                        flow.emit_image(&id, w, h);
+                    } else {
+                        flow.emit_block(BlockRole::Image, "图片原图缺失", 1.0);
+                        warnings.push(format!("{label}：图片原图缺失"));
+                    }
+                } else if role == BlockRole::Table {
+                    flow.emit_table(&table_rows(&block.text), &block.text, options.font_scale);
+                } else {
+                    flow.emit_block(role, &block_text(block), options.font_scale);
+                }
+            }
+            let source_id = source
+                .as_ref()
+                .filter(|_| compared)
+                .map(|image| add_image(doc, image.clone()))
+                .transpose()?;
+            for (index, mut ops) in flow.finish().into_iter().enumerate() {
+                let footer = format!("{label} · {}", index + 1);
+                let footer = wrap_measured(font, &footer, A4_W_PT - MARGIN_X_PT * 2.0, 7.0)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+                draw_line(
+                    &mut ops,
+                    font_id,
+                    &footer,
+                    if compared {
+                        A4_W_PT + MARGIN_X_PT
+                    } else {
+                        MARGIN_X_PT
+                    },
+                    20.0,
+                    7.0,
+                    role_style(BlockRole::PageNumber, 1.0).color,
+                );
+                if let Some((id, w, h)) = &source_id {
+                    place_image(
+                        &mut ops,
+                        id,
+                        (*w, *h),
+                        &Rect::from_xywh(
+                            Pt(20.0),
+                            Pt(20.0),
+                            Pt(A4_W_PT - 40.0),
+                            Pt(A4_H_PT - 40.0),
+                        ),
+                    );
+                }
+                pages.push(PdfPage::new(
+                    pt_to_mm(if compared { A4_W_PT * 2.0 } else { A4_W_PT }),
+                    pt_to_mm(A4_H_PT),
+                    ops,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Per-role visual style for the flowing PDF.
@@ -724,6 +1491,7 @@ fn role_style(role: BlockRole, font_scale: f32) -> RoleStyle {
 
 struct Flow<'a> {
     font_id: &'a FontId,
+    font: &'a ParsedFont,
     margin_x: f32,
     margin_top: f32,
     margin_bottom: f32,
@@ -731,15 +1499,18 @@ struct Flow<'a> {
     cur: Vec<Op>,
     y: f32,
     started: bool,
+    page_height: f32,
+    text_width: f32,
 }
 
 impl<'a> Flow<'a> {
-    fn new(font_id: &'a FontId, margin_scale: f32) -> Self {
+    fn new(font_id: &'a FontId, font: &'a ParsedFont, margin_scale: f32) -> Self {
         let margin_x = MARGIN_X_PT * margin_scale;
         let margin_top = MARGIN_TOP_PT * margin_scale;
         let margin_bottom = MARGIN_BOTTOM_PT * margin_scale;
         Flow {
             font_id,
+            font,
             margin_x,
             margin_top,
             margin_bottom,
@@ -747,16 +1518,27 @@ impl<'a> Flow<'a> {
             cur: Vec::new(),
             y: A4_H_PT - margin_top,
             started: false,
+            page_height: A4_H_PT,
+            text_width: (A4_W_PT - margin_x * 2.0).max(72.0),
         }
     }
 
     fn content_width(&self) -> f32 {
-        (A4_W_PT - self.margin_x * 2.0).max(72.0)
+        self.text_width
+    }
+
+    fn configure(&mut self, _width: f32, height: f32, x: f32, text_width: f32, margin: f32) {
+        self.page_height = height;
+        self.margin_x = x;
+        self.text_width = text_width;
+        self.margin_top = margin;
+        self.margin_bottom = margin;
+        self.y = height - margin;
     }
 
     fn new_page(&mut self) {
         self.pages.push(mem::take(&mut self.cur));
-        self.y = A4_H_PT - self.margin_top;
+        self.y = self.page_height - self.margin_top;
     }
 
     /// Ensure at least `line_h` fits; break to a new page if not.
@@ -780,13 +1562,17 @@ impl<'a> Flow<'a> {
     fn emit_paragraph(&mut self, text: &str, style: RoleStyle) {
         let line_h = style.size * style.line_height;
         // Gap before (skipped at the very top of the document / a fresh page).
-        if self.started && self.y < A4_H_PT - self.margin_top - 0.01 {
+        if self.started && self.y < self.page_height - self.margin_top - 0.01 {
             self.y -= style.gap_before;
         }
-        let first_width = (self.content_width() - style.indent).max(style.size);
         let font_id = self.font_id;
-        // Wrap the first line against the indented width, the rest full width.
-        let lines = wrap_paragraph(text, self.content_width(), first_width, style.size);
+        // Reserve the indent during measurement as well as drawing.
+        let lines = wrap_measured(
+            self.font,
+            text,
+            (self.content_width() - style.indent).max(style.size),
+            style.size,
+        );
         for (idx, line) in lines.iter().enumerate() {
             self.ensure(line_h);
             self.started = true;
@@ -804,6 +1590,135 @@ impl<'a> Flow<'a> {
             self.y -= line_h;
         }
         self.y -= style.gap_after;
+    }
+
+    fn emit_image(&mut self, id: &XObjectId, width: u32, height: u32) {
+        let scale = (self.content_width() / width.max(1) as f32)
+            .min((self.page_height - self.margin_top - self.margin_bottom) / height.max(1) as f32);
+        let h = height as f32 * scale;
+        self.ensure(h);
+        let rect = Rect::from_xywh(
+            Pt(self.margin_x),
+            Pt(self.y - h),
+            Pt(self.content_width()),
+            Pt(h),
+        );
+        place_image(&mut self.cur, id, (width, height), &rect);
+        self.y -= h + 10.0;
+        self.started = true;
+    }
+
+    fn emit_table(&mut self, rows: &[Vec<String>], original: &str, font_scale: f32) {
+        if rows.is_empty() {
+            self.emit_block(
+                BlockRole::Table,
+                &pdf_text_for_role(BlockRole::Table, original),
+                font_scale,
+            );
+            return;
+        }
+        let size = (9.5 * font_scale).clamp(8.0, 16.0);
+        let line_height = size * 1.35;
+        let cols = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+        let width = self.content_width() / cols as f32;
+        if width < size + 8.0 {
+            for row in rows {
+                self.emit_block(BlockRole::Table, &row.join(" | "), font_scale);
+            }
+            return;
+        }
+        for row in rows {
+            let cells: Vec<_> = (0..cols)
+                .map(|i| {
+                    wrap_measured(
+                        self.font,
+                        row.get(i).map(String::as_str).unwrap_or(""),
+                        (width - 8.0).max(size),
+                        size,
+                    )
+                })
+                .collect();
+            let count = cells.iter().map(Vec::len).max().unwrap_or(1);
+            let full_height = count as f32 * line_height + 8.0;
+            // Keep an ordinary row together; very tall rows continue by lines.
+            if full_height <= self.page_height - self.margin_top - self.margin_bottom {
+                self.ensure(full_height);
+            }
+            let mut at = 0;
+            while at < count {
+                self.ensure(line_height + 8.0);
+                let take = (((self.y - self.margin_bottom - 8.0) / line_height)
+                    .floor()
+                    .max(1.0) as usize)
+                    .min(count - at);
+                let h = take as f32 * line_height + 8.0;
+                for (i, lines) in cells.iter().enumerate() {
+                    let fragment = &lines[at.min(lines.len())..(at + take).min(lines.len())];
+                    draw_cell(
+                        &mut self.cur,
+                        self.font_id,
+                        fragment,
+                        self.margin_x + i as f32 * width,
+                        self.y,
+                        width,
+                        h,
+                        size,
+                    );
+                }
+                self.y -= h;
+                self.started = true;
+                at += take;
+                if at < count {
+                    self.new_page();
+                }
+            }
+        }
+        self.y -= 10.0;
+    }
+
+    fn emit_rich_text(&mut self, text: &str, scale: f32) {
+        let mut rest = text;
+        while let Some(start) = rest.to_ascii_lowercase().find("<table") {
+            self.emit_markdown_lines(&rest[..start], scale);
+            let table = &rest[start..];
+            let Some(end) = table.to_ascii_lowercase().find("</table>") else {
+                self.emit_markdown_lines(table, scale);
+                return;
+            };
+            let end = end + "</table>".len();
+            self.emit_table(&table_rows(&table[..end]), &table[..end], scale);
+            rest = &table[end..];
+        }
+        self.emit_markdown_lines(rest, scale);
+    }
+
+    fn emit_markdown_lines(&mut self, text: &str, scale: f32) {
+        let mut table = String::new();
+        for line in text.lines() {
+            if line.trim().starts_with('|') {
+                table.push_str(line);
+                table.push('\n');
+                continue;
+            }
+            if !table.is_empty() {
+                self.emit_table(&table_rows(&table), &table, scale);
+                table.clear();
+            }
+            let line = line.trim();
+            if line.is_empty() {
+                self.y -= 5.0;
+                continue;
+            }
+            let (role, body) = if line.starts_with('#') {
+                (BlockRole::Heading, line.trim_start_matches('#').trim())
+            } else {
+                (BlockRole::Body, line)
+            };
+            self.emit_block(role, &clean_block_text(&strip_html(body)), scale);
+        }
+        if !table.is_empty() {
+            self.emit_table(&table_rows(&table), &table, scale);
+        }
     }
 
     fn finish(mut self) -> Vec<Vec<Op>> {
@@ -836,40 +1751,6 @@ fn draw_line(
         items: vec![TextItem::Text(text.to_string())],
     });
     ops.push(Op::EndTextSection);
-}
-
-/// Wrap a paragraph where the first visual line has `first_width` available
-/// (to leave room for an indent) and subsequent lines have `full_width`.
-fn wrap_paragraph(text: &str, full_width: f32, first_width: f32, font_size: f32) -> Vec<String> {
-    let mut out = Vec::new();
-    for source_line in text.split('\n') {
-        if source_line.trim().is_empty() {
-            continue;
-        }
-        let mut line = String::new();
-        let mut width = 0.0_f32;
-        for ch in source_line.chars() {
-            let limit = if out.is_empty() {
-                first_width
-            } else {
-                full_width
-            };
-            let ch_width = estimated_char_width(ch) * font_size;
-            if !line.is_empty() && width + ch_width > limit {
-                out.push(mem::take(&mut line));
-                width = 0.0;
-            }
-            line.push(ch);
-            width += ch_width;
-        }
-        if !line.is_empty() {
-            out.push(line);
-        }
-    }
-    if out.is_empty() {
-        out.push(String::new());
-    }
-    out
 }
 
 fn pdf_text_for_role(role: BlockRole, text: &str) -> String {
@@ -1766,6 +2647,243 @@ mod tests {
         println!("MD   -> {md} ({} src pages)", md_res.page_count);
         for w in pdf_res.warnings.iter().chain(md_res.warnings.iter()) {
             println!("warn: {w}");
+        }
+    }
+    fn rendered_text(pages: &[PdfPage]) -> String {
+        pages
+            .iter()
+            .flat_map(|p| &p.ops)
+            .filter_map(|op| match op {
+                Op::ShowText { items } => Some(
+                    items
+                        .iter()
+                        .filter_map(|i| {
+                            if let TextItem::Text(text) = i {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_test_part(part: &PdfExportPart, compared: bool) -> AppResult<Vec<PdfPage>> {
+        let chars = (32u8..127)
+            .map(char::from)
+            .chain("第页续图片原图缺失正文 ·：〔〕（）".chars())
+            .collect();
+        let font = load_cjk_font(&chars)?;
+        let mut document = PdfDocument::new("test");
+        let id = document.add_font(&font.font);
+        let mut pages = Vec::new();
+        render_pdf_part(
+            &mut document,
+            &id,
+            &font.font,
+            part,
+            &LayoutPdfExportOptions {
+                with_source: compared,
+                include_images: true,
+                include_header: true,
+                include_footer: true,
+                ..Default::default()
+            },
+            &mut pages,
+            &mut Vec::new(),
+        )?;
+        Ok(pages)
+    }
+
+    fn source_image() -> ExportImage {
+        let mut image = image::RgbImage::from_pixel(300, 440, image::Rgb([240, 240, 235]));
+        for y in (20..420).step_by(16) {
+            for x in 20..280 {
+                image.put_pixel(x, y, image::Rgb([75, 75, 75]));
+            }
+        }
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 80)
+            .encode_image(&image)
+            .unwrap();
+        ExportImage {
+            jpeg,
+            width: 300,
+            height: 440,
+        }
+    }
+
+    fn sample_part() -> PdfExportPart {
+        PdfExportPart { name: "Newspaper".into(), document: doc(vec![LayoutPage {
+            index: 7, width: 1000.0, height: 1400.0, dimensions_approximate: false,
+            blocks: vec![
+                block("doc_title", "Newspaper / 1935", [60.0, 40.0, 940.0, 110.0], Some(1)),
+                block("text", "First column. Source page seven. This paragraph stays in its original position.", [60.0, 160.0, 460.0, 550.0], Some(2)),
+                block("text", "Second column. Complete text with punctuation, and an ending.", [540.0, 160.0, 940.0, 550.0], Some(3)),
+                block("table", "<table><tr><th>Year</th><th>Count</th></tr><tr><td>1935</td><td>42</td></tr><tr><td></td><td>END-TABLE</td></tr></table>", [60.0, 640.0, 940.0, 900.0], Some(4)),
+                block("image", "", [60.0, 980.0, 460.0, 1300.0], Some(5)),
+            ],
+        }]), source_images: BTreeMap::from([(7, source_image())]), articles: Vec::new() }
+    }
+
+    #[test]
+    fn adaptive_layout_keeps_readable_columns_and_reflows_dense_pages_without_losing_text() {
+        let mut part = sample_part();
+        let pages = render_test_part(&part, false).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(rendered_text(&pages).contains("END-TABLE"));
+        assert!(pages[0]
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::UseXobject { .. })));
+        assert!(pages[0]
+            .ops
+            .iter()
+            .all(|op| !matches!(op, Op::SetFont { size, .. } if size.0 < MIN_LAYOUT_FONT - 0.01)));
+        part.document.pages[0].blocks[1].text = "DENSE-CONTENT ".repeat(1800) + "DENSE-END";
+        let pages = render_test_part(&part, false).unwrap();
+        assert!(pages.len() > 2);
+        let text = rendered_text(&pages).replace('\n', "");
+        assert_eq!(text.matches("DENSE-CONTENT").count(), 1800);
+        assert!(text.contains("DENSE-END"));
+        assert!(text.contains("END-TABLE"));
+    }
+
+    #[test]
+    fn article_comparison_keeps_all_text_and_all_crops_even_when_one_side_finishes_first() {
+        let mut part = sample_part();
+        part.document.pages.clear();
+        part.source_images.clear();
+        part.articles = vec![PdfArticle {
+            title: "Article across source pages".into(),
+            body: "ARTICLE-TEXT ".repeat(1400) + "ARTICLE-END",
+            images: vec![source_image(); 12],
+        }];
+        let pages = render_test_part(&part, true).unwrap();
+        assert!(pages.len() >= 12);
+        assert_eq!(
+            pages
+                .iter()
+                .flat_map(|p| &p.ops)
+                .filter(|op| matches!(op, Op::UseXobject { .. }))
+                .count(),
+            12
+        );
+        let text = rendered_text(&pages).replace('\n', "");
+        assert_eq!(text.matches("ARTICLE-TEXT").count(), 1400);
+        assert!(text.contains("ARTICLE-END"));
+    }
+
+    #[test]
+    fn oversized_table_rows_continue_without_losing_cell_contents() {
+        let mut part = sample_part();
+        part.document.pages[0].blocks = vec![block(
+            "table",
+            &format!(
+                "<table><tr><td>{}</td><td>RIGHT-END</td></tr></table>",
+                "CELL ".repeat(3000) + "LEFT-END"
+            ),
+            [20.0, 20.0, 980.0, 1380.0],
+            Some(1),
+        )];
+        let pages = render_test_part(&part, false).unwrap();
+        assert!(pages.len() > 1);
+        let text = rendered_text(&pages).replace('\n', "");
+        assert_eq!(text.matches("CELL").count(), 3000);
+        assert!(text.contains("LEFT-END"));
+        assert!(text.contains("RIGHT-END"));
+    }
+
+    #[test]
+    fn table_grid_preserves_empty_columns_and_reserves_spans() {
+        let rows = table_rows("<table><tr><td rowspan='2'>A</td><td></td><td>C</td></tr><tr><td colspan='2'>D</td></tr></table>");
+        assert_eq!(rows, vec![vec!["A", "", "C"], vec!["", "D", ""]]);
+    }
+
+    #[test]
+    fn missing_comparison_source_does_not_overwrite_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("existing.pdf");
+        fs::write(&target, b"existing document").unwrap();
+        let mut part = sample_part();
+        part.source_images.clear();
+        let result = export_layout_pdf_to_path(LayoutPdfExportRequest {
+            document: doc(Vec::new()),
+            target_path: target.to_string_lossy().into(),
+            options: LayoutPdfExportOptions {
+                with_source: true,
+                parts: vec![part],
+                ..Default::default()
+            },
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(target).unwrap(), b"existing document");
+    }
+
+    /// Generate the same samples used for visual and Unicode extraction checks.
+    #[test]
+    #[ignore]
+    fn adaptive_pdf_visual_samples() {
+        let directory = PathBuf::from(env::var("CARPO_PDF_QA_DIR").expect("set CARPO_PDF_QA_DIR"));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("source.jpg"), source_image().jpeg).unwrap();
+        let normal = sample_part();
+        let mut dense = normal.clone();
+        dense.document.pages[0].index = 8;
+        dense.source_images.insert(8, source_image());
+        dense.document.pages[0].blocks[1].text =
+            "密集正文，用于检查自动续页与中文可复制性。".repeat(500) + "正文结束标记";
+        let mut article = normal.clone();
+        article.document.pages.clear();
+        article.source_images.clear();
+        article.articles = vec![PdfArticle {
+            title: "跨页报道".into(),
+            body: "报道正文，完整保留跨框与跨页内容。".repeat(260) + "报道结束标记",
+            images: vec![source_image(); 4],
+        }];
+        let mut long_table = normal.clone();
+        long_table.document.pages[0].blocks = vec![block(
+            "table",
+            &format!(
+                "<table><tr><th>项目</th><th>内容</th></tr>{}</table>",
+                (0..140)
+                    .map(|i| format!(
+                        "<tr><td>行{i}</td><td>长表格内容，逐行检查，不能丢失。</td></tr>"
+                    ))
+                    .collect::<String>()
+            ),
+            [60.0, 160.0, 940.0, 900.0],
+            Some(1),
+        )];
+        for (name, parts, compared) in [
+            ("normal", vec![normal.clone()], false),
+            ("dense", vec![dense.clone()], false),
+            ("long-table", vec![long_table], false),
+            ("article-compare", vec![article.clone()], true),
+            ("mixed-compare", vec![normal, dense, article], true),
+        ] {
+            let result = export_layout_pdf_to_path(LayoutPdfExportRequest {
+                document: doc(Vec::new()),
+                target_path: directory
+                    .join(format!("{name}.pdf"))
+                    .to_string_lossy()
+                    .into(),
+                options: LayoutPdfExportOptions {
+                    include_images: true,
+                    include_header: true,
+                    include_footer: true,
+                    include_aside_text: true,
+                    with_source: compared,
+                    parts,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+            println!("{name}: {} pages, {:?}", result.page_count, result.warnings);
         }
     }
 }

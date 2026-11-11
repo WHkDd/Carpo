@@ -8,6 +8,7 @@ import {
   cancelBatchExport,
   missingUnits,
   planBatchFile,
+  planResultFile,
   planOutputDocs,
   safeFileStem,
   sortBatchEntries,
@@ -15,8 +16,10 @@ import {
   summarizeBatch,
   type BatchEntry,
   type BatchFilePlan,
+  type ExportScope,
 } from "@/lib/batch-export";
 import { cn } from "@/lib/utils";
+import { isTauriRuntime } from "@/lib/runtime";
 import { useStore } from "@/store";
 import type {
   BatchExportFormat,
@@ -35,29 +38,52 @@ interface BatchExportDialogProps {
   /** The batch is running in the background; the caller leaves selection
    *  mode. */
   onStarted: () => void;
+  initialFormat?: BatchExportFormat;
 }
 
 const LAYOUTS: BatchExportLayout[] = ["separate", "merged", "by_tag"];
-const FORMATS: BatchExportFormat[] = ["docx", "md"];
+const FORMATS: BatchExportFormat[] = ["docx", "md", "pdf"];
 
 /** Options sheet for a background batch. It only plans and starts — once
  *  the output destination is picked it closes, and progress moves to
  *  `BatchExportStatus` in the queue panel's footer. */
 export function BatchExportDialog({
   open,
-  fileIds,
+  fileIds: inputFileIds,
   recognizeOnly = false,
   onClose,
   onStarted,
+  initialFormat = "docx",
 }: BatchExportDialogProps) {
   const t = useT();
+  const idsKey = JSON.stringify(inputFileIds);
+  const fileIds = useMemo<string[]>(() => JSON.parse(idsKey), [idsKey]);
   const [layout, setLayout] = useState<BatchExportLayout>("merged");
   const [format, setFormat] = useState<BatchExportFormat>("docx");
+  const [withSource, setWithSource] = useState(false);
+  const [scope, setScope] = useState<ExportScope>("whole_file");
+  const single = fileIds.length === 1;
+  const existingOnly = !recognizeOnly && (single || format === "pdf");
+  useEffect(() => {
+    if (!open) return;
+    setFormat(initialFormat);
+    if (!single) return;
+    const state = useStore.getState();
+    const id = fileIds[0]!;
+    setScope(
+      Object.values(state.recognizedPages[id] ?? {}).some(
+        (p) => p.text.trim() || p.layout,
+      )
+        ? "whole_file"
+        : "grouped",
+    );
+  }, [open, single, fileIds, initialFormat]);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const batchRunning = useStore(
     (s) =>
-      s.batchExport?.status === "running" || s.batchExport?.status === "cancelling"
+      s.batchExport?.status === "running" ||
+      s.batchExport?.status === "cancelling",
   );
 
   // A snapshot is enough: the dialog is modal, so nothing it previews can
@@ -65,29 +91,40 @@ export function BatchExportDialog({
   // the same store state.
   const { plans, planById, sorted } = useMemo(() => {
     if (!open) {
-      return { plans: [], planById: new Map<string, PreviewPlan>(), sorted: [] };
+      return {
+        plans: [],
+        planById: new Map<string, PreviewPlan>(),
+        sorted: [],
+      };
     }
     const state = useStore.getState();
-    const plans = fileIds.map((id) => planBatchFile(state, id));
+    const plans = fileIds.map((id) =>
+      existingOnly
+        ? planResultFile(state, id, single ? scope : undefined)
+        : planBatchFile(state, id),
+    );
     return {
       plans,
       planById: new Map(
         plans.map((p) => {
           const missing = missingUnits(state, p);
-          const total = p.mode === "grouped" ? p.articles.length : p.pages.length;
+          const total =
+            p.mode === "grouped" ? p.articles.length : p.pages.length;
           const pending =
-            p.mode === "grouped" ? missing.articles.length : missing.pages.length;
+            p.mode === "grouped"
+              ? missing.articles.length
+              : missing.pages.length;
           return [p.fileId, { plan: p, reused: total - pending }];
-        })
+        }),
       ),
       sorted: sortBatchEntries(plans.map((p) => batchEntry(state, p))),
     };
-  }, [open, fileIds]);
+  }, [open, fileIds, existingOnly, single, scope]);
   // Recognize-only has no output documents; grouping by the export layout
   // would list a multi-tag file once per tag.
   const docs = useMemo(
-    () => planOutputDocs(recognizeOnly ? "merged" : layout, sorted),
-    [layout, recognizeOnly, sorted]
+    () => planOutputDocs(recognizeOnly || single ? "merged" : layout, sorted),
+    [layout, recognizeOnly, sorted, single],
   );
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -114,8 +151,11 @@ export function BatchExportDialog({
     try {
       const result = await startBatchExport({
         fileIds,
-        layout,
+        layout: single ? "merged" : layout,
         format,
+        withSource,
+        scope: single && !recognizeOnly ? scope : undefined,
+        exportOnly: existingOnly,
         recognizeOnly,
         userInitiated: true,
       });
@@ -126,7 +166,19 @@ export function BatchExportDialog({
     }
   };
 
-  const runnable = plans.some((p) => !p.error);
+  const runnable = plans.some((p) => {
+    if (p.error) return false;
+    if (!existingOnly) return true;
+    const state = useStore.getState();
+    return p.mode === "grouped"
+      ? p.articles.some((a) => state.articleOcrTexts[p.fileId]?.[a.id]?.trim())
+      : p.pages.some((page) => {
+          const saved = state.recognizedPages[p.fileId]?.[page];
+          return (
+            saved && (saved.text.trim() || (format === "pdf" && saved.layout))
+          );
+        });
+  });
 
   // Portaled: the queue panel that owns this dialog is an overflow-hidden
   // grid cell, and every other dialog mounts outside the shell's <main>.
@@ -147,15 +199,27 @@ export function BatchExportDialog({
         <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-3">
           <div className="flex min-w-0 items-center gap-2">
             {recognizeOnly ? (
-              <ScanText className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
+              <ScanText
+                className="h-4 w-4 text-foreground-muted"
+                strokeWidth={1.75}
+              />
             ) : (
-              <FileOutput className="h-4 w-4 text-foreground-muted" strokeWidth={1.75} />
+              <FileOutput
+                className="h-4 w-4 text-foreground-muted"
+                strokeWidth={1.75}
+              />
             )}
             <h2
               id="batch-export-title"
               className="truncate text-[15px] font-medium text-foreground"
             >
-              {t(recognizeOnly ? "batch.recognizeTitle" : "batch.dialogTitle")}
+              {t(
+                recognizeOnly
+                  ? "batch.recognizeTitle"
+                  : existingOnly
+                    ? "export.title"
+                    : "batch.dialogTitle",
+              )}
             </h2>
           </div>
           <button
@@ -170,34 +234,112 @@ export function BatchExportDialog({
 
         <div className="flex-1 overflow-y-auto px-5 py-4 text-[12px] leading-relaxed">
           {!recognizeOnly && (
-          <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 bg-surface-2/40 px-4 py-3">
-            <OptionRow label={t("batch.layout")}>
-              <Segmented
-                label={t("batch.layout")}
-                value={layout}
-                options={LAYOUTS.map((key) => ({
-                  key,
-                  label: t(`batch.layout.${key}`),
-                }))}
-                onChange={setLayout}
-              />
-            </OptionRow>
-            <OptionRow label={t("batch.format")}>
-              <Segmented
-                label={t("batch.format")}
-                value={format}
-                options={FORMATS.map((key) => ({
-                  key,
-                  label: key === "docx" ? "DOCX" : "Markdown",
-                }))}
-                onChange={setFormat}
-              />
-            </OptionRow>
-          </div>
+            <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 bg-surface-2/40 px-4 py-3">
+              {!single && (
+                <OptionRow label={t("batch.layout")}>
+                  <Segmented
+                    label={t("batch.layout")}
+                    value={layout}
+                    options={LAYOUTS.map((key) => ({
+                      key,
+                      label: t(`batch.layout.${key}`),
+                    }))}
+                    onChange={setLayout}
+                  />
+                </OptionRow>
+              )}
+              <OptionRow label={t("batch.format")}>
+                <Segmented
+                  label={t("batch.format")}
+                  value={format}
+                  options={FORMATS.map((key) => ({
+                    key,
+                    label:
+                      key === "docx"
+                        ? "DOCX"
+                        : key === "pdf"
+                          ? "PDF"
+                          : "Markdown",
+                    disabled: key === "pdf" && !isTauriRuntime(),
+                  }))}
+                  onChange={(next) => {
+                    setFormat(next);
+                    if (
+                      next !== "md" &&
+                      (scope === "current" || scope === "selected")
+                    )
+                      setScope(scope === "current" ? "whole_file" : "grouped");
+                  }}
+                />
+              </OptionRow>
+              {single && (
+                <OptionRow label={t("export.scope")}>
+                  <select
+                    aria-label={t("export.scope")}
+                    value={scope}
+                    onChange={(event) =>
+                      setScope(event.target.value as ExportScope)
+                    }
+                    className="rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+                  >
+                    {(
+                      [
+                        "whole_file",
+                        "grouped",
+                        ...(format === "md" ? ["current", "selected"] : []),
+                      ] as ExportScope[]
+                    ).map((key) => {
+                      const state = useStore.getState();
+                      const plan = planResultFile(state, fileIds[0]!, key);
+                      const contentExists =
+                        plan.mode === "whole_file"
+                          ? plan.pages.some((p) => {
+                              const saved =
+                                state.recognizedPages[plan.fileId]?.[p];
+                              return (
+                                saved &&
+                                (saved.text.trim() ||
+                                  (format === "pdf" && saved.layout))
+                              );
+                            })
+                          : plan.articles.some((a) =>
+                              state.articleOcrTexts[plan.fileId]?.[
+                                a.id
+                              ]?.trim(),
+                            );
+                      return (
+                        <option key={key} value={key} disabled={!contentExists}>
+                          {t(`export.scope.${key}`)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </OptionRow>
+              )}
+              {format !== "md" && (
+                <label className="flex items-center gap-2 text-[12px]">
+                  <input
+                    type="checkbox"
+                    checked={withSource}
+                    onChange={(event) => setWithSource(event.target.checked)}
+                  />
+                  {t("export.withSource")}
+                </label>
+              )}
+              {format === "pdf" && (
+                <p className="text-[11px] text-foreground-subtle">
+                  {t("export.pdfExistingOnly")}
+                </p>
+              )}
+            </div>
           )}
 
           <div className="mt-3 text-[11px] font-medium text-foreground-muted">
-            {t(recognizeOnly ? "batch.recognizePreviewTitle" : "batch.previewTitle")}
+            {t(
+              recognizeOnly
+                ? "batch.recognizePreviewTitle"
+                : "batch.previewTitle",
+            )}
           </div>
           <div className="mt-1.5 flex flex-col gap-2">
             {docs.map((doc, index) => (
@@ -207,10 +349,12 @@ export function BatchExportDialog({
               >
                 {layout !== "separate" && !recognizeOnly && (
                   <h3 className="truncate border-b border-border/50 bg-surface-2/60 px-3 py-1 text-[12px] font-medium text-foreground">
-                    {t("batch.previewDoc", {
-                      name: `${safeFileStem(doc.stem)}.${format}`,
-                      count: doc.entries.length,
-                    })}
+                    {single
+                      ? `${safeFileStem(sorted[0]?.name.replace(/\.[^.]+$/, "") ?? "_")}.${format}`
+                      : t("batch.previewDoc", {
+                          name: `${safeFileStem(doc.stem)}.${format}`,
+                          count: doc.entries.length,
+                        })}
                   </h3>
                 )}
                 <PreviewEntries entries={doc.entries} plans={planById} />
@@ -241,13 +385,13 @@ export function BatchExportDialog({
               disabled={starting || batchRunning || !runnable}
               className="inline-flex h-7 items-center gap-1.5 rounded bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:bg-primary/90 active:bg-primary/80 disabled:cursor-default disabled:opacity-50"
             >
-              {t("batch.start")}
+              {t(existingOnly ? "export.title" : "batch.start")}
             </button>
           </div>
         </footer>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
@@ -261,7 +405,10 @@ interface PreviewPlan {
   reused: number;
 }
 
-function modeLabel(t: ReturnType<typeof useT>, { plan, reused }: PreviewPlan): string {
+function modeLabel(
+  t: ReturnType<typeof useT>,
+  { plan, reused }: PreviewPlan,
+): string {
   const grouped = plan.mode === "grouped";
   const count = grouped ? plan.articles.length : plan.pages.length;
   if (reused === 0) {
@@ -293,7 +440,7 @@ function PreviewEntries({
           className="bg-surface-2/30 px-3 pt-1.5 text-[11px] font-medium text-foreground-muted"
         >
           {group || t("batch.unnamedGroup")}
-        </li>
+        </li>,
       );
     }
     const preview = plans.get(entry.fileId);
@@ -329,7 +476,7 @@ function PreviewEntries({
         <span
           className={cn(
             "shrink-0 text-[11px]",
-            plan?.error ? "text-destructive" : "text-foreground-subtle"
+            plan?.error ? "text-destructive" : "text-foreground-subtle",
           )}
           title={plan?.error}
         >
@@ -337,13 +484,19 @@ function PreviewEntries({
             ? t("batch.status.failed")
             : modeLabel(t, preview)}
         </span>
-      </li>
+      </li>,
     );
   }
   return <ul className="flex flex-col pb-1">{rows}</ul>;
 }
 
-function OptionRow({ label, children }: { label: string; children: React.ReactNode }) {
+function OptionRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="text-[12px] font-medium text-foreground">{label}</span>
@@ -360,7 +513,7 @@ function Segmented<K extends string>({
 }: {
   label: string;
   value: K;
-  options: Array<{ key: K; label: string }>;
+  options: Array<{ key: K; label: string; disabled?: boolean }>;
   onChange: (next: K) => void;
 }) {
   return (
@@ -369,13 +522,14 @@ function Segmented<K extends string>({
       role="group"
       aria-label={label}
     >
-      {options.map(({ key, label: optionLabel }) => {
+      {options.map(({ key, label: optionLabel, disabled }) => {
         const active = key === value;
         return (
           <button
             key={key}
             type="button"
             aria-pressed={active}
+            disabled={disabled}
             onClick={() => onChange(key)}
             className={`h-5 rounded px-2 text-[11px] transition-colors ${
               active
@@ -393,7 +547,7 @@ function Segmented<K extends string>({
 
 function itemStatusLabel(
   t: ReturnType<typeof useT>,
-  item: BatchExportItem
+  item: BatchExportItem,
 ): string {
   if (item.status === "running" && item.total > 0) {
     return `${t("batch.status.running")} ${item.done}/${item.total}`;
@@ -425,7 +579,7 @@ export function BatchExportStatus({
   if (!batch) return null;
   const active = batch.status === "running" || batch.status === "cancelling";
   const finishedCount = batch.items.filter(
-    (i) => i.status !== "pending" && i.status !== "running"
+    (i) => i.status !== "pending" && i.status !== "running",
   ).length;
   const counts = summarizeBatch(batch.items);
   const hasProblem = counts.failed + counts.partial > 0 || !!batch.error;
@@ -450,8 +604,8 @@ export function BatchExportStatus({
           ? t(ocrOnly ? "batch.cancelledOcr" : "batch.cancelledTitle")
           : t(ocrOnly ? "batch.finishedOcr" : "batch.finished");
   const detail = active
-    ? current?.name ?? ""
-    : batch.error ?? batchSummaryText(batch.items);
+    ? (current?.name ?? "")
+    : (batch.error ?? batchSummaryText(batch.items));
 
   if (compact) {
     return (
@@ -488,13 +642,15 @@ export function BatchExportStatus({
               className="flex items-center justify-between gap-2 px-2.5 py-1 text-[11px]"
               title={item.error}
             >
-              <span className="min-w-0 truncate text-foreground-muted">{item.name}</span>
+              <span className="min-w-0 truncate text-foreground-muted">
+                {item.name}
+              </span>
               <span
                 className={cn(
                   "shrink-0 tabular-nums",
                   item.status === "failed" || item.failedUnits > 0
                     ? "text-destructive"
-                    : "text-foreground-subtle"
+                    : "text-foreground-subtle",
                 )}
               >
                 {item.status === "done" && item.failedUnits > 0
@@ -513,20 +669,28 @@ export function BatchExportStatus({
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-surface-2"
         >
           {active ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-foreground-muted" strokeWidth={1.75} />
+            <Loader2
+              className="h-3.5 w-3.5 shrink-0 animate-spin text-foreground-muted"
+              strokeWidth={1.75}
+            />
           ) : (
             <DoneIcon
               className={cn(
                 "h-3.5 w-3.5 shrink-0",
-                hasProblem ? "text-destructive" : "text-foreground-muted"
+                hasProblem ? "text-destructive" : "text-foreground-muted",
               )}
               strokeWidth={1.75}
             />
           )}
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[12px] text-foreground">{headline}</span>
+            <span className="block truncate text-[12px] text-foreground">
+              {headline}
+            </span>
             {detail && (
-              <span className="block truncate text-[11px] text-foreground-subtle" title={detail}>
+              <span
+                className="block truncate text-[11px] text-foreground-subtle"
+                title={detail}
+              >
                 {detail}
               </span>
             )}
@@ -534,7 +698,7 @@ export function BatchExportStatus({
           <ChevronDown
             className={cn(
               "h-3 w-3 shrink-0 text-foreground-subtle transition-transform",
-              expanded && "rotate-180"
+              expanded && "rotate-180",
             )}
             strokeWidth={1.75}
           />
@@ -543,10 +707,14 @@ export function BatchExportStatus({
           <button
             type="button"
             onClick={() => {
-              const queued = new Set(useStore.getState().files.map((f) => f.id));
+              const queued = new Set(
+                useStore.getState().files.map((f) => f.id),
+              );
               onExport?.(exportableIds.filter((id) => queued.has(id)));
             }}
-            title={t("batch.exportRecognizedTitle", { count: exportableIds.length })}
+            title={t("batch.exportRecognizedTitle", {
+              count: exportableIds.length,
+            })}
             className="h-6 shrink-0 rounded-md border border-border/60 bg-background px-2 text-[11px] text-foreground-muted hover:bg-surface-2 hover:text-foreground"
           >
             {t("batch.exportRecognized")}
@@ -557,10 +725,14 @@ export function BatchExportStatus({
           onClick={() => (active ? cancelBatchExport() : setBatchExport(null))}
           disabled={batch.status === "cancelling"}
           aria-label={
-            active ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel") : t("common.close")
+            active
+              ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel")
+              : t("common.close")
           }
           title={
-            active ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel") : t("common.close")
+            active
+              ? t(ocrOnly ? "batch.cancelOcr" : "batch.cancel")
+              : t("common.close")
           }
           className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-foreground-subtle hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
         >

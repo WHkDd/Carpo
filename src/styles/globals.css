@@ -377,6 +377,24 @@
 }
 .prose-ocr .katex { font-size: 1em; }
 .prose-ocr .katex-display { margin: 0.5em 0; overflow-x: auto; overflow-y: hidden; }
+.prose-ocr .ocr-centered { text-align: center; }
+.prose-ocr .ocr-centered > p { text-align: inherit; }
+.prose-ocr sup, .prose-ocr sub { font-size: 0.75em; line-height: 0; }
+.prose-ocr table { min-width: max-content; }
+.prose-ocr img { display: block; max-width: 100%; height: auto; margin: 0.5em auto; border-radius: 4px; }
+.prose-ocr .ocr-image-placeholder {
+  display: inline-block; margin: 0.4em 0; padding: 0.6em 1em;
+  border: 1px dashed hsl(var(--border-strong)); border-radius: 4px;
+  color: hsl(var(--foreground-subtle)); font-size: 0.9em;
+}
+
+/* The canvas keeps its geometry while floating navigation is visible. Only
+   its controls move into the uncovered area and wrap at narrow widths. */
+.canvas-control-pill {
+  left: calc(8px + var(--canvas-controls-left, 0px));
+  max-width: calc(100% - var(--canvas-controls-left, 0px) - 16px);
+}
+.canvas-control-pill > button { flex-shrink: 0; }
 
 /* Windows High Contrast / forced-colors. The system overrides authored colors
  * here, and without this block borders drawn as background fills and the

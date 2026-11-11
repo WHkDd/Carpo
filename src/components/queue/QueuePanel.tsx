@@ -10,7 +10,6 @@ import { createPortal } from "react-dom";
 import {
   ArrowDownUp,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   FileJson,
   FileOutput,
@@ -61,9 +60,11 @@ interface QueuePanelProps {
   onOpenFiles: () => void | Promise<void>;
   onImportPaddleJson: () => void | Promise<void>;
   onOpenSettings: () => void;
+  onInteractionChange?: (held: boolean) => void;
 }
 const ICON_BUTTON =
   "grid place-items-center rounded-md text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground active:bg-surface-overlay focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+const TOOLBAR_ICON_BUTTON = `h-7 w-7 shrink-0 p-0 ${ICON_BUTTON}`;
 
 type ContextAction = "star" | MetaAction | "recognize" | "export" | "remove";
 type ContextState = {
@@ -197,6 +198,7 @@ export function QueuePanel({
   onOpenFiles,
   onImportPaddleJson,
   onOpenSettings,
+  onInteractionChange,
 }: QueuePanelProps) {
   const t = useT();
   const files = useStore((s) => s.files);
@@ -218,7 +220,6 @@ export function QueuePanel({
   const moveFiles = useStore((s) => s.moveQueueFiles);
   const removeFiles = useStore((s) => s.removeFiles);
   const queueCollapsed = useStore((s) => s.queueCollapsed);
-  const toggleQueueCollapsed = useStore((s) => s.toggleQueueCollapsed);
   const setQueueCollapsed = useStore((s) => s.setQueueCollapsed);
   const desktopRuntime = isTauriRuntime();
   const [selecting, setSelecting] = useState(false);
@@ -232,6 +233,10 @@ export function QueuePanel({
     ids: string[];
   } | null>(null);
   const [context, setContext] = useState<ContextState | null>(null);
+  useEffect(() => {
+    onInteractionChange?.(!!context || !!batchDialogMode || !!metaEditor);
+    return () => onInteractionChange?.(false);
+  }, [context, batchDialogMode, metaEditor, onInteractionChange]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(),
   );
@@ -313,15 +318,12 @@ export function QueuePanel({
   );
   const sections = groupQueueFiles(filtered, documents, groupMode);
   const primaryRows = new Map<string, string>();
-  if (queueCollapsed)
-    for (const file of filtered) primaryRows.set(file.id, file.id);
-  else
-    for (const section of sections) {
-      if (collapsedGroups.has(section.id)) continue;
-      for (const file of section.files)
-        if (!primaryRows.has(file.id))
-          primaryRows.set(file.id, `${section.id}:${file.id}`);
-    }
+  for (const section of sections) {
+    if (collapsedGroups.has(section.id)) continue;
+    for (const file of section.files)
+      if (!primaryRows.has(file.id))
+        primaryRows.set(file.id, `${section.id}:${file.id}`);
+  }
   const visibleIdsKey = JSON.stringify([...primaryRows.keys()]);
   const visibleIds: string[] = useMemo(
     () => JSON.parse(visibleIdsKey),
@@ -590,7 +592,6 @@ export function QueuePanel({
       );
       setBatchDialogMode(action);
     } else {
-      setQueueCollapsed(false);
       setMetaEditor({ action, ids });
     }
   };
@@ -822,88 +823,33 @@ export function QueuePanel({
     </>
   );
 
-  if (queueCollapsed)
-    return (
-      <aside className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-surface pb-2">
-        <div className="flex min-h-0 flex-col overflow-hidden px-2 pb-2">
-          <div className="mb-2 flex h-7 shrink-0 items-center justify-center">
-            <button
-              type="button"
-              onClick={() => void onOpenFiles()}
-              aria-label={t("queue.addFile")}
-              className={`h-5 w-5 ${ICON_BUTTON}`}
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-            <QueueActionsMenu
-              more
-              onImportPaddleJson={onImportPaddleJson}
-              onBatch={() => {
-                setQueueCollapsed(false);
-                enterSelecting();
-              }}
-            />
-            <button
-              type="button"
-              onClick={toggleQueueCollapsed}
-              aria-label={t("queue.expand")}
-              className={`h-5 w-5 ${ICON_BUTTON}`}
-            >
-              <ChevronRight className="h-3 w-3" />
-            </button>
-          </div>
-          <div
-            role="grid"
-            aria-label={t("queue.title")}
-            aria-multiselectable="true"
-            onKeyDown={onListKeyDown}
-            className="min-h-0 space-y-1 overflow-y-auto px-0.5 pb-3 pt-0.5"
-          >
-            {filtered.map((entry) => renderRow(entry, entry.id, true))}
-          </div>
-        </div>
-        <div className="grid place-items-center border-t border-border/50 px-2 pt-1.5">
-          <BatchExportStatus compact />
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            aria-label={t("common.settings")}
-            className={`h-8 w-14 ${ICON_BUTTON}`}
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </button>
-        </div>
-        {dialogs}
-      </aside>
-    );
-
   return (
     <aside className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-surface pb-2">
-      <div className="flex min-h-0 flex-col overflow-hidden px-2 pb-2">
-        <div className="mb-2 flex h-7 shrink-0 items-center justify-between gap-1 px-1.5 text-[11px] font-semibold text-foreground-subtle">
-          <div className="flex min-w-0 items-center gap-1.5">
+      <div className="flex min-h-0 flex-col overflow-hidden p-2">
+        <div className="mb-2 flex h-7 shrink-0 items-center justify-between gap-1 text-[11px] font-semibold text-foreground-subtle">
+          <div className="flex min-w-0 items-center gap-1.5 pl-1.5">
             <span className="truncate">{t("queue.title")}</span>
             <span className="font-mono tabular-nums">
               {files.length || t("queue.empty")}
             </span>
           </div>
-          <div className="flex shrink-0 items-center">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() => void onOpenFiles()}
               aria-label={t("queue.addFile")}
-              className={`h-6 w-6 ${ICON_BUTTON}`}
+              className={TOOLBAR_ICON_BUTTON}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" strokeWidth={1.75} />
             </button>
             {desktopRuntime && (
               <button
                 type="button"
                 onClick={() => void onImportPaddleJson()}
                 aria-label={t("queue.importPaddleJson")}
-                className={`h-6 w-6 ${ICON_BUTTON}`}
+                className={TOOLBAR_ICON_BUTTON}
               >
-                <FileJson className="h-3.5 w-3.5" />
+                <FileJson className="h-4 w-4" strokeWidth={1.75} />
               </button>
             )}
             {desktopRuntime && <QueueActionsMenu />}
@@ -913,17 +859,9 @@ export function QueuePanel({
               disabled={!files.length}
               aria-pressed={selecting}
               aria-label={t("batch.button")}
-              className={`h-6 w-6 disabled:opacity-40 ${ICON_BUTTON} ${selecting ? "bg-surface-2 text-foreground" : ""}`}
+              className={`${TOOLBAR_ICON_BUTTON} disabled:opacity-40 ${selecting ? "bg-surface-2 text-foreground" : ""}`}
             >
-              <FileOutput className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={toggleQueueCollapsed}
-              aria-label={t("queue.collapse")}
-              className={`h-6 w-6 ${ICON_BUTTON}`}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
+              <FileOutput className="h-4 w-4" strokeWidth={1.75} />
             </button>
           </div>
         </div>
@@ -969,11 +907,11 @@ export function QueuePanel({
           </div>
           <DropMenu<QueueSortField | "ascending" | "descending">
             ariaLabel={t("queue.sort")}
-            triggerIcon={<ArrowDownUp className="h-3.5 w-3.5" />}
+            triggerIcon={<ArrowDownUp className="h-4 w-4" strokeWidth={1.75} />}
             showChevron={false}
             placement="bottom"
             align="end"
-            triggerClassName="px-1.5"
+            triggerClassName={TOOLBAR_ICON_BUTTON}
             items={[
               ...(["manual", "date", "name", "newspaper"] as const).map(
                 (field) => ({
@@ -1004,11 +942,11 @@ export function QueuePanel({
           />
           <DropMenu<QueueGroupMode>
             ariaLabel={t("queue.group")}
-            triggerIcon={<Layers className="h-3.5 w-3.5" />}
+            triggerIcon={<Layers className="h-4 w-4" strokeWidth={1.75} />}
             showChevron={false}
             placement="bottom"
             align="end"
-            triggerClassName="px-1.5"
+            triggerClassName={TOOLBAR_ICON_BUTTON}
             items={(["none", "newspaper", "tag", "year"] as const).map(
               (mode) => ({
                 key: mode,
@@ -1144,7 +1082,11 @@ export function QueuePanel({
               </div>
             )}
             {sections.map((section) => (
-              <div key={section.id} role="rowgroup" className="mb-1 space-y-1.5">
+              <div
+                key={section.id}
+                role="rowgroup"
+                className="mb-1 space-y-1.5"
+              >
                 {section.title !== null && (
                   <div role="row">
                     <div role="gridcell">
@@ -1431,14 +1373,12 @@ function QueueActionsMenu({
         more ? (
           <MoreHorizontal className="h-3 w-3" strokeWidth={1.8} />
         ) : (
-          <FolderClock className="h-3.5 w-3.5" strokeWidth={1.8} />
+          <FolderClock className="h-4 w-4" strokeWidth={1.75} />
         )
       }
       showChevron={false}
       menuClassName="min-w-0"
-      triggerClassName={`justify-center rounded-md px-0 text-foreground-muted hover:text-foreground ${
-        more ? "h-5 w-5" : "h-6 w-6"
-      }`}
+      triggerClassName={more ? `h-5 w-5 p-0 ${ICON_BUTTON}` : TOOLBAR_ICON_BUTTON}
       placement="bottom"
       items={items}
       onSelect={(action) => {

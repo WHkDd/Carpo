@@ -1,13 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { startGroupedOcr, startWholeFileOcr, cancelJob, downloadBlob } = vi.hoisted(
-  () => ({
-    startGroupedOcr: vi.fn(async () => ({ job_id: "job-g" })),
-    startWholeFileOcr: vi.fn(async () => ({ job_id: "job-w" })),
-    cancelJob: vi.fn(async () => true),
-    downloadBlob: vi.fn(),
-  })
-);
+const {
+  startGroupedOcr,
+  startWholeFileOcr,
+  cancelJob,
+  downloadBlob,
+  exportLayoutPdf,
+  platform,
+} = vi.hoisted(() => ({
+  startGroupedOcr: vi.fn(async () => ({ job_id: "job-g" })),
+  startWholeFileOcr: vi.fn(async () => ({ job_id: "job-w" })),
+  cancelJob: vi.fn(async () => true),
+  downloadBlob: vi.fn(),
+  exportLayoutPdf: vi.fn(async (_request: unknown) => ({
+    targetPath: "/tmp/existing.pdf",
+    pageCount: 1,
+    warnings: [],
+    warningCount: 0,
+  })),
+  platform: { desktop: false },
+}));
 
 vi.mock("@/lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tauri")>()),
@@ -15,10 +27,11 @@ vi.mock("@/lib/tauri", async (importOriginal) => ({
   startGroupedOcr,
   startWholeFileOcr,
   cancelJob,
+  exportLayoutPdf,
 }));
 vi.mock("@/lib/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/runtime")>()),
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => platform.desktop,
   downloadBlob,
 }));
 vi.mock("@/lib/desktop", () => ({
@@ -43,6 +56,7 @@ import {
   mergedMarkdown,
   missingUnits,
   planBatchFile,
+  planResultFile,
   planOutputDocs,
   routeBatchJobEvent,
   sortBatchEntries,
@@ -81,6 +95,7 @@ function frameArticle(fileId: string, articleId: string, title = "") {
 beforeEach(() => {
   useStore.setState(INITIAL, true);
   vi.clearAllMocks();
+  platform.desktop = false;
 });
 afterEach(() => {
   useStore.setState(INITIAL, true);
@@ -120,10 +135,9 @@ describe("missingUnits", () => {
       a2: t("job.recognizeFailed", { message: "timeout" }),
     });
     const plan = planBatchFile(useStore.getState(), "f");
-    expect(missingUnits(useStore.getState(), plan).articles.map((a) => a.id)).toEqual([
-      "a2",
-      "a3",
-    ]);
+    expect(
+      missingUnits(useStore.getState(), plan).articles.map((a) => a.id),
+    ).toEqual(["a2", "a3"]);
 
     addPdf("w", 3);
     useStore.getState().setRecognizedPages("w", {
@@ -152,13 +166,13 @@ describe("export content", () => {
 
     const s = useStore.getState();
     const entries = sortBatchEntries(
-      ["w", "g"].map((id) => batchEntry(s, planBatchFile(s, id)))
+      ["w", "g"].map((id) => batchEntry(s, planBatchFile(s, id))),
     );
     const contents = new Map(
       entries.map((e) => [
         e.fileId,
         buildFileExport(s, planBatchFile(s, e.fileId), e),
-      ])
+      ]),
     );
     const [doc] = planOutputDocs("merged", entries);
     expect(mergedMarkdown(doc!, contents)).toBe(
@@ -172,7 +186,7 @@ describe("export content", () => {
         "## w.pdf",
         `### ${t("batch.pageHeading", { name: "w.pdf", page: 1 })}`,
         "##### 小節\n內容",
-      ].join("\n\n")
+      ].join("\n\n"),
     );
     expect(mergedDocBlocks(doc!, contents).slice(0, 5)).toEqual([
       { kind: "heading", level: 1, text: "申報" },
@@ -209,7 +223,7 @@ describe("background runner", () => {
     expect(result).toEqual({ status: "started" });
 
     await vi.waitFor(() =>
-      expect(useStore.getState().batchExport?.currentJobId).toBe("job-g")
+      expect(useStore.getState().batchExport?.currentJobId).toBe("job-g"),
     );
     // The foreground stays usable on another file, and refuses the busy one.
     expect(useStore.getState().activeJob).toBeNull();
@@ -224,7 +238,12 @@ describe("background runner", () => {
 
     // A batch event is consumed by the runner and never reaches activeJob.
     expect(
-      routeBatchJobEvent("progress", { job_id: "job-g", done: 0, total: 1, label: "" })
+      routeBatchJobEvent("progress", {
+        job_id: "job-g",
+        done: 0,
+        total: 1,
+        label: "",
+      }),
     ).toBe(true);
     expect(
       routeBatchJobEvent("done", {
@@ -232,15 +251,15 @@ describe("background runner", () => {
         results: [{ article_id: "a1", text: "正文" }],
         errors: [],
         cancelled: false,
-      })
+      }),
     ).toBe(true);
 
     await vi.waitFor(() =>
-      expect(useStore.getState().batchExport?.currentJobId).toBe("job-w")
+      expect(useStore.getState().batchExport?.currentJobId).toBe("job-w"),
     );
     expect(useStore.getState().articleOcrTexts.g).toEqual({ a1: "正文" });
     expect(startWholeFileOcr).toHaveBeenCalledWith(
-      expect.objectContaining({ file_id: "w", pages: [1] })
+      expect.objectContaining({ file_id: "w", pages: [1] }),
     );
     routeBatchJobEvent("done", {
       job_id: "job-w",
@@ -249,7 +268,9 @@ describe("background runner", () => {
       cancelled: false,
     });
 
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
     const items = useStore.getState().batchExport!.items;
     // w.pdf's only page failed: a document of failure markers is not
     // exported, and the file counts as failed.
@@ -275,9 +296,13 @@ describe("background runner, by tag", () => {
       .mockResolvedValueOnce({ job_id: "job-1" })
       .mockResolvedValueOnce({ job_id: "job-2" });
 
-    await startBatchExport({ fileIds: ["g1", "g2"], layout: "by_tag", format: "md" });
+    await startBatchExport({
+      fileIds: ["g1", "g2"],
+      layout: "by_tag",
+      format: "md",
+    });
     await vi.waitFor(() =>
-      expect(useStore.getState().batchExport?.currentJobId).toBe("job-1")
+      expect(useStore.getState().batchExport?.currentJobId).toBe("job-1"),
     );
     routeBatchJobEvent("done", {
       job_id: "job-1",
@@ -286,7 +311,7 @@ describe("background runner, by tag", () => {
       cancelled: false,
     });
     await vi.waitFor(() =>
-      expect(useStore.getState().batchExport?.currentJobId).toBe("job-2")
+      expect(useStore.getState().batchExport?.currentJobId).toBe("job-2"),
     );
     routeBatchJobEvent("done", {
       job_id: "job-2",
@@ -294,14 +319,16 @@ describe("background runner, by tag", () => {
       errors: [],
       cancelled: false,
     });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
 
     expect(startGroupedOcr).toHaveBeenCalledTimes(2);
     const written = await Promise.all(
       downloadBlob.mock.calls.map(async ([blob, name]) => [
         name,
         await (blob as Blob).text(),
-      ])
+      ]),
     );
     expect(written.map(([name]) => name)).toEqual([
       "A.md",
@@ -332,11 +359,13 @@ describe("recognize-only batch", () => {
       userInitiated: true,
     });
     await finishJob("job-r", { results: [{ page: 1, text: "正文" }] });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
 
     expect(enableNotificationsAfterUserAction).toHaveBeenCalled();
     expect(notifyOcrResult).toHaveBeenCalledWith(
-      expect.objectContaining({ title: t("batch.finishedOcr") })
+      expect.objectContaining({ title: t("batch.finishedOcr") }),
     );
     expect(downloadBlob).not.toHaveBeenCalled();
   });
@@ -345,9 +374,14 @@ describe("recognize-only batch", () => {
 /** Drives one batch job to completion once the runner has sent it. */
 async function finishJob(jobId: string, done: Record<string, unknown>) {
   await vi.waitFor(() =>
-    expect(useStore.getState().batchExport?.currentJobId).toBe(jobId)
+    expect(useStore.getState().batchExport?.currentJobId).toBe(jobId),
   );
-  routeBatchJobEvent("done", { job_id: jobId, errors: [], cancelled: false, ...done } as never);
+  routeBatchJobEvent("done", {
+    job_id: jobId,
+    errors: [],
+    cancelled: false,
+    ...done,
+  } as never);
 }
 
 describe("review regressions", () => {
@@ -355,20 +389,33 @@ describe("review regressions", () => {
     addPdf("g");
     frameArticle("g", "a1", "標題");
     const plan = planBatchFile(useStore.getState(), "g");
-    useStore.getState().writeGroupedJobResults(
-      "g",
-      [{ id: "a1", title: "標題", region: articleRegionKey(plan.articles[0]!) }],
-      { job_id: "j", results: [{ article_id: "a1", text: "舊文" }], errors: [], cancelled: false },
-      "",
-      ""
-    );
+    useStore
+      .getState()
+      .writeGroupedJobResults(
+        "g",
+        [
+          {
+            id: "a1",
+            title: "標題",
+            region: articleRegionKey(plan.articles[0]!),
+          },
+        ],
+        {
+          job_id: "j",
+          results: [{ article_id: "a1", text: "舊文" }],
+          errors: [],
+          cancelled: false,
+        },
+        "",
+        "",
+      );
     expect(missingUnits(useStore.getState(), plan).articles).toEqual([]);
 
     useStore.getState().updateBlock("g", 1, "a1-b", { x: 5 });
     const moved = planBatchFile(useStore.getState(), "g");
-    expect(missingUnits(useStore.getState(), moved).articles.map((a) => a.id)).toEqual([
-      "a1",
-    ]);
+    expect(
+      missingUnits(useStore.getState(), moved).articles.map((a) => a.id),
+    ).toEqual(["a1"]);
   });
 
   it("waits for a foreground start on the same file even after a file switch", async () => {
@@ -379,14 +426,20 @@ describe("review regressions", () => {
     const owner = useStore.getState().claimJobStart("grouped_ocr")!;
     useStore.getState().setCurrent("other");
 
-    await startBatchExport({ fileIds: ["g"], layout: "separate", format: "md" });
+    await startBatchExport({
+      fileIds: ["g"],
+      layout: "separate",
+      format: "md",
+    });
     await new Promise((r) => setTimeout(r, 20));
     expect(startGroupedOcr).not.toHaveBeenCalled();
 
     useStore.getState().releaseJobStart(owner);
     await vi.waitFor(() => expect(startGroupedOcr).toHaveBeenCalledTimes(1));
     await finishJob("job-g", { results: [{ article_id: "a1", text: "正文" }] });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
   });
 
   it("cancels the job of a file removed while its start RPC was in flight", async () => {
@@ -394,9 +447,13 @@ describe("review regressions", () => {
     frameArticle("g", "a1");
     let release!: (v: { job_id: string }) => void;
     startGroupedOcr.mockImplementationOnce(
-      () => new Promise((resolve) => (release = resolve))
+      () => new Promise((resolve) => (release = resolve)),
     );
-    await startBatchExport({ fileIds: ["g"], layout: "separate", format: "md" });
+    await startBatchExport({
+      fileIds: ["g"],
+      layout: "separate",
+      format: "md",
+    });
     await vi.waitFor(() => expect(startGroupedOcr).toHaveBeenCalled());
 
     useStore.getState().removeFile("g");
@@ -408,7 +465,9 @@ describe("review regressions", () => {
       errors: [],
       cancelled: true,
     });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
     expect(useStore.getState().batchExport!.items[0]!.status).toBe("skipped");
   });
 
@@ -422,7 +481,7 @@ describe("review regressions", () => {
 
     await startBatchExport({ fileIds: ["g"], layout: "by_tag", format: "md" });
     await vi.waitFor(() =>
-      expect(useStore.getState().batchExport?.status).toBe("cancelled")
+      expect(useStore.getState().batchExport?.status).toBe("cancelled"),
     );
     expect(downloadBlob.mock.calls.map((c) => c[1])).toEqual(["A.md"]);
     expect(notifyOcrResult).not.toHaveBeenCalled();
@@ -436,13 +495,22 @@ describe("review regressions", () => {
     startGroupedOcr.mockResolvedValueOnce({ job_id: "job-1" });
     startWholeFileOcr.mockResolvedValueOnce({ job_id: "job-2" });
 
-    await startBatchExport({ fileIds: ["g", "w"], layout: "separate", format: "md" });
+    await startBatchExport({
+      fileIds: ["g", "w"],
+      layout: "separate",
+      format: "md",
+    });
     await finishJob("job-1", {
       results: [{ article_id: "a1", text: "正文" }],
       errors: [{ article_id: "a2", message: "timeout" }],
     });
-    await finishJob("job-2", { results: [], errors: [{ page: 1, message: "boom" }] });
-    await vi.waitFor(() => expect(useStore.getState().batchExport?.status).toBe("done"));
+    await finishJob("job-2", {
+      results: [],
+      errors: [{ page: 1, message: "boom" }],
+    });
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
 
     const items = useStore.getState().batchExport!.items;
     expect(items.map((i) => [i.status, i.failedUnits])).toEqual([
@@ -451,7 +519,9 @@ describe("review regressions", () => {
     ]);
     const summary = t("batch.summaryPartial", { ok: 0, partial: 1, failed: 1 });
     expect(batchSummaryText(items)).toBe(summary);
-    expect(notifyOcrResult).toHaveBeenCalledWith(expect.objectContaining({ body: summary }));
+    expect(notifyOcrResult).toHaveBeenCalledWith(
+      expect.objectContaining({ body: summary }),
+    );
     // The partly failed file is still exported, failure marker included.
     expect(downloadBlob.mock.calls.map((c) => c[1])).toEqual(["g.md"]);
   });
@@ -466,7 +536,7 @@ describe("review regressions", () => {
       const plan = planBatchFile(s, "g");
       const content = buildFileExport(s, plan, batchEntry(s, plan));
       expect(content.units[0]).toMatchObject({ title: "社論", body: "正文" });
-    }
+    },
   );
 
   it("a whole-file document exported alone has no header lines in either format", () => {
@@ -486,5 +556,70 @@ describe("review regressions", () => {
       { kind: "heading", level: 1, text: t("ocr.pageHeading", { page: 1 }) },
       { kind: "paragraph", text: "內容" },
     ]);
+  });
+});
+
+describe("export existing results", () => {
+  it("all-pages export ignores the recognition mode and the pending OCR page range", () => {
+    addPdf("w", 4);
+    useStore.getState().setWholeFileRange("w", "2");
+    useStore.setState({
+      recognitionMode: "grouped",
+      recognizedPages: {
+        w: {
+          1: { text: "first", status: "done", sourceMode: "page_image" },
+          3: { text: "third", status: "done", sourceMode: "page_image" },
+        },
+      },
+    });
+    expect(
+      planResultFile(useStore.getState(), "w", "whole_file").pages,
+    ).toEqual([1, 3]);
+  });
+  it("PDF runs without OCR and includes edited text instead of the stale block layout", async () => {
+    platform.desktop = true;
+    addPdf("w", 4);
+    useStore.setState({
+      recognizedPages: {
+        w: {
+          1: {
+            text: "edited body",
+            textEdited: true,
+            status: "done",
+            sourceMode: "page_image",
+            layout: {
+              index: 1,
+              width: 1000,
+              height: 1400,
+              blocks: [
+                { label: "text", text: "stale body", bbox: [0, 0, 1000, 1400] },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const result = await startBatchExport({
+      fileIds: ["w"],
+      layout: "merged",
+      format: "pdf",
+      target: "/tmp/existing.pdf",
+    });
+    expect(result.status).toBe("started");
+    await vi.waitFor(() =>
+      expect(useStore.getState().batchExport?.status).toBe("done"),
+    );
+    expect(startWholeFileOcr).not.toHaveBeenCalled();
+    expect(startGroupedOcr).not.toHaveBeenCalled();
+    const request = vi.mocked(exportLayoutPdf).mock.calls[0]![0] as unknown as {
+      options: {
+        parts: Array<{
+          document: { pages: Array<{ blocks: Array<{ text: string }> }> };
+        }>;
+      };
+    };
+    expect(request.options.parts[0]!.document.pages[0]!.blocks[0]!.text).toBe(
+      "edited body",
+    );
   });
 });

@@ -58,7 +58,7 @@ const PROFILE_ORDER: OcrProfile[] = ["standard", "fast"];
 function hasFileWork(s: AppStore, fileId: string): boolean {
   const prefix = `${fileId}::`;
   const hasBlocks = Object.entries(s.pageStates).some(
-    ([key, page]) => key.startsWith(prefix) && page.blocks.length > 0
+    ([key, page]) => key.startsWith(prefix) && page.blocks.length > 0,
   );
   const nonEmpty = (v: object | undefined) => !!v && Object.keys(v).length > 0;
   return (
@@ -82,7 +82,7 @@ function batchHoldsFile(s: AppStore, fileId: string): boolean {
   return batch.items.some(
     (item) =>
       item.fileId === fileId &&
-      (item.status === "pending" || item.status === "running")
+      (item.status === "pending" || item.status === "running"),
   );
 }
 
@@ -103,7 +103,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
   });
   const jobBlocked = useStore(selectJobStartBlocked);
   const batchHoldsCurrent = useStore((s) =>
-    s.currentFileId ? batchHoldsFile(s, s.currentFileId) : false
+    s.currentFileId ? batchHoldsFile(s, s.currentFileId) : false,
   );
   const [rotating, setRotating] = useState(false);
   // Synchronous re-entry guard: `rotating` only flips after the confirm
@@ -115,7 +115,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
     if (!s.currentFileId) return DEFAULT_FILE_VIEW.zoomPercent;
     return Math.round(
       s.fileViews[s.currentFileId]?.zoomPercent ??
-        DEFAULT_FILE_VIEW.zoomPercent
+        DEFAULT_FILE_VIEW.zoomPercent,
     );
   });
 
@@ -208,87 +208,89 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
   if (!hasFile) return null;
 
   return (
-    <footer className="absolute bottom-[2.5px] left-2 z-10 flex h-7 items-center gap-1 rounded-lg border border-border/60 bg-background/75 px-1 text-[12px] text-foreground-muted">
-      <DropMenu
-        ariaLabel={t("statusBar.provider")}
-        triggerLabel={providerLabel(provider, t)}
-        triggerHint={
-          isMissing(provider) ? t("statusBar.notConfigured") : undefined
-        }
-        triggerClassName="font-semibold text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
-        items={PROVIDER_ORDER.map((p) => ({
-          key: p,
-          label: providerLabel(p, t),
-          selected: p === provider,
-          // Never disabled: an unconfigured provider is still a legitimate
-          // thing to select (the backend validates the credential when OCR
-          // actually starts and says so), and disabling on unknown presence
-          // would lock the user out of a provider we simply never checked.
-          hint: isMissing(p) ? t("statusBar.notConfigured") : undefined,
-        }))}
-        onSelect={(p) => setProvider(p)}
-      />
-      <DropMenu
-        ariaLabel={t("statusBar.profile")}
-        triggerLabel={profileLabel(ocrProfile, t)}
-        triggerClassName="text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
-        items={PROFILE_ORDER.map((p) => ({
-          key: p,
-          label: profileLabel(p, t),
-          selected: p === ocrProfile,
-        }))}
-        onSelect={(p) => setOcrProfile(p)}
-      />
-      <span className="h-3 w-px bg-border" aria-hidden />
-      <button
-        type="button"
-        aria-label={t("statusBar.zoomOut")}
-        onClick={() => canvasRef.current?.zoomOut()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
-      >
-        <Minus className="h-3 w-3" strokeWidth={1.8} />
-      </button>
-      <div className="flex h-6 items-center rounded-md px-1 transition-colors focus-within:bg-foreground/[0.07]">
-        <input
-          value={draftZoom}
-          onChange={(e) => setDraftZoom(e.target.value.replace(/[^\d]/g, ""))}
-          onBlur={commitDraft}
-          onKeyDown={(e) => {
-            if (isImeCommit(e)) return;
-            if (e.key === "Enter") {
-              e.currentTarget.blur();
-            } else if (e.key === "Escape") {
-              setDraftZoom(String(zoomPercent));
-              e.currentTarget.blur();
-            }
-          }}
-          inputMode="numeric"
-          aria-label={t("statusBar.zoomPercent")}
-          style={{ width: `calc(${Math.max(1, draftZoom.length)}ch + 2px)` }}
-          className="h-6 bg-transparent text-right font-mono text-[11px] font-semibold text-foreground tabular-nums outline-none"
+    <footer className="canvas-control-pill absolute bottom-2 z-10 flex min-h-7 flex-wrap items-center gap-1 rounded-lg border border-border/60 bg-background/75 px-1 text-[12px] text-foreground-muted">
+      <div className="flex min-w-0 max-w-full items-center gap-1">
+        <DropMenu
+          ariaLabel={t("statusBar.provider")}
+          triggerLabel={providerLabel(provider, t)}
+          triggerHint={
+            isMissing(provider) ? t("statusBar.notConfigured") : undefined
+          }
+          triggerClassName="font-semibold text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
+          items={PROVIDER_ORDER.map((p) => ({
+            key: p,
+            label: providerLabel(p, t),
+            selected: p === provider,
+            // Never disabled: an unconfigured provider is still a legitimate
+            // thing to select (the backend validates the credential when OCR
+            // actually starts and says so), and disabling on unknown presence
+            // would lock the user out of a provider we simply never checked.
+            hint: isMissing(p) ? t("statusBar.notConfigured") : undefined,
+          }))}
+          onSelect={(p) => setProvider(p)}
         />
-        <span className="pl-1 font-mono text-[10px] text-foreground-subtle">
-          %
-        </span>
+        <DropMenu
+          ariaLabel={t("statusBar.profile")}
+          triggerLabel={profileLabel(ocrProfile, t)}
+          triggerClassName="text-foreground hover:bg-foreground/[0.07] aria-expanded:bg-foreground/[0.07]"
+          items={PROFILE_ORDER.map((p) => ({
+            key: p,
+            label: profileLabel(p, t),
+            selected: p === ocrProfile,
+          }))}
+          onSelect={(p) => setOcrProfile(p)}
+        />
       </div>
-      <button
-        type="button"
-        aria-label={t("statusBar.zoomIn")}
-        onClick={() => canvasRef.current?.zoomIn()}
-        className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
-      >
-        <Plus className="h-3 w-3" strokeWidth={1.8} />
-      </button>
-      <button
-        type="button"
-        onClick={() => canvasRef.current?.fit()}
-        className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
-      >
-        {t("statusBar.fit")}
-      </button>
+      <div className="flex shrink-0 items-center gap-1 border-l border-border pl-1">
+        <button
+          type="button"
+          aria-label={t("statusBar.zoomOut")}
+          onClick={() => canvasRef.current?.zoomOut()}
+          className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
+        >
+          <Minus className="h-3 w-3" strokeWidth={1.8} />
+        </button>
+        <div className="flex h-6 items-center rounded-md px-1 transition-colors focus-within:bg-foreground/[0.07]">
+          <input
+            value={draftZoom}
+            onChange={(e) => setDraftZoom(e.target.value.replace(/[^\d]/g, ""))}
+            onBlur={commitDraft}
+            onKeyDown={(e) => {
+              if (isImeCommit(e)) return;
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              } else if (e.key === "Escape") {
+                setDraftZoom(String(zoomPercent));
+                e.currentTarget.blur();
+              }
+            }}
+            inputMode="numeric"
+            aria-label={t("statusBar.zoomPercent")}
+            style={{ width: `calc(${Math.max(1, draftZoom.length)}ch + 2px)` }}
+            className="h-6 bg-transparent text-right font-mono text-[11px] font-semibold text-foreground tabular-nums outline-none"
+          />
+          <span className="pl-1 font-mono text-[10px] text-foreground-subtle">
+            %
+          </span>
+        </div>
+        <button
+          type="button"
+          aria-label={t("statusBar.zoomIn")}
+          onClick={() => canvasRef.current?.zoomIn()}
+          className="grid h-6 w-6 place-items-center rounded-md text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
+        >
+          <Plus className="h-3 w-3" strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          onClick={() => canvasRef.current?.fit()}
+          className="h-6 rounded-md px-1.5 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-foreground/[0.07] hover:text-foreground active:bg-foreground/[0.12]"
+        >
+          {t("statusBar.fit")}
+        </button>
+      </div>
       {currentImage && (
-        <>
-          <span className="h-3 w-px bg-border" aria-hidden />
+        <div className="flex shrink-0 items-center gap-1 border-l border-border pl-1">
           <button
             type="button"
             aria-label={t("statusBar.rotateLeft")}
@@ -309,7 +311,7 @@ export function StatusBar({ canvasRef }: StatusBarProps) {
           >
             <RotateCw className="h-3 w-3" strokeWidth={1.8} />
           </button>
-        </>
+        </div>
       )}
     </footer>
   );

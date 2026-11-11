@@ -10,10 +10,7 @@ import {
   Loader2,
   Sparkles,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
+import { OcrResultPreview } from "./OcrResultPreview";
 import { useStore, type AppStore } from "@/store";
 import { selectJobStartBlocked } from "@/store/jobSlice";
 import { useScrollMemory } from "@/hooks/useScrollMemory";
@@ -24,12 +21,12 @@ import { assembleDocument } from "@/lib/format-doc";
 import { appErrorMessage } from "@/lib/ipc-types";
 import { copyText, isTauriRuntime, saveTextFile } from "@/lib/runtime";
 import {
-  DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
   type LayoutBlock,
   type LayoutDocument,
   type LayoutPage,
 } from "@/lib/layout-document";
-import { exportLayoutPdf as ipcExportLayoutPdf } from "@/lib/tauri";
+import { BatchExportDialog } from "@/components/queue/BatchExportDialog";
+import type { BatchExportFormat } from "@/store/jobSlice";
 import { PageJumpControl } from "@/components/layout/PageJumpControl";
 import { LayoutBlockList } from "@/components/structure/LayoutBlockList";
 import { ProofreadReviewPanel } from "@/components/structure/ProofreadReviewPanel";
@@ -41,7 +38,6 @@ const SAVE_FILTERS = [
   { name: "Markdown", extensions: ["md"] },
   { name: "Text", extensions: ["txt"] },
 ];
-const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
 
 /** Threshold above which the OCR text panel falls back to a plain
  *  `<pre>` view instead of rendering through ReactMarkdown + KaTeX.
@@ -49,7 +45,7 @@ const PDF_FILTERS = [{ name: "PDF", extensions: ["pdf"] }];
  *  main thread on every re-render; the pre view is `O(1)` to update. */
 const MARKDOWN_RENDER_LIMIT_CHARS = 100_000;
 type OcrViewMode = "preview" | "source" | "blocks" | "review";
-type ExportAction = "current" | "all" | "pdf";
+type ExportAction = "current" | "all" | "pdf" | "options";
 
 /** Keys of the proofread split button's dropdown. Model selection lives in
  *  the settings dialog's proofread tab, not here — the menu only carries the
@@ -63,13 +59,13 @@ function buildAllPagesText(pageTexts: Record<number, string>): string {
     .sort((a, b) => a.page - b.page)
     .map(
       (entry) =>
-        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`
+        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`,
     )
     .join("\n\n");
 }
 
 function buildAllRecognizedPagesText(
-  pages: Record<number, RecognizedPage>
+  pages: Record<number, RecognizedPage>,
 ): string {
   return Object.entries(pages)
     .map(([page, result]) => ({ page: Number(page), text: result.text }))
@@ -77,13 +73,13 @@ function buildAllRecognizedPagesText(
     .sort((a, b) => a.page - b.page)
     .map(
       (entry) =>
-        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`
+        `# ${translate("ocr.pageHeading", { page: entry.page })}\n\n${entry.text.trim()}`,
     )
     .join("\n\n");
 }
 
 function hasRecognizedPageText(
-  pages: Record<number, RecognizedPage> | undefined
+  pages: Record<number, RecognizedPage> | undefined,
 ): boolean {
   return Object.values(pages ?? {}).some((entry) => entry.text.length > 0);
 }
@@ -95,7 +91,7 @@ function hasRecognizedPageText(
  *  original layout; an emptied page becomes a page with no blocks, which the
  *  Rust reading-edition builder renders as a page-number anchor only. */
 export function buildLayoutDocumentFromRecognizedPages(
-  pages: Record<number, RecognizedPage> | undefined
+  pages: Record<number, RecognizedPage> | undefined,
 ): LayoutDocument | null {
   const layoutPages = Object.values(pages ?? {})
     .map((entry) => {
@@ -167,7 +163,7 @@ function useBulkOcrText() {
 
   const fileEntry = useMemo(
     () => files.find((f) => f.id === fileId) ?? null,
-    [files, fileId]
+    [files, fileId],
   );
 
   const getBulkText = useCallback(() => {
@@ -208,7 +204,9 @@ function useBulkOcrText() {
     if (!fileId) return null;
     const state = useStore.getState();
     if (state.recognitionMode !== "whole_file") return null;
-    return buildLayoutDocumentFromRecognizedPages(state.recognizedPages[fileId]);
+    return buildLayoutDocumentFromRecognizedPages(
+      state.recognizedPages[fileId],
+    );
   }, [fileId]);
 
   return {
@@ -230,9 +228,7 @@ export function OcrTextPanel() {
   const documentResults = useStore((s) => s.documentResults);
   const articleOcrTexts = useStore((s) => s.articleOcrTexts);
   const selectedArticleIds = useStore((s) => s.selectedArticleIds);
-  const articles = useStore(
-    (s) => s.getDocumentState(fileId ?? "").articles
-  );
+  const articles = useStore((s) => s.getDocumentState(fileId ?? "").articles);
   const pageOcrTexts = useStore((s) => s.pageOcrTexts);
   const recognizedPages = useStore((s) => s.recognizedPages);
   const files = useStore((s) => s.files);
@@ -248,7 +244,7 @@ export function OcrTextPanel() {
 
   const fileEntry = useMemo(
     () => files.find((f) => f.id === fileId) ?? null,
-    [files, fileId]
+    [files, fileId],
   );
   const fileLabel = fileEntry?.name ?? t("common.untitledFile");
   const totalPages = fileEntry?.pdfTotal ?? 1;
@@ -269,12 +265,12 @@ export function OcrTextPanel() {
   const articleText = pinnedArticle
     ? pinnedArticle.text
     : fileId
-      ? documentResults[fileId] ?? ""
+      ? (documentResults[fileId] ?? "")
       : "";
   const pageText = fileId
-    ? recognizedPages[fileId]?.[currentPage]?.text ??
+    ? (recognizedPages[fileId]?.[currentPage]?.text ??
       pageOcrTexts[fileId]?.[currentPage] ??
-      ""
+      "")
     : "";
   const currentLayout =
     recognitionMode === "whole_file" && fileId
@@ -286,12 +282,7 @@ export function OcrTextPanel() {
   const hasText = text.length > 0;
   const hasContent = hasText || hasLayout;
 
-  const {
-    getBulkText,
-    getLayoutDocument,
-    hasBulkText,
-    hasLayoutDocument,
-  } = useBulkOcrText();
+  const { getBulkText, hasBulkText, hasLayoutDocument } = useBulkOcrText();
   const canExportLayoutPdf = isTauriRuntime();
 
   const [draft, setDraft] = useState(text);
@@ -300,7 +291,13 @@ export function OcrTextPanel() {
   // Count the draft, not the store text, so the figure tracks in-flight edits.
   const charCount = draft.length;
   const [copied, setCopied] = useState(false);
-  const [exportingLayoutPdf, setExportingLayoutPdf] = useState(false);
+  const [exportOptions, setExportOptions] = useState<BatchExportFormat | null>(
+    null,
+  );
+  const exportingLayoutPdf = useStore(
+    (s) =>
+      s.batchExport?.format === "pdf" && s.batchExport.status === "running",
+  );
   // Only ever set in the browser build, where there is no native error dialog
   // to put a failed write in front of the user (see `alertError`).
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -318,7 +315,7 @@ export function OcrTextPanel() {
     (s) =>
       (fileId && proofreadKey
         ? s.proofreadReviews[fileId]?.[proofreadKey]
-        : null) ?? null
+        : null) ?? null,
   );
 
   // A review is a content source of its own, not a decoration on the text.
@@ -415,7 +412,7 @@ export function OcrTextPanel() {
         void proofread.triggerAllArticles();
       }
     },
-    [proofread, flushWriteBack]
+    [proofread, flushWriteBack],
   );
 
   const scheduleWriteBack = useCallback(
@@ -445,7 +442,7 @@ export function OcrTextPanel() {
       updateRecognizedPageText,
       updateArticleOcrText,
       setDocumentResult,
-    ]
+    ],
   );
 
   // Commit any pending edit if the panel unmounts mid-debounce.
@@ -491,7 +488,7 @@ export function OcrTextPanel() {
       const shown = await alertError({ title, message: detail });
       if (!shown) setSaveError(inline(detail));
     },
-    []
+    [],
   );
 
   // Success feedback for copy is the icon itself flipping to a check for a
@@ -504,7 +501,7 @@ export function OcrTextPanel() {
     () => () => {
       if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
     },
-    []
+    [],
   );
 
   const onCopy = useCallback(async () => {
@@ -521,7 +518,7 @@ export function OcrTextPanel() {
       await reportFailure(
         t("ocr.copyFailedTitle"),
         (message) => t("ocr.copyFailed", { message }),
-        e
+        e,
       );
     }
   }, [reportFailure, t]);
@@ -555,7 +552,7 @@ export function OcrTextPanel() {
       await reportFailure(
         t("ocr.exportFailedTitle"),
         (message) => t("ocr.saveFailed", { message }),
-        e
+        e,
       );
     }
   }, [
@@ -585,40 +582,15 @@ export function OcrTextPanel() {
       await reportFailure(
         t("ocr.exportFailedTitle"),
         (message) => t("ocr.saveFailed", { message }),
-        e
+        e,
       );
     }
   }, [flushWriteBack, getBulkText, stem, recognitionMode, reportFailure, t]);
 
-  const onExportLayoutPdf = useCallback(async () => {
-    if (!isTauriRuntime()) return;
-    setSaveError(null);
+  const onExportLayoutPdf = useCallback(() => {
     flushWriteBack();
-    const layoutDocument = getLayoutDocument();
-    if (!layoutDocument) return;
-    setExportingLayoutPdf(true);
-    try {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const target = await save({
-        defaultPath: `${stem}_${t("file.suffix.reading")}.pdf`,
-        filters: PDF_FILTERS,
-      });
-      if (!target) return;
-      await ipcExportLayoutPdf({
-        document: layoutDocument,
-        targetPath: target,
-        options: DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
-      });
-    } catch (e) {
-      await reportFailure(
-        t("ocr.exportFailedTitle"),
-        (message) => t("ocr.exportFailed", { message }),
-        e
-      );
-    } finally {
-      setExportingLayoutPdf(false);
-    }
-  }, [flushWriteBack, getLayoutDocument, stem, reportFailure, t]);
+    setExportOptions("pdf");
+  }, [flushWriteBack]);
 
   const canCopy =
     recognitionMode === "whole_file"
@@ -629,13 +601,17 @@ export function OcrTextPanel() {
       ? t("ocr.copyCurrentPage")
       : t("ocr.copySelectedArticle");
 
-  // Item 3 is absent rather than dimmed outside whole-file mode and off the
-  // desktop: a native menu does not keep an entry that can never be used in
-  // the current mode, but it does keep one that is merely unavailable now.
-  const showLayoutPdfItem =
-    canExportLayoutPdf && recognitionMode === "whole_file";
+  // PDF shares the result options dialog and is independent of OCR mode.
+  const showLayoutPdfItem = canExportLayoutPdf;
 
   const exportItems: DropMenuEntry<ExportAction>[] = [
+    {
+      key: "options",
+      label: t("export.title") + "…",
+      variant: "action",
+      disabled: !fileId,
+    },
+    { separator: true },
     {
       key: "current",
       label:
@@ -665,7 +641,8 @@ export function OcrTextPanel() {
               ? t("ocr.exportingLayoutPdf")
               : t("ocr.exportLayoutPdf"),
             variant: "action" as const,
-            disabled: !hasLayoutDocument || exportingLayoutPdf,
+            disabled:
+              (!hasLayoutDocument && !hasBulkText) || exportingLayoutPdf,
           },
         ]
       : []),
@@ -673,11 +650,14 @@ export function OcrTextPanel() {
 
   const onExportSelect = useCallback(
     (key: ExportAction) => {
-      if (key === "current") void onExportCurrent();
+      if (key === "options") {
+        flushWriteBack();
+        setExportOptions("docx");
+      } else if (key === "current") void onExportCurrent();
       else if (key === "all") void onExportAll();
       else void onExportLayoutPdf();
     },
-    [onExportCurrent, onExportAll, onExportLayoutPdf]
+    [onExportCurrent, onExportAll, onExportLayoutPdf, flushWriteBack],
   );
 
   const titleLabel =
@@ -702,7 +682,7 @@ export function OcrTextPanel() {
         <div
           className={cn(
             "flex items-center gap-1.5 text-[11px]",
-            showPager ? "shrink-0" : "min-w-0 overflow-hidden"
+            showPager ? "shrink-0" : "min-w-0 overflow-hidden",
           )}
         >
           {showPager ? (
@@ -874,6 +854,16 @@ export function OcrTextPanel() {
         )}
       </div>
 
+      {fileId && (
+        <BatchExportDialog
+          open={exportOptions !== null}
+          fileIds={[fileId]}
+          initialFormat={exportOptions ?? "docx"}
+          onClose={() => setExportOptions(null)}
+          onStarted={() => setExportOptions(null)}
+        />
+      )}
+
       {saveError && (
         <p className="px-1.5 text-[10px] text-destructive" role="alert">
           {saveError}
@@ -894,7 +884,10 @@ export function OcrTextPanel() {
             page={currentPage}
             layout={currentLayout}
           />
-        ) : viewMode === "review" && fileId && proofreadKey && proofreadReview ? (
+        ) : viewMode === "review" &&
+          fileId &&
+          proofreadKey &&
+          proofreadReview ? (
           <ProofreadReviewPanel
             // Identity of the review, not of the target: a re-run replaces the
             // suggestions wholesale, so the panel's local selection/edit
@@ -917,6 +910,7 @@ export function OcrTextPanel() {
             <textarea
               ref={source.ref}
               onScroll={source.onScroll}
+              onBlur={flushWriteBack}
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value);
@@ -948,18 +942,16 @@ export function OcrTextPanel() {
                 </pre>
               </>
             ) : (
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                // KaTeX in non-trust / strict mode: refuses to expand
-                // `\href`, `\url`, `\includegraphics`, etc. The OCR text
-                // comes from third-party LLM providers, so no rehype-raw
-                // and an explicit allow-list of safe elements.
-                rehypePlugins={[[rehypeKatex, { strict: true, trust: false }]]}
-                disallowedElements={["script", "iframe", "object", "embed", "form", "input", "button"]}
-                unwrapDisallowed
-              >
-                {draft}
-              </ReactMarkdown>
+              <OcrResultPreview
+                text={draft}
+                layout={currentLayout}
+                source={
+                  fileEntry?.kind === "image" ||
+                  fileEntry?.payloadPage === currentPage
+                    ? fileEntry?.payload
+                    : undefined
+                }
+              />
             )}
           </div>
         )

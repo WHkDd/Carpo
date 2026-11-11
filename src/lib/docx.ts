@@ -1,7 +1,6 @@
 /**
- * Minimal .docx writer for the batch export — headings and plain paragraphs
- * only. OCR output that carries Markdown tables or LaTeX is written as its
- * source text; there is no table or equation conversion.
+ * DOCX writer for result exports: headings, paragraphs and source-comparison
+ * tables with embedded JPEGs. OCR Markdown tables/LaTeX remain source text.
  *
  * A .docx is a ZIP of XML parts. The archive is written with the "stored"
  * method (no compression): Word reads it fine, and it keeps this file free of
@@ -12,7 +11,12 @@
 
 export type DocBlock =
   | { kind: "heading"; level: 1 | 2 | 3 | 4; text: string }
-  | { kind: "paragraph"; text: string };
+  | { kind: "paragraph"; text: string }
+  | {
+      kind: "comparison";
+      images: Array<{ jpeg: number[]; width: number; height: number }>;
+      blocks: DocBlock[];
+    };
 
 export const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -69,11 +73,36 @@ function runs(text: string): string {
   // A tab inside <w:t> renders as a space; Word wants an explicit <w:tab/>.
   return text
     .split("\t")
-    .map((part) => `<w:r><w:t xml:space="preserve">${escapeXml(part)}</w:t></w:r>`)
+    .map(
+      (part) => `<w:r><w:t xml:space="preserve">${escapeXml(part)}</w:t></w:r>`,
+    )
     .join("<w:r><w:tab/></w:r>");
 }
 
-function paragraphXml(block: DocBlock): string {
+function paragraphXml(
+  block: DocBlock,
+  images: Array<{ jpeg: number[]; width: number; height: number }> = [],
+): string {
+  if (block.kind === "comparison") {
+    const pictures = block.images
+      .map((picture) => {
+        const id = images.push(picture);
+        const width = Math.round(
+          Math.min(
+            2700000,
+            (8500000 * picture.width) / Math.max(1, picture.height),
+          ),
+        );
+        const height = Math.round(
+          (width * picture.height) / Math.max(1, picture.width),
+        );
+        return `<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${width}" cy="${height}"/><wp:docPr id="${id}" name="Source ${id}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="${id}" name="source${id}.jpg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="image${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${width}" cy="${height}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+      })
+      .join("");
+    const cell = (body: string, width: number) =>
+      `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/><w:vAlign w:val="top"/></w:tcPr>${body || "<w:p/>"}</w:tc>`;
+    return `<w:tbl><w:tblPr><w:tblW w:w="9026" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="4450"/><w:gridCol w:w="4576"/></w:tblGrid><w:tr>${cell(pictures, 4450)}${cell(block.blocks.map((b) => paragraphXml(b, images)).join(""), 4576)}</w:tr></w:tbl><w:p/>`;
+  }
   // A lone CR (old Mac line ending) is a line break too.
   const text = block.text.replace(/\r\n|\r|\n/g, " ");
   if (block.kind === "heading") {
@@ -82,18 +111,27 @@ function paragraphXml(block: DocBlock): string {
   return `<w:p>${runs(text)}</w:p>`;
 }
 
-export function documentXml(blocks: DocBlock[]): string {
+export function documentXml(
+  blocks: DocBlock[],
+  images: Array<{ jpeg: number[]; width: number; height: number }> = [],
+): string {
   // An empty body is legal, but Word shows a repair prompt for some
   // versions without at least one paragraph.
-  const body = blocks.length > 0 ? blocks.map(paragraphXml).join("") : "<w:p/>";
+  const body =
+    blocks.length > 0
+      ? blocks.map((b) => paragraphXml(b, images)).join("")
+      : "<w:p/>";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="${W_NS}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+<w:document xmlns:w="${W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 }
 
 /** Splits OCR text into blocks: a Markdown ATX heading line becomes a
  *  heading `baseLevel` levels deeper than its `#` count suggests (clamped to
  *  4), every other non-empty line a paragraph. */
-export function markdownToDocBlocks(text: string, baseLevel: number): DocBlock[] {
+export function markdownToDocBlocks(
+  text: string,
+  baseLevel: number,
+): DocBlock[] {
   const blocks: DocBlock[] = [];
   for (const raw of text.split(/\r\n|\r|\n/)) {
     const line = raw.trim();
@@ -117,12 +155,33 @@ export function clampLevel(level: number): 1 | 2 | 3 | 4 {
 }
 
 export function buildDocx(blocks: DocBlock[]): Uint8Array {
+  const images: Array<{ jpeg: number[]; width: number; height: number }> = [];
+  const xml = documentXml(blocks, images);
+  const rels = images
+    .map(
+      (_, i) =>
+        `<Relationship Id="image${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/source${i + 1}.jpg"/>`,
+    )
+    .join("");
   return zipStored([
-    ["[Content_Types].xml", CONTENT_TYPES],
+    [
+      "[Content_Types].xml",
+      CONTENT_TYPES.replace(
+        "</Types>",
+        '<Default Extension="jpg" ContentType="image/jpeg"/></Types>',
+      ),
+    ],
     ["_rels/.rels", PACKAGE_RELS],
-    ["word/_rels/document.xml.rels", DOCUMENT_RELS],
-    ["word/document.xml", documentXml(blocks)],
+    [
+      "word/_rels/document.xml.rels",
+      DOCUMENT_RELS.replace("</Relationships>", `${rels}</Relationships>`),
+    ],
+    ["word/document.xml", xml],
     ["word/styles.xml", STYLES],
+    ...images.map((image, i): [string, Uint8Array] => [
+      `word/media/source${i + 1}.jpg`,
+      new Uint8Array(image.jpeg),
+    ]),
   ]);
 }
 
@@ -148,7 +207,9 @@ export function crc32(data: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function zipStored(entries: Array<[name: string, content: string]>): Uint8Array {
+function zipStored(
+  entries: Array<[name: string, content: string | Uint8Array]>,
+): Uint8Array {
   const encoder = new TextEncoder();
   const now = new Date();
   const dosTime =
@@ -164,7 +225,8 @@ function zipStored(entries: Array<[name: string, content: string]>): Uint8Array 
 
   for (const [name, content] of entries) {
     const nameBytes = encoder.encode(name);
-    const data = encoder.encode(content);
+    const data =
+      typeof content === "string" ? encoder.encode(content) : content;
     const crc = crc32(data);
 
     const local = new Uint8Array(30 + nameBytes.length + data.length);

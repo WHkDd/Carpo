@@ -1,8 +1,21 @@
 import { forwardRef } from "react";
-import { Check, FileText, FileImage, FileWarning, Star } from "lucide-react";
+import {
+  Check,
+  FileText,
+  FileImage,
+  FileWarning,
+  Star,
+  ScanLine,
+  LoaderCircle,
+  TriangleAlert,
+  ListChecks,
+  BadgeCheck,
+  CircleDashed,
+} from "lucide-react";
 import type { FileEntry } from "@/lib/ipc-types";
 import { ACTIVE_ROW, cn } from "@/lib/utils";
-import { useStore } from "@/store";
+import { useStore, type AppStore } from "@/store";
+import { isOcrFailureText } from "@/lib/batch-export";
 import { useT } from "@/i18n";
 import type { SearchRange } from "@/lib/queue-search";
 
@@ -10,6 +23,123 @@ import type { SearchRange } from "@/lib/queue-search";
  *  compares selector results by reference). */
 const NO_TAGS: string[] = [];
 const MAX_VISIBLE_TAGS = 2;
+
+function recognizedPageCount(state: AppStore, id: string): number {
+  const pages = state.recognizedPages[id] ?? {};
+  const recognized = new Set(
+    Object.entries(pages)
+      .filter(
+        ([, page]) =>
+          page.status === "done" &&
+          (page.text.trim() || (!page.textEdited && page.layout)),
+      )
+      .map(([page]) => page),
+  );
+  for (const [page, text] of Object.entries(state.pageOcrTexts[id] ?? {})) {
+    if (!pages[Number(page)] && text.trim() && !isOcrFailureText(text))
+      recognized.add(page);
+  }
+  return recognized.size;
+}
+
+function queueStatus(state: AppStore, file: FileEntry) {
+  if (file.loadError) return null;
+  const job = state.activeJob?.fileId === file.id ? state.activeJob : null;
+  const batch = state.batchExport;
+  if (
+    (job && (job.status === "running" || job.status === "cancelling")) ||
+    state.jobStartClaimFileId === file.id ||
+    (batch &&
+      (batch.status === "running" || batch.status === "cancelling") &&
+      batch.items.some(
+        (item) => item.fileId === file.id && item.status === "running",
+      ))
+  )
+    return "processing";
+  const pages = Object.values(state.recognizedPages[file.id] ?? {});
+  const reviews = Object.values(state.proofreadReviews[file.id] ?? {});
+  if (
+    job?.status === "error" ||
+    pages.some((page) => page.status === "failed") ||
+    reviews.some((review) => review.error) ||
+    Object.values(state.articleOcrTexts[file.id] ?? {}).some(isOcrFailureText)
+  )
+    return "failed";
+  if (reviews.length)
+    return reviews.some(
+      (review) =>
+        review.discarded > 0 ||
+        (review.appliedConflictSkipped ?? 0) > 0 ||
+        (review.status === "pending" && review.suggestions.length > 0),
+    )
+      ? "reviewPending"
+      : "reviewed";
+  const count = recognizedPageCount(state, file.id);
+  return count > 0 && count < (file.kind === "pdf" ? (file.pdfTotal ?? 1) : 1)
+    ? "partial"
+    : null;
+}
+
+const STATUS_ICONS = {
+  processing: LoaderCircle,
+  failed: TriangleAlert,
+  reviewPending: ListChecks,
+  reviewed: BadgeCheck,
+  partial: CircleDashed,
+};
+
+/** Result modes coexist; processing/review status occupies one separate slot. */
+function QueueResultStatus({ file }: { file: FileEntry }) {
+  const t = useT();
+  const wholeFile = useStore(
+    (state) => !file.loadError && recognizedPageCount(state, file.id) > 0,
+  );
+  const grouped = useStore(
+    (state) =>
+      !file.loadError &&
+      Object.values(state.articleOcrTexts[file.id] ?? {}).some(
+        (text) => text.trim() && !isOcrFailureText(text),
+      ),
+  );
+  const status = useStore((state) => queueStatus(state, file));
+  const Icon = status ? STATUS_ICONS[status] : null;
+  return (
+    <span className="flex shrink-0 items-center gap-1 text-foreground-subtle">
+      {wholeFile && (
+        <FileText
+          role="img"
+          aria-label={t("queue.result.wholeFile")}
+          className="h-3 w-3"
+        >
+          <title>{t("queue.result.wholeFile")}</title>
+        </FileText>
+      )}
+      {grouped && (
+        <ScanLine
+          role="img"
+          aria-label={t("queue.result.grouped")}
+          className="h-3 w-3"
+        >
+          <title>{t("queue.result.grouped")}</title>
+        </ScanLine>
+      )}
+      {Icon && status && (
+        <Icon
+          role="img"
+          aria-label={t(`queue.status.${status}`)}
+          className={cn(
+            "h-3 w-3",
+            status === "processing" &&
+              "animate-spin motion-reduce:animate-none",
+            status === "failed" && "text-destructive",
+          )}
+        >
+          <title>{t(`queue.status.${status}`)}</title>
+        </Icon>
+      )}
+    </span>
+  );
+}
 
 interface QueueItemProps {
   entry: FileEntry;
@@ -170,11 +300,14 @@ export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
               </span>
             )}
           </span>
-          {pageBadge && (
-            <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle">
-              {pageBadge}
-            </span>
-          )}
+          <span className="flex flex-col items-end gap-1.5">
+            <QueueResultStatus file={entry} />
+            {pageBadge && (
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground-subtle">
+                {pageBadge}
+              </span>
+            )}
+          </span>
         </div>
       </div>
     );

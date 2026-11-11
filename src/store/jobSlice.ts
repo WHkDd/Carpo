@@ -216,7 +216,7 @@ export type StartJobInfo =
     };
 
 export type BatchExportLayout = "separate" | "merged" | "by_tag";
-export type BatchExportFormat = "docx" | "md";
+export type BatchExportFormat = "docx" | "md" | "pdf";
 export type BatchFileMode = "grouped" | "whole_file";
 export type BatchItemStatus = "pending" | "running" | "done" | "failed" | "skipped";
 
@@ -247,6 +247,7 @@ export interface BatchExportState {
   status: "running" | "cancelling" | "done" | "cancelled";
   layout: BatchExportLayout;
   format: BatchExportFormat;
+  withSource?: boolean;
   items: BatchExportItem[];
   /** Index of the file being processed, or null between files. */
   currentIndex: number | null;

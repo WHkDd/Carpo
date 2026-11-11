@@ -16,7 +16,7 @@ const DEFAULT_OCR_PANEL_HEIGHT = 280;
 
 /** Grid column widths of the left queue panel, in its two states. */
 export const QUEUE_WIDTH = 244;
-export const QUEUE_COLLAPSED_WIDTH = 76;
+export const QUEUE_COLLAPSED_WIDTH = 0;
 
 /** Drag-resizable right rail. 384 is both the design default and the floor:
  *  it is the width at which the OCR panel header still holds its widest

@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { X } from "lucide-react";
-import { ImageCanvas, type CanvasController } from "@/components/canvas/ImageCanvas";
+import {
+  ImageCanvas,
+  type CanvasController,
+} from "@/components/canvas/ImageCanvas";
 import { QueuePanel } from "@/components/queue/QueuePanel";
 import {
   PaddleJsonImportDialog,
@@ -32,7 +42,10 @@ import {
 } from "@/lib/ipc-types";
 import { useStore } from "@/store";
 import { getLanguage, t } from "@/i18n";
-import { defaultOcrPrompt, defaultProofreadPrompt } from "@/store/settingsSlice";
+import {
+  defaultOcrPrompt,
+  defaultProofreadPrompt,
+} from "@/store/settingsSlice";
 import {
   CANVAS_MIN_WIDTH,
   QUEUE_COLLAPSED_WIDTH,
@@ -40,7 +53,7 @@ import {
   railMaxWidth,
 } from "@/store/uiSlice";
 import { buildProofreadReview, type ProofreadReview } from "@/lib/proofread";
-import { Toolbar } from "./Toolbar";
+import { Toolbar, SidebarToggle } from "./Toolbar";
 import { ProgressPill } from "./ProgressPill";
 import { StatusBar } from "./StatusBar";
 import { StructureRail } from "./StructureRail";
@@ -55,9 +68,156 @@ function isHotkeyTarget(target: EventTarget | null): boolean {
 
 function allowsNativeContextMenu(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return target.closest(
-    'input, textarea, [contenteditable="true"], [data-native-context-menu]'
-  ) !== null;
+  return (
+    target.closest(
+      'input, textarea, [contenteditable="true"], [data-native-context-menu]',
+    ) !== null
+  );
+}
+
+/** A hidden queue peeks over the canvas; its grid column remains zero-width. */
+export function QueueSidebarFrame({
+  children,
+  held = false,
+  onVisibilityChange,
+}: {
+  children: ReactNode;
+  held?: boolean;
+  onVisibilityChange?: (overlayVisible: boolean) => void;
+}) {
+  const collapsed = useStore((s) => s.queueCollapsed);
+  const [peeking, setPeeking] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const hovered = useRef(false);
+  const keyboardFocus = useRef(false);
+  const dragging = useRef(false);
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const clear = useCallback(() => {
+    clearTimeout(timer.current);
+  }, []);
+  const retract = useCallback(() => {
+    clear();
+    timer.current = setTimeout(function check() {
+      // Portaled menus/dialogs bubble React hover events through this frame.
+      // Check the actual DOM hover state before keeping a stale logical hover.
+      if (hovered.current && panel.current?.matches(":hover")) return;
+      hovered.current = false;
+      const focus = document.activeElement;
+      const editing =
+        panel.current?.contains(focus) &&
+        (keyboardFocus.current ||
+          focus?.matches('input, textarea, select, [contenteditable="true"]'));
+      if (
+        heldRef.current ||
+        dragging.current ||
+        editing ||
+        document.querySelector('[role="menu"], [role="dialog"]')
+      ) {
+        timer.current = setTimeout(check, 180);
+        return;
+      }
+      setPeeking(false);
+    }, 180);
+  }, [clear]);
+  useEffect(() => {
+    if (collapsed && !held) {
+      hovered.current = panel.current?.matches(":hover") ?? false;
+      retract();
+    }
+  }, [collapsed, held, retract]);
+  useEffect(() => {
+    clear();
+    setPeeking(false);
+    hovered.current = false;
+  }, [collapsed, clear]);
+  useEffect(() => {
+    const reset = () => {
+      clear();
+      setPeeking(false);
+      hovered.current = false;
+      dragging.current = false;
+    };
+    window.addEventListener("blur", reset);
+    return () => {
+      clear();
+      window.removeEventListener("blur", reset);
+    };
+  }, [clear]);
+  const visible = !collapsed || peeking || held;
+  useLayoutEffect(() => {
+    onVisibilityChange?.(collapsed && visible);
+  }, [collapsed, visible, onVisibilityChange]);
+  return (
+    <div className="relative min-h-0" style={{ gridColumn: 1, gridRow: 2 }}>
+      {collapsed && (
+        <div
+          data-testid="queue-peek-edge"
+          aria-hidden
+          className="absolute bottom-0 left-0 top-0 z-40 w-[6px]"
+          onMouseEnter={() => {
+            clear();
+            hovered.current = true;
+            setPeeking(true);
+          }}
+          onMouseLeave={() => {
+            hovered.current = false;
+            retract();
+          }}
+        />
+      )}
+      <div
+        ref={panel}
+        aria-hidden={!visible}
+        data-testid="queue-panel-frame"
+        className={
+          collapsed
+            ? "absolute bottom-2 left-2 top-2 z-30 overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
+            : "h-full"
+        }
+        style={{
+          width: QUEUE_WIDTH,
+          visibility: visible ? "visible" : "hidden",
+        }}
+        onMouseEnter={() => {
+          clear();
+          hovered.current = true;
+        }}
+        onMouseLeave={() => {
+          hovered.current = false;
+          retract();
+        }}
+        onKeyDownCapture={() => {
+          keyboardFocus.current = true;
+        }}
+        onMouseDownCapture={() => {
+          keyboardFocus.current = false;
+        }}
+        onDragStartCapture={() => {
+          dragging.current = true;
+          clear();
+        }}
+        onDragEndCapture={() => {
+          dragging.current = false;
+          retract();
+        }}
+        onFocusCapture={(event) => {
+          if (
+            keyboardFocus.current ||
+            (event.target as Element).matches(
+              'input, textarea, select, [contenteditable="true"]',
+            )
+          )
+            clear();
+          else retract();
+        }}
+        onBlurCapture={retract}
+      >
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export function AppShell() {
@@ -91,6 +251,8 @@ function AppShellInner() {
   const railWidth = useStore((s) => s.railWidth);
   const setRailWidth = useStore((s) => s.setRailWidth);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [queueHeld, setQueueHeld] = useState(false);
+  const [queueOverlayVisible, setQueueOverlayVisible] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
 
   // The rail's ceiling depends on how much room the shell has left after the
@@ -223,14 +385,14 @@ function AppShellInner() {
             job.requestedArticles,
             payload as GroupedJobDone,
             job.newspaperName,
-            job.newspaperDate
+            job.newspaperDate,
           );
         } else if (job.kind === "whole_file") {
           writeWholeFileJobResults(
             job.fileId,
             job.jobId,
             job.requestedPages,
-            payload as WholeFileJobDone
+            payload as WholeFileJobDone,
           );
         } else if (job.kind === "proofread") {
           // proofread: zip the submitted units with results/errors and build
@@ -240,11 +402,9 @@ function AppShellInner() {
           // later edit then trips the stale banner instead of silently
           // mis-applying offsets.
           const proof = payload as ProofreadJobDone;
-          const resultByKey = new Map(
-            proof.results.map((r) => [r.key, r])
-          );
+          const resultByKey = new Map(proof.results.map((r) => [r.key, r]));
           const errorByKey = new Map(
-            proof.errors.map((er) => [er.key, er.message])
+            proof.errors.map((er) => [er.key, er.message]),
           );
           const reviews: Record<string, ProofreadReview> = {};
           const now = Date.now();
@@ -256,7 +416,7 @@ function AppShellInner() {
                 (resultByKey.has(unit.key)
                   ? undefined
                   : t("job.noResultReturned")),
-              now
+              now,
             );
             if (review) reviews[unit.key] = review;
           }
@@ -264,8 +424,8 @@ function AppShellInner() {
         }
 
         const fileName =
-          useStore.getState().files.find((file) => file.id === job.fileId)?.name ??
-          t("common.untitledFile");
+          useStore.getState().files.find((file) => file.id === job.fileId)
+            ?.name ?? t("common.untitledFile");
         void notifyOcrResult({
           fileId: job.fileId,
           title:
@@ -290,8 +450,8 @@ function AppShellInner() {
         useStore.getState().files.some((file) => file.id === job.fileId)
       ) {
         const fileName =
-          useStore.getState().files.find((file) => file.id === job.fileId)?.name ??
-          t("common.untitledFile");
+          useStore.getState().files.find((file) => file.id === job.fileId)
+            ?.name ?? t("common.untitledFile");
         void notifyOcrResult({
           fileId: job.fileId,
           title: t("notification.failedTitle"),
@@ -351,7 +511,9 @@ function AppShellInner() {
           void reconcile();
         });
         source.addEventListener("progress", (event) => {
-          handleProgress(JSON.parse((event as MessageEvent).data) as JobProgress);
+          handleProgress(
+            JSON.parse((event as MessageEvent).data) as JobProgress,
+          );
         });
         source.addEventListener("done", (event) => {
           handleDone(JSON.parse((event as MessageEvent).data) as JobDone);
@@ -366,7 +528,9 @@ function AppShellInner() {
       }
       const { listen } = await import("@tauri-apps/api/event");
       const subs = await Promise.all([
-        listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) => handleProgress(e.payload)),
+        listen<JobProgress>(EVENTS.JOB_PROGRESS, (e) =>
+          handleProgress(e.payload),
+        ),
         listen<JobDone>(EVENTS.JOB_DONE, (e) => handleDone(e.payload)),
         listen<JobError>(EVENTS.JOB_ERROR, (e) => handleError(e.payload)),
       ]);
@@ -402,6 +566,11 @@ function AppShellInner() {
       if (e.defaultPrevented) return;
 
       const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        useStore.getState().toggleQueueCollapsed();
+        return;
+      }
 
       // macOS receives Cmd+O through the native File menu. Other desktop
       // platforms use Ctrl+O here; browser builds keep the platform-native
@@ -504,28 +673,44 @@ function AppShellInner() {
           gridTemplateRows: "44px minmax(0,1fr)",
         }}
       >
-        {/* Row 1: title bar — traffic lights (system default) on the left,
-            toolbar centered above the canvas */}
-        <div className="bg-surface" data-tauri-drag-region aria-hidden />
-        <div
-          className="relative z-20 flex items-center justify-center bg-surface px-3"
+        <header
+          className="relative col-span-3 grid bg-surface"
           data-tauri-drag-region
+          style={{
+            gridTemplateColumns: `${queueWidth}px minmax(0,1fr) ${railWidth}px`,
+          }}
         >
-          <Toolbar />
-        </div>
-        <div className="bg-surface" data-tauri-drag-region aria-hidden />
+          <SidebarToggle />
+          <div
+            className="relative col-start-2 z-20 flex min-w-0 items-center justify-center bg-surface px-3"
+            style={{ paddingLeft: queueCollapsed ? 124 : 12 }}
+            data-tauri-drag-region
+          >
+            <Toolbar />
+          </div>
+        </header>
 
         {/* Row 2: body */}
-        <QueuePanel
-          onOpenFiles={openFiles}
-          onImportPaddleJson={paddleJson.open}
-          onOpenSettings={openSettings}
-        />
-        {/* No left padding: the queue column already ends in its own 12px
-            (panel + list padding), and adding the section's 8px on top left
-            a visibly wider gutter than the 8px above the canvas. */}
-        <section className="min-h-0 min-w-0 overflow-hidden pl-0 pr-2 pt-2 pb-2">
-          <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas">
+        <QueueSidebarFrame
+          held={queueHeld || settingsOpen || paddleJson.path !== null}
+          onVisibilityChange={setQueueOverlayVisible}
+        >
+          <QueuePanel
+            onOpenFiles={openFiles}
+            onImportPaddleJson={paddleJson.open}
+            onOpenSettings={openSettings}
+            onInteractionChange={setQueueHeld}
+          />
+        </QueueSidebarFrame>
+        <section className="min-h-0 min-w-0 overflow-hidden p-2">
+          <div
+            className="relative h-full w-full overflow-hidden rounded-xl border border-border/60 bg-canvas"
+            style={
+              {
+                "--canvas-controls-left": `${queueCollapsed && queueOverlayVisible ? QUEUE_WIDTH : 0}px`,
+              } as React.CSSProperties
+            }
+          >
             <ImageCanvas ref={canvasRef} />
             {dropTargetActive && (
               <div

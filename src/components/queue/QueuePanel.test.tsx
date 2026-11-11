@@ -113,6 +113,7 @@ describe("QueuePanel selection mode", () => {
     useStore.getState().addTagToFiles(["a"], "B");
     renderPanel();
     fireEvent.click(checkbox("a.png"));
+    fireEvent.click(checkbox("b.png"));
 
     fireEvent.click(
       screen.getByRole("button", { name: t("batch.exportSelected") }),
@@ -185,15 +186,13 @@ describe("QueuePanel queue tools", () => {
   });
 
   it("filters batch select-all, renders only 20 hits initially, and preserves expanded hits after navigation", async () => {
-    useStore
-      .getState()
-      .setRecognizedPages("a", {
-        1: {
-          text: "上海新聞".repeat(25),
-          status: "done",
-          sourceMode: "page_image",
-        },
-      });
+    useStore.getState().setRecognizedPages("a", {
+      1: {
+        text: "上海新聞".repeat(25),
+        status: "done",
+        sourceMode: "page_image",
+      },
+    });
     panel();
     fireEvent.change(screen.getByRole("searchbox"), {
       target: { value: "上海新闻" },
@@ -228,13 +227,11 @@ describe("QueuePanel queue tools", () => {
     ).toBeTruthy();
     // A page change is view state, not a new search input.
     act(() =>
-      useStore
-        .getState()
-        .setFilePayload("a", {
-          width: 100,
-          height: 100,
-          objectUrl: "blob:preview",
-        }),
+      useStore.getState().setFilePayload("a", {
+        width: 100,
+        height: 100,
+        objectUrl: "blob:preview",
+      }),
     );
     expect(
       screen.getByRole("button", { name: t("queue.fewerHits") }),
@@ -269,5 +266,131 @@ describe("QueuePanel queue tools", () => {
     expect(
       within(screen.getByRole("dialog")).getAllByText("a.png"),
     ).toHaveLength(1);
+  });
+});
+
+describe("file recognition badges", () => {
+  const panel = () =>
+    render(
+      <QueuePanel
+        onOpenFiles={vi.fn()}
+        onImportPaddleJson={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+  const row = (id: string) =>
+    within(document.querySelector(`[data-queue-id="${id}"]`)! as HTMLElement);
+  it("shows both result modes and a partial-page status without depending on the selected OCR mode", () => {
+    useStore.setState((state) => ({
+      files: state.files.map((file) =>
+        file.id === "a" ? { ...file, kind: "pdf", pdfTotal: 3 } : file,
+      ),
+      recognizedPages: {
+        a: {
+          1: { text: "已有全文结果", status: "done", sourceMode: "page_image" },
+        },
+      },
+      articleOcrTexts: { a: { article1: "已有框选结果" } },
+      recognitionMode: "grouped",
+    }));
+    panel();
+    expect(
+      row("a").getByRole("img", { name: t("queue.result.wholeFile") }),
+    ).not.toBeNull();
+    expect(
+      row("a").getByRole("img", { name: t("queue.result.grouped") }),
+    ).not.toBeNull();
+    expect(
+      row("a").getByRole("img", { name: t("queue.status.partial") }),
+    ).not.toBeNull();
+    expect(
+      row("b").queryByRole("img", { name: t("queue.result.wholeFile") }),
+    ).toBeNull();
+  });
+  it("assigns the processing status to the job file and updates to failure", () => {
+    useStore
+      .getState()
+      .startJob({
+        jobId: "badge-job",
+        kind: "whole_file",
+        fileId: "b",
+        requestedPages: [1],
+        newspaperName: "",
+        newspaperDate: "",
+      });
+    panel();
+    expect(
+      row("a").queryByRole("img", { name: t("queue.status.processing") }),
+    ).toBeNull();
+    expect(
+      row("b").getByRole("img", { name: t("queue.status.processing") }),
+    ).not.toBeNull();
+    act(() =>
+      useStore
+        .getState()
+        .applyJobError({ job_id: "badge-job", error: "error" }),
+    );
+    expect(
+      row("b").getByRole("img", { name: t("queue.status.failed") }),
+    ).not.toBeNull();
+  });
+  it("shows unresolved review issues, and never treats erased text or failure markers as results", () => {
+    useStore.setState({
+      recognizedPages: {
+        a: {
+          1: {
+            text: "",
+            textEdited: true,
+            layout: { index: 1, width: 100, height: 100, blocks: [] },
+            status: "done",
+            sourceMode: "page_image",
+          },
+        },
+      },
+      articleOcrTexts: { a: { old: t("job.notRecognized") } },
+      proofreadReviews: {
+        b: {
+          "page:1": {
+            target: { mode: "whole_file", page: 1 },
+            baseText: "正文",
+            suggestions: [],
+            model: "test",
+            discarded: 1,
+            status: "pending",
+            createdAt: 1,
+          },
+        },
+      },
+    });
+    panel();
+    expect(
+      row("a").queryByRole("img", { name: t("queue.result.wholeFile") }),
+    ).toBeNull();
+    expect(
+      row("a").queryByRole("img", { name: t("queue.result.grouped") }),
+    ).toBeNull();
+    expect(
+      row("b").getByRole("img", { name: t("queue.status.reviewPending") }),
+    ).not.toBeNull();
+    act(() =>
+      useStore.setState({
+        proofreadReviews: {
+          b: {
+            "page:1": {
+              target: { mode: "whole_file", page: 1 },
+              baseText: "正文",
+              suggestions: [],
+              model: "test",
+              discarded: 0,
+              status: "applied",
+              createdAt: 1,
+            },
+          },
+        },
+      }),
+    );
+    expect(
+      row("b").getByRole("img", { name: t("queue.status.reviewed") }),
+    ).not.toBeNull();
   });
 });

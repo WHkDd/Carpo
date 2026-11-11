@@ -26,12 +26,31 @@ import type {
   BatchExportState,
   BatchFileMode,
 } from "@/store/jobSlice";
-import { articleRegionKey, buildArticlePlans } from "@/hooks/useGroupedOcrTrigger";
+import {
+  articleRegionKey,
+  buildArticlePlans,
+} from "@/hooks/useGroupedOcrTrigger";
 import { assembleDocument } from "@/lib/format-doc";
 import { ACTIVE_PREVIEW_DPI, providerSetupError } from "@/lib/ocr-profile";
 import { PageRangeError, parsePageRangePlan } from "@/lib/page-range";
-import { cancelJob, startGroupedOcr, startWholeFileOcr } from "@/lib/tauri";
-import { enableNotificationsAfterUserAction, notifyOcrResult } from "@/lib/desktop";
+import {
+  cancelJob,
+  startGroupedOcr,
+  startWholeFileOcr,
+  renderPage,
+  loadRasterImage,
+  exportLayoutPdf,
+} from "@/lib/tauri";
+import { encodeRegionAsJpegBase64, type CaptureRect } from "@/lib/capture";
+import {
+  DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS,
+  type ExportImage,
+  type PdfExportPart,
+} from "@/lib/layout-document";
+import {
+  enableNotificationsAfterUserAction,
+  notifyOcrResult,
+} from "@/lib/desktop";
 import { downloadBlob, isTauriRuntime, logWarn } from "@/lib/runtime";
 import {
   appErrorMessage,
@@ -75,7 +94,7 @@ export function planBatchFile(state: PlanState, fileId: string): BatchFilePlan {
   const name = file?.name ?? t("common.untitledFile");
   const docState = state.getDocumentState(fileId);
   const withBlocks = new Set(
-    docState.articles.filter((a) => a.blockRefs.length > 0).map((a) => a.id)
+    docState.articles.filter((a) => a.blockRefs.length > 0).map((a) => a.id),
   );
   const mode: BatchFileMode = withBlocks.size > 0 ? "grouped" : "whole_file";
   const base = { fileId, name, mode, articles: [], pages: [] };
@@ -84,7 +103,7 @@ export function planBatchFile(state: PlanState, fileId: string): BatchFilePlan {
 
   if (mode === "grouped") {
     const plans = buildArticlePlans(fileId, docState, state.pageStates, (id) =>
-      withBlocks.has(id)
+      withBlocks.has(id),
     );
     if ("error" in plans) return { ...base, error: plans.error };
     return { ...base, articles: plans.articles };
@@ -92,7 +111,8 @@ export function planBatchFile(state: PlanState, fileId: string): BatchFilePlan {
 
   const totalPages = file.kind === "pdf" ? Math.max(1, file.pdfTotal ?? 1) : 1;
   try {
-    const range = file.kind === "pdf" ? state.wholeFileRange[fileId] ?? "" : "";
+    const range =
+      file.kind === "pdf" ? (state.wholeFileRange[fileId] ?? "") : "";
     return { ...base, pages: parsePageRangePlan(range, totalPages).pages };
   } catch (e) {
     return {
@@ -100,6 +120,51 @@ export function planBatchFile(state: PlanState, fileId: string): BatchFilePlan {
       error: e instanceof PageRangeError ? e.message : appErrorMessage(e),
     };
   }
+}
+
+export type ExportScope = "whole_file" | "grouped" | "current" | "selected";
+
+/** Export scopes depend on saved results, not the active recognition mode/range. */
+export function planResultFile(
+  state: AppStore,
+  fileId: string,
+  scope?: ExportScope,
+): BatchFilePlan {
+  const base = planBatchFile(state, fileId);
+  const file = state.files.find((f) => f.id === fileId);
+  if (!file || file.loadError) return base;
+  const mode = scope
+    ? scope === "current" || scope === "whole_file"
+      ? "whole_file"
+      : "grouped"
+    : base.mode;
+  if (mode === "whole_file") {
+    const pages = Object.keys(state.recognizedPages[fileId] ?? {})
+      .map(Number)
+      .sort((a, b) => a - b);
+    return {
+      ...base,
+      error: undefined,
+      mode,
+      articles: [],
+      pages: scope === "current" ? [file.currentPage ?? 1] : pages,
+    };
+  }
+  const doc = state.getDocumentState(fileId);
+  const selected = new Set(state.selectedArticleIds);
+  const result = buildArticlePlans(
+    fileId,
+    doc,
+    state.pageStates,
+    (id) => scope !== "selected" || selected.has(id),
+  );
+  return {
+    ...base,
+    error: "error" in result ? result.error : undefined,
+    mode,
+    pages: [],
+    articles: "articles" in result ? result.articles : [],
+  };
 }
 
 /** Whether a stored article text is one of the failure markers the job
@@ -120,8 +185,11 @@ export function isOcrFailureText(text: string): boolean {
  *  re-ordered — even if the user edited that text since: the boxes changing
  *  says the old region was wrong. */
 export function missingUnits(
-  state: Pick<AppStore, "articleOcrTexts" | "articleOcrRegions" | "recognizedPages">,
-  plan: BatchFilePlan
+  state: Pick<
+    AppStore,
+    "articleOcrTexts" | "articleOcrRegions" | "recognizedPages"
+  >,
+  plan: BatchFilePlan,
 ): { articles: ArticleOcrPlan[]; pages: number[] } {
   if (plan.mode === "grouped") {
     const texts = state.articleOcrTexts[plan.fileId] ?? {};
@@ -166,7 +234,7 @@ const CJK = /^(\d{4})年(?:(\d{1,2})月(?:(\d{1,2})日)?)?$/;
 export function parseSortDate(raw: string): SortDate | null {
   const text = raw
     .replace(/[０-９－．／]/g, (c) =>
-      String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+      String.fromCharCode(c.charCodeAt(0) - 0xfee0),
     )
     .replace(/\s+/g, "");
   if (!text) return null;
@@ -178,7 +246,9 @@ export function parseSortDate(raw: string): SortDate | null {
       ? [cjk[1], cjk[2], cjk[3]]
       : null;
   if (!parts) return null;
-  const [year, month, day] = parts.map((p) => (p === undefined ? undefined : Number(p)));
+  const [year, month, day] = parts.map((p) =>
+    p === undefined ? undefined : Number(p),
+  );
   if (month !== undefined && (month < 1 || month > 12)) return null;
   if (day !== undefined) {
     // Day 0 of the next month is the last day of this one.
@@ -207,7 +277,7 @@ export interface BatchEntry {
 
 export function batchEntry(
   state: Pick<AppStore, "getDocumentState">,
-  plan: Pick<BatchFilePlan, "fileId" | "name">
+  plan: Pick<BatchFilePlan, "fileId" | "name">,
 ): BatchEntry {
   const doc = state.getDocumentState(plan.fileId);
   const dateText = doc.newspaperDate.trim();
@@ -226,7 +296,9 @@ const collator = new Intl.Collator("zh-Hans-CN", { numeric: true });
 function compareDates(a: SortDate | null, b: SortDate | null): number {
   if (!a || !b) return (a ? 0 : 1) - (b ? 0 : 1);
   return (
-    a.year - b.year || (a.month ?? 0) - (b.month ?? 0) || (a.day ?? 0) - (b.day ?? 0)
+    a.year - b.year ||
+    (a.month ?? 0) - (b.month ?? 0) ||
+    (a.day ?? 0) - (b.day ?? 0)
   );
 }
 
@@ -257,7 +329,7 @@ export interface OutputDoc {
  *  every tag it carries; files without tags form a final "未分类" doc. */
 export function planOutputDocs(
   layout: BatchExportLayout,
-  sorted: BatchEntry[]
+  sorted: BatchEntry[],
 ): OutputDoc[] {
   if (layout === "separate") {
     return sorted.map((e) => ({ stem: stemOf(e.name), entries: [e] }));
@@ -267,13 +339,16 @@ export function planOutputDocs(
       ? [{ stem: t("batch.mergedDefaultName"), entries: sorted }]
       : [];
   }
-  const tags = [...new Set(sorted.flatMap((e) => e.tags))].sort(collator.compare);
+  const tags = [...new Set(sorted.flatMap((e) => e.tags))].sort(
+    collator.compare,
+  );
   const docs = tags.map((tag) => ({
     stem: tag,
     entries: sorted.filter((e) => e.tags.includes(tag)),
   }));
   const untagged = sorted.filter((e) => e.tags.length === 0);
-  if (untagged.length > 0) docs.push({ stem: t("batch.untagged"), entries: untagged });
+  if (untagged.length > 0)
+    docs.push({ stem: t("batch.untagged"), entries: untagged });
   return docs;
 }
 
@@ -290,23 +365,38 @@ export interface FileExportContent {
   /** Articles (grouped) or pages (whole-file). `title` is for a standalone
    *  document, `nestedTitle` for a merged one where the unit sits under the
    *  file's own heading. `body` is OCR text, possibly Markdown. */
-  units: Array<{ title: string; nestedTitle: string; body: string }>;
+  units: Array<{
+    title: string;
+    nestedTitle: string;
+    body: string;
+    articleId?: string;
+    page?: number;
+    images?: ExportImage[];
+    failed?: boolean;
+  }>;
   hasText: boolean;
   /** Units whose text is only a failure marker. */
   failedUnits: number;
 }
 
 export function buildFileExport(
-  state: Pick<AppStore, "articleOcrTexts" | "recognizedPages" | "getDocumentState">,
+  state: Pick<
+    AppStore,
+    "articleOcrTexts" | "recognizedPages" | "getDocumentState"
+  >,
   plan: BatchFilePlan,
-  meta: Pick<BatchEntry, "newspaperName" | "dateText">
+  meta: Pick<BatchEntry, "newspaperName" | "dateText">,
 ): FileExportContent {
-  const header = [meta.newspaperName, meta.dateText].filter((l) => l.length > 0);
+  const header = [meta.newspaperName, meta.dateText].filter(
+    (l) => l.length > 0,
+  );
   if (plan.mode === "grouped") {
     const doc = state.getDocumentState(plan.fileId);
     const texts = state.articleOcrTexts[plan.fileId] ?? {};
+    const included = new Set(plan.articles.map((a) => a.id));
     const articles = doc.articles
-      .map((a) => ({ title: a.title, text: texts[a.id] ?? "" }))
+      .filter((a) => included.has(a.id))
+      .map((a) => ({ id: a.id, title: a.title, text: texts[a.id] ?? "" }))
       .filter((a) => a.text.length > 0);
     return {
       name: plan.name,
@@ -324,10 +414,17 @@ export function buildFileExport(
           const lines = body.trim().split("\n");
           // The first line becomes a heading itself; a Markdown `#` on it
           // would end up as literal text ("### # 社论").
-          title = lines[0]?.replace(/^#{1,6}\s*/, "") || t("doc.untitledArticle");
+          title =
+            lines[0]?.replace(/^#{1,6}\s*/, "") || t("doc.untitledArticle");
           body = lines.slice(1).join("\n");
         }
-        return { title, nestedTitle: title, body: body.trim() };
+        return {
+          title,
+          nestedTitle: title,
+          body: body.trim(),
+          articleId: art.id,
+          ...(isOcrFailureText(art.text) ? { failed: true } : {}),
+        };
       }),
       hasText: articles.length > 0,
       failedUnits: articles.filter((a) => isOcrFailureText(a.text)).length,
@@ -348,12 +445,14 @@ export function buildFileExport(
     // this one, in either format.
     header: [],
     units: pages.map((p) => ({
+      page: p.page,
       title: heading(p.page),
       nestedTitle: t("batch.pageHeading", { name: plan.name, page: p.page }),
       body: p.text.trim(),
     })),
     hasText: pages.length > 0,
-    failedUnits: pages.filter((p) => recognized[p.page]?.status === "failed").length,
+    failedUnits: pages.filter((p) => recognized[p.page]?.status === "failed")
+      .length,
   };
 }
 
@@ -361,7 +460,7 @@ export function buildFileExport(
  *  headings nest under the headings the export adds. */
 function shiftHeadings(markdown: string, by: number): string {
   return markdown.replace(/^(#{1,6})(?=\s)/gm, (m) =>
-    "#".repeat(Math.min(6, m.length + by))
+    "#".repeat(Math.min(6, m.length + by)),
   );
 }
 
@@ -369,10 +468,23 @@ function shiftHeadings(markdown: string, by: number): string {
 export function standaloneDocBlocks(content: FileExportContent): DocBlock[] {
   return [
     ...content.header.map((text) => ({ kind: "paragraph", text }) as DocBlock),
-    ...content.units.flatMap((u) => [
-      { kind: "heading", level: 1, text: u.title } as DocBlock,
-      ...markdownToDocBlocks(u.body, 1),
-    ]),
+    ...content.units.flatMap((u): DocBlock[] =>
+      u.images
+        ? [
+            {
+              kind: "comparison",
+              images: u.images,
+              blocks: [
+                { kind: "heading", level: 1, text: u.title },
+                ...markdownToDocBlocks(u.body, 1),
+              ],
+            },
+          ]
+        : [
+            { kind: "heading", level: 1, text: u.title } as DocBlock,
+            ...markdownToDocBlocks(u.body, 1),
+          ],
+    ),
   ];
 }
 
@@ -403,7 +515,7 @@ function newspaperGroups(entries: BatchEntry[]): Array<[string, BatchEntry[]]> {
  *  (failed, or nothing recognized) are left out. */
 export function mergedMarkdown(
   doc: OutputDoc,
-  contents: Map<string, FileExportContent>
+  contents: Map<string, FileExportContent>,
 ): string {
   const out: string[] = [];
   for (const [newspaper, entries] of newspaperGroups(doc.entries)) {
@@ -425,18 +537,33 @@ export function mergedMarkdown(
 
 export function mergedDocBlocks(
   doc: OutputDoc,
-  contents: Map<string, FileExportContent>
+  contents: Map<string, FileExportContent>,
 ): DocBlock[] {
   const blocks: DocBlock[] = [];
   for (const [newspaper, entries] of newspaperGroups(doc.entries)) {
     const present = entries.filter((e) => contents.has(e.fileId));
     if (present.length === 0) continue;
-    blocks.push({ kind: "heading", level: 1, text: newspaper || t("batch.unnamedGroup") });
+    blocks.push({
+      kind: "heading",
+      level: 1,
+      text: newspaper || t("batch.unnamedGroup"),
+    });
     for (const entry of present) {
       blocks.push({ kind: "heading", level: 2, text: entryHeading(entry) });
       const tags = tagLine(entry);
       if (tags) blocks.push({ kind: "paragraph", text: tags });
       for (const unit of contents.get(entry.fileId)!.units) {
+        if (unit.images) {
+          blocks.push({
+            kind: "comparison",
+            images: unit.images,
+            blocks: [
+              { kind: "heading", level: 3, text: unit.nestedTitle },
+              ...markdownToDocBlocks(unit.body, 3),
+            ],
+          });
+          continue;
+        }
         blocks.push({ kind: "heading", level: 3, text: unit.nestedTitle });
         blocks.push(...markdownToDocBlocks(unit.body, 3));
       }
@@ -448,7 +575,7 @@ export function mergedDocBlocks(
 function encodeOutput(
   format: BatchExportFormat,
   markdown: () => string,
-  blocks: () => DocBlock[]
+  blocks: () => DocBlock[],
 ): Uint8Array | string {
   return format === "docx" ? buildDocx(blocks()) : markdown();
 }
@@ -462,7 +589,8 @@ function stemOf(name: string): string {
 }
 
 /** Device names Windows refuses as a file name, with any extension. */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(\..*)?$/i;
+const WINDOWS_RESERVED =
+  /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(\..*)?$/i;
 /** Room left for " (n).docx" under the common 255-byte name limit. */
 const MAX_STEM_BYTES = 200;
 
@@ -488,13 +616,20 @@ export function safeFileStem(stem: string): string {
   return cleaned || "_";
 }
 
-async function writeOutput(path: string, data: Uint8Array | string): Promise<void> {
+async function writeOutput(
+  path: string,
+  data: Uint8Array | string,
+): Promise<void> {
   const fs = await import("@tauri-apps/plugin-fs");
   if (typeof data === "string") await fs.writeTextFile(path, data);
   else await fs.writeFile(path, data);
 }
 
-function download(name: string, format: BatchExportFormat, data: Uint8Array | string) {
+function download(
+  name: string,
+  format: BatchExportFormat,
+  data: Uint8Array | string,
+) {
   const type = format === "docx" ? DOCX_MIME : "text/markdown;charset=utf-8";
   // Copy into a fresh ArrayBuffer-backed view: `Blob` rejects views over a
   // `SharedArrayBuffer` in the DOM typings.
@@ -509,7 +644,7 @@ async function uniqueTargetPath(
   dir: string,
   stem: string,
   ext: string,
-  used: Set<string>
+  used: Set<string>,
 ): Promise<string> {
   const [{ join }, { exists }] = await Promise.all([
     import("@tauri-apps/api/path"),
@@ -546,7 +681,7 @@ let currentRequested = 0;
  *  Returns true when the event belonged to the batch and was consumed. */
 export function routeBatchJobEvent(
   kind: "progress" | "done" | "error",
-  payload: JobProgress | JobDone | JobError
+  payload: JobProgress | JobDone | JobError,
 ): boolean {
   const jobId = payload.job_id;
   if (kind === "progress") {
@@ -614,6 +749,8 @@ export interface BatchExportOptions {
   target?: string;
   recognizeOnly?: boolean;
   exportOnly?: boolean;
+  withSource?: boolean;
+  scope?: ExportScope;
   /** Started by a click, so asking for notification permission is allowed.
    *  The agent bridge leaves it false: it runs headless, with no gesture to
    *  hang an OS permission prompt on. */
@@ -627,8 +764,11 @@ export type BatchStartResult =
   | { status: "error"; error: string };
 
 let preparingBatch = false;
-export async function startBatchExport(opts: BatchExportOptions): Promise<BatchStartResult> {
-  if (preparingBatch) return { status: "error", error: t("batch.alreadyRunning") };
+export async function startBatchExport(
+  opts: BatchExportOptions,
+): Promise<BatchStartResult> {
+  if (preparingBatch)
+    return { status: "error", error: t("batch.alreadyRunning") };
   preparingBatch = true;
   try {
     return await prepareBatchExport(opts);
@@ -638,15 +778,25 @@ export async function startBatchExport(opts: BatchExportOptions): Promise<BatchS
 }
 
 async function prepareBatchExport(
-  opts: BatchExportOptions
+  opts: BatchExportOptions,
 ): Promise<BatchStartResult> {
   const state = useStore.getState();
   const running = state.batchExport;
-  if (running && (running.status === "running" || running.status === "cancelling")) {
+  if (
+    running &&
+    (running.status === "running" || running.status === "cancelling")
+  ) {
     return { status: "error", error: t("batch.alreadyRunning") };
   }
   // Processing order is export order: 报刊名 → 日期 → 文件名.
-  const unsorted = opts.fileIds.map((id) => planBatchFile(state, id));
+  if (opts.format === "pdf" && !isTauriRuntime())
+    return { status: "error", error: t("runtime.layoutPdfDesktopOnly") };
+  const existingOnly = opts.exportOnly || opts.format === "pdf";
+  const unsorted = opts.fileIds.map((id) =>
+    existingOnly || opts.scope
+      ? planResultFile(state, id, opts.scope)
+      : planBatchFile(state, id),
+  );
   const entries = sortBatchEntries(unsorted.map((p) => batchEntry(state, p)));
   const planById = new Map(unsorted.map((p) => [p.fileId, p]));
   const plans = entries.map((e) => planById.get(e.fileId)!);
@@ -658,7 +808,7 @@ async function prepareBatchExport(
     const missing = missingUnits(state, p);
     return missing.articles.length + missing.pages.length > 0;
   });
-  if (needsOcr && !opts.exportOnly) {
+  if (needsOcr && !existingOnly) {
     const setupError = await providerSetupError(state.settings);
     if (setupError) return { status: "error", error: setupError };
   }
@@ -674,10 +824,15 @@ async function prepareBatchExport(
       target = dir;
     } else {
       const path = await save({
-        defaultPath: `${t("batch.mergedDefaultName")}.${opts.format}`,
+        defaultPath: `${plans.length === 1 ? safeFileStem(stemOf(plans[0]!.name)) : t("batch.mergedDefaultName")}.${opts.format}`,
         filters: [
           {
-            name: opts.format === "docx" ? "Word" : "Markdown",
+            name:
+              opts.format === "docx"
+                ? "Word"
+                : opts.format === "pdf"
+                  ? "PDF"
+                  : "Markdown",
             extensions: [opts.format],
           },
         ],
@@ -703,6 +858,7 @@ async function prepareBatchExport(
     status: "running",
     layout: opts.layout,
     format: opts.format,
+    withSource: opts.withSource && opts.format !== "md",
     items,
     currentIndex: null,
     currentJobId: null,
@@ -712,8 +868,11 @@ async function prepareBatchExport(
   };
   useStore.getState().setBatchExport(initial);
   void runBatch(
-    plans, entries, opts.recognizeOnly ?? false,
-    opts.exportOnly ?? false, opts.target !== undefined
+    plans,
+    entries,
+    opts.recognizeOnly ?? false,
+    existingOnly ?? false,
+    opts.target !== undefined,
   ).catch((e) => {
     const message = appErrorMessage(e);
     void logWarn(`batch export failed: ${message}`);
@@ -762,15 +921,163 @@ function patchItem(index: number, patch: Partial<BatchExportItem>): void {
 const fileExists = (s: AppStore, fileId: string) =>
   s.files.some((f) => f.id === fileId);
 
+async function exportPageBlob(fileId: string, page: number): Promise<Blob> {
+  const file = useStore.getState().files.find((f) => f.id === fileId);
+  if (!file) throw new Error(t("batch.removed"));
+  return (
+    file.kind === "pdf"
+      ? await renderPage({
+          path: file.path,
+          page,
+          dpi: ACTIVE_PREVIEW_DPI,
+          purpose: "preview",
+        })
+      : await loadRasterImage(file.path)
+  ).blob;
+}
+
+async function exportImage(
+  blob: Blob,
+  crop: CaptureRect | null,
+): Promise<ExportImage> {
+  const encoded = await encodeRegionAsJpegBase64(blob, crop, {
+    maxEdge: 2400,
+    quality: 0.85,
+  });
+  const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+  const bitmap = await createImageBitmap(
+    new Blob([bytes], { type: "image/jpeg" }),
+  );
+  try {
+    return {
+      jpeg: Array.from(bytes),
+      width: bitmap.width,
+      height: bitmap.height,
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+
+/** Each marked box keeps its reading order; crops from distant columns are never unioned. */
+async function attachSourceImages(
+  plan: BatchFilePlan,
+  content: FileExportContent,
+): Promise<void> {
+  const blobs = new Map<number, Blob>();
+  for (const unit of content.units) {
+    const blocks = unit.articleId
+      ? plan.articles.find((a) => a.id === unit.articleId)?.blocks
+      : undefined;
+    const crops = blocks
+      ? [...blocks]
+          .sort((a, b) => a.order - b.order)
+          .map((b) => ({
+            page: b.page,
+            rect: {
+              x: Math.min(b.rect.x, b.rect.x + b.rect.width),
+              y: Math.min(b.rect.y, b.rect.y + b.rect.height),
+              width: Math.abs(b.rect.width),
+              height: Math.abs(b.rect.height),
+            },
+          }))
+      : unit.page
+        ? [{ page: unit.page, rect: null }]
+        : [];
+    if (!crops.length) throw new Error(t("export.sourceMissing"));
+    unit.images = [];
+    for (const crop of crops) {
+      let blob = blobs.get(crop.page);
+      if (!blob) {
+        blob = await exportPageBlob(plan.fileId, crop.page);
+        blobs.set(crop.page, blob);
+      }
+      unit.images.push(await exportImage(blob, crop.rect));
+    }
+  }
+}
+
+async function pdfPart(
+  plan: BatchFilePlan,
+  content: FileExportContent,
+  withSource: boolean,
+): Promise<PdfExportPart> {
+  const part: PdfExportPart = {
+    name: plan.name,
+    document: { source: "paddle", pages: [] },
+    sourceImages: {},
+    articles: [],
+  };
+  if (plan.mode === "grouped") {
+    const valid = {
+      ...content,
+      units: content.units.filter(
+        (u) => !u.failed && !isOcrFailureText(u.body),
+      ),
+    };
+    if (withSource) await attachSourceImages(plan, valid);
+    part.articles = valid.units.map((u) => ({
+      title: [...content.header, u.title].join(" · "),
+      body: u.body,
+      images: u.images ?? [],
+    }));
+    return part;
+  }
+  const pages = useStore.getState().recognizedPages[plan.fileId] ?? {};
+  for (const index of plan.pages) {
+    const saved = pages[index];
+    if (!saved || saved.status === "failed") continue;
+    const original = saved.layout;
+    if (!original && !saved.text.trim()) continue;
+    const page =
+      original && !saved.textEdited
+        ? { ...original, index }
+        : {
+            index,
+            width: original?.width ?? 1000,
+            height: original?.height ?? 1414,
+            dimensionsApproximate: true,
+            blocks: saved.text.trim()
+              ? [
+                  {
+                    label: "text",
+                    text: saved.text,
+                    bbox: [
+                      0,
+                      0,
+                      original?.width ?? 1000,
+                      original?.height ?? 1414,
+                    ] as [number, number, number, number],
+                    order: 1,
+                  },
+                ]
+              : [],
+          };
+    part.document.pages.push(page);
+    if (withSource || page.blocks.some((b) => /image|figure/.test(b.label))) {
+      try {
+        part.sourceImages[index] = await exportImage(
+          await exportPageBlob(plan.fileId, index),
+          null,
+        );
+      } catch (error) {
+        if (withSource) throw error;
+      }
+    }
+  }
+  return part;
+}
+
 async function runBatch(
   plans: BatchFilePlan[],
   entries: BatchEntry[],
   recognizeOnly: boolean,
   exportOnly: boolean,
-  directTarget: boolean
+  directTarget: boolean,
 ): Promise<void> {
   const batch = useStore.getState().batchExport!;
-  const { layout, format, target } = batch;
+  const { layout, format, target, withSource = false } = batch;
+  const pdfParts = new Map<string, PdfExportPart>();
   const usedNames = new Set<string>();
   const writeDirect = async (data: Uint8Array | string, stem?: string) => {
     const result = await invoke<{ targetPath: string }>(
@@ -795,6 +1102,18 @@ async function runBatch(
   // at the end, so a file under several tags is recognized once and only
   // written several times.
   const contents = new Map<string, FileExportContent>();
+  const writePdf = async (parts: PdfExportPart[], path: string) => {
+    const result = await exportLayoutPdf({
+      document: { source: "paddle", pages: [] },
+      targetPath: path,
+      options: { ...DEFAULT_LAYOUT_PDF_EXPORT_OPTIONS, parts, withSource },
+    });
+    if (result.warnings.length)
+      useStore.getState().setStatusText(result.warnings.join("；"));
+    useStore.getState().updateBatchExport((d) => {
+      (d.outputs ??= []).push(result.targetPath);
+    });
+  };
 
   for (let index = 0; index < plans.length; index++) {
     const plan = plans[index]!;
@@ -847,6 +1166,29 @@ async function runBatch(
     }
 
     const content = buildFileExport(useStore.getState(), plan, entries[index]!);
+    if (format === "pdf" && !recognizeOnly) {
+      try {
+        const part = await pdfPart(plan, content, withSource);
+        if (!part.document.pages.length && !part.articles.length)
+          throw new Error(t("batch.noText"));
+        if (isCancelling(useStore.getState())) break;
+        pdfParts.set(plan.fileId, part);
+        if (layout === "separate")
+          await writePdf(
+            [part],
+            await uniqueTargetPath(
+              target,
+              safeFileStem(stemOf(plan.name)),
+              "pdf",
+              usedNames,
+            ),
+          );
+        patchItem(index, { status: "done" });
+      } catch (error) {
+        patchItem(index, { status: "failed", error: appErrorMessage(error) });
+      }
+      continue;
+    }
     if (!content.hasText) {
       patchItem(index, { status: "failed", error: t("batch.noText") });
       continue;
@@ -865,6 +1207,14 @@ async function runBatch(
       patchItem(index, { status: "done" });
       continue;
     }
+    if (format === "docx" && withSource) {
+      try {
+        await attachSourceImages(plan, content);
+      } catch (error) {
+        patchItem(index, { status: "failed", error: appErrorMessage(error) });
+        continue;
+      }
+    }
     if (layout !== "separate") {
       contents.set(plan.fileId, content);
       patchItem(index, { status: "done" });
@@ -874,13 +1224,16 @@ async function runBatch(
       const data = encodeOutput(
         format,
         () => content.markdown,
-        () => standaloneDocBlocks(content)
+        () => standaloneDocBlocks(content),
       );
       const stem = safeFileStem(stemOf(plan.name));
       if (directTarget) {
         await writeDirect(data, stem);
       } else if (isTauriRuntime()) {
-        await writeOutput(await uniqueTargetPath(target, stem, format, usedNames), data);
+        await writeOutput(
+          await uniqueTargetPath(target, stem, format, usedNames),
+          data,
+        );
       } else {
         download(`${stem}.${format}`, format, data);
       }
@@ -894,9 +1247,15 @@ async function runBatch(
   }
 
   let batchError: string | undefined;
-  if (!recognizeOnly && layout !== "separate" && !isCancelling(useStore.getState())) {
+  if (
+    !recognizeOnly &&
+    layout !== "separate" &&
+    !isCancelling(useStore.getState())
+  ) {
     const docs = planOutputDocs(layout, entries).filter((doc) =>
-      doc.entries.some((e) => contents.has(e.fileId))
+      doc.entries.some((e) =>
+        format === "pdf" ? pdfParts.has(e.fileId) : contents.has(e.fileId),
+      ),
     );
     if (docs.length === 0) batchError = t("batch.noText");
     for (const doc of docs) {
@@ -904,16 +1263,39 @@ async function runBatch(
       // between them.
       if (isCancelling(useStore.getState())) break;
       try {
+        if (format === "pdf") {
+          const path =
+            layout === "merged"
+              ? target
+              : await uniqueTargetPath(
+                  target,
+                  safeFileStem(doc.stem),
+                  "pdf",
+                  usedNames,
+                );
+          await writePdf(
+            doc.entries.flatMap((entry) =>
+              pdfParts.get(entry.fileId) ? [pdfParts.get(entry.fileId)!] : [],
+            ),
+            path,
+          );
+          continue;
+        }
         const data = encodeOutput(
           format,
           () => mergedMarkdown(doc, contents),
-          () => mergedDocBlocks(doc, contents)
+          () => mergedDocBlocks(doc, contents),
         );
         const stem = safeFileStem(doc.stem);
-        if (directTarget) await writeDirect(data, layout === "merged" ? undefined : stem);
+        if (directTarget)
+          await writeDirect(data, layout === "merged" ? undefined : stem);
         else if (!isTauriRuntime()) download(`${stem}.${format}`, format, data);
         else if (layout === "merged") await writeOutput(target, data);
-        else await writeOutput(await uniqueTargetPath(target, stem, format, usedNames), data);
+        else
+          await writeOutput(
+            await uniqueTargetPath(target, stem, format, usedNames),
+            data,
+          );
       } catch (e) {
         batchError ??= t("batch.writeFailed", { message: appErrorMessage(e) });
       }
@@ -973,7 +1355,7 @@ type RecognizeOutcome = "ok" | "cancelled" | "removed" | { error: string };
  *  back. Resolves "ok" without starting a job when nothing is missing. */
 async function recognizeFile(
   index: number,
-  plan: BatchFilePlan
+  plan: BatchFilePlan,
 ): Promise<RecognizeOutcome> {
   const state = useStore.getState();
   const missing = missingUnits(state, plan);
@@ -1027,7 +1409,10 @@ async function recognizeFile(
   // A cancel or a removal that landed while the start RPC was in flight saw
   // no job id to cancel; act on it now. The subscription below only sees
   // later changes.
-  if (isCancelling(useStore.getState()) || !fileExists(useStore.getState(), plan.fileId)) {
+  if (
+    isCancelling(useStore.getState()) ||
+    !fileExists(useStore.getState(), plan.fileId)
+  ) {
     void cancelCurrentJob(jobId);
   }
 
@@ -1043,7 +1428,9 @@ async function recognizeFile(
 
   if (!fileExists(useStore.getState(), plan.fileId)) return "removed";
   if (terminal.kind === "error") {
-    return isCancelling(useStore.getState()) ? "cancelled" : { error: terminal.error };
+    return isCancelling(useStore.getState())
+      ? "cancelled"
+      : { error: terminal.error };
   }
   if (terminal.payload.cancelled) return "cancelled";
 
@@ -1059,7 +1446,7 @@ async function recognizeFile(
       })),
       terminal.payload as GroupedJobDone,
       newspaperName,
-      newspaperDate
+      newspaperDate,
     );
   } else {
     useStore
@@ -1068,7 +1455,7 @@ async function recognizeFile(
         plan.fileId,
         jobId,
         missing.pages,
-        terminal.payload as WholeFileJobDone
+        terminal.payload as WholeFileJobDone,
       );
   }
   patchItem(index, { done: requested });

@@ -24,7 +24,7 @@ import { PageJumpControl } from "./PageJumpControl";
 function deriveHeadline(
   status: JobStatus,
   stage: ProgressStage | null,
-  t: Translator
+  t: Translator,
 ): string {
   // A terminal status always wins: a late `block_done` event must not make a
   // cancelled or failed run read as "Done".
@@ -63,9 +63,12 @@ function deriveDetail(stage: ProgressStage | null, t: Translator): string {
         count: stage.total,
       })}`;
     case "submitting_document":
-      return `${t("progress.detail.submitting")} · ${t("progress.detail.pages", {
-        count: stage.total,
-      })}`;
+      return `${t("progress.detail.submitting")} · ${t(
+        "progress.detail.pages",
+        {
+          count: stage.total,
+        },
+      )}`;
     case "chunk_submitting":
       return `${t("progress.detail.chunk", {
         chunk: stage.chunk,
@@ -104,15 +107,11 @@ export function ProgressPill() {
   });
   const totalPages = useStore((s) => {
     if (!s.currentFileId) return 1;
-    return (
-      s.files.find((f) => f.id === s.currentFileId)?.pdfTotal ?? 1
-    );
+    return s.files.find((f) => f.id === s.currentFileId)?.pdfTotal ?? 1;
   });
   const currentPage = useStore((s) => {
     if (!s.currentFileId) return 1;
-    return (
-      s.files.find((f) => f.id === s.currentFileId)?.currentPage ?? 1
-    );
+    return s.files.find((f) => f.id === s.currentFileId)?.currentPage ?? 1;
   });
   const fileId = useStore((s) => s.currentFileId);
 
@@ -143,7 +142,8 @@ export function ProgressPill() {
   }, [jobId, status, clearActiveJob]);
 
   const showPageNav = isPdf && totalPages > 1;
-  const showOcr = jobId !== null;
+  const jobFileId = useStore((s) => s.activeJob?.fileId);
+  const showOcr = jobId !== null && jobFileId === fileId;
   if (!showPageNav && !showOcr) return null;
 
   const inFlight = status === "running" || status === "cancelling";
@@ -171,8 +171,8 @@ export function ProgressPill() {
     // is polled by the screen reader on demand — announcing it is the web
     // habit, not what a native progress indicator does. Only the phase
     // headline below, which changes a handful of times per job, is live.
-    <div className="absolute left-2 top-2 z-10 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]">
-      <div className="flex h-7 items-stretch text-[12px]">
+    <div className="canvas-control-pill absolute top-2 z-10 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]">
+      <div className="flex min-h-7 flex-wrap items-stretch text-[12px]">
         {showPageNav && (
           <div className="flex items-center gap-1.5 px-2">
             <PageJumpControl
@@ -199,7 +199,7 @@ export function ProgressPill() {
                   ? "text-destructive"
                   : status === "cancelled" || status === "cancelling"
                     ? "text-foreground-muted"
-                    : "text-foreground"
+                    : "text-foreground",
               )}
             >
               {headline}
@@ -261,7 +261,7 @@ export function ProgressPill() {
                 ? "bg-destructive"
                 : status === "cancelled"
                   ? "bg-foreground-muted/60"
-                  : "bg-primary"
+                  : "bg-primary",
             )}
             style={{ width: `${pct}%` }}
           />
